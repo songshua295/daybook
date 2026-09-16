@@ -1,5 +1,5 @@
-import { App } from "obsidian";
-import type LifeJournalPlugin from "./main";
+import { App, setIcon } from "obsidian";
+import type DaybookPlugin from "./main";
 
 /**
  * 闪念编辑器增强：
@@ -12,6 +12,7 @@ export interface MemoEditorOptions {
   toolbar?: boolean;                    // 是否渲染格式化工具栏
   toolbarSlot?: HTMLElement;            // 工具栏挂载点（缺省插入 wrap 顶部）
   imageInput?: HTMLInputElement | null; // 图片文件选择 input（工具栏图片按钮触发）
+  onAudioToggle?: (btn: HTMLElement) => void; // 录音按钮回调
 }
 
 interface MemoSuggestion {
@@ -40,7 +41,7 @@ function detectTrigger(
 
 export function attachMemoEditor(
   app: App,
-  plugin: LifeJournalPlugin,
+  plugin: DaybookPlugin,
   textarea: HTMLTextAreaElement,
   wrap: HTMLElement,
   opts: MemoEditorOptions = {}
@@ -96,14 +97,22 @@ export function attachMemoEditor(
       insertAtCaret("#");
     });
     if (opts.imageInput) {
-      // img 字符样式 logo
-      const imgBtn = tb.createDiv({
-        cls: "lj-memo-tb-btn lj-memo-tb-img",
-        attr: { role: "button", "aria-label": "插入图片" },
+      const photoBtn = tb.createDiv({
+        cls: "lj-memo-tb-btn lj-memo-tb-icon",
+        attr: { role: "button", "aria-label": "上传照片" },
       });
-      imgBtn.createSpan({ cls: "lj-memo-tb-img-logo", text: "img" });
-      imgBtn.addEventListener("mousedown", (e) => e.preventDefault());
-      imgBtn.addEventListener("click", () => opts.imageInput!.click());
+      setIcon(photoBtn, "image");
+      photoBtn.addEventListener("mousedown", (e) => e.preventDefault());
+      photoBtn.addEventListener("click", () => opts.imageInput!.click());
+    }
+    if (opts.onAudioToggle) {
+      const audioBtn = tb.createDiv({
+        cls: "lj-memo-tb-btn lj-memo-tb-icon lj-memo-tb-audio",
+        attr: { role: "button", "aria-label": "录音" },
+      });
+      setIcon(audioBtn, "mic");
+      audioBtn.addEventListener("mousedown", (e) => e.preventDefault());
+      audioBtn.addEventListener("click", () => opts.onAudioToggle!(audioBtn));
     }
   }
 

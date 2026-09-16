@@ -1,13 +1,63 @@
 import { App, TFile, normalizePath, moment } from "obsidian";
-import type { LifeJournalSettings, SectionType } from "./settings";
+import type { DaybookSettings, SectionType, SectionConfig } from "./settings";
+import { getAllSections } from "./settings";
 
 /**
- * 获取今日日记文件路径
+ * 解析路径模式中的 {{moment格式}} 变量
+ * 如 "Work/Notes/{{YYYY-MM-DD}}.md" → "Work/Notes/2026-09-15.md"
+ * 如 "Logs/{{YYYY/MM}}/{{YYYY-MM-DD}}.md" → "Logs/2026/09/2026-09-15.md"
  */
-export function getDiaryPath(settings: LifeJournalSettings): string {
+function resolvePathPattern(pattern: string): string {
+  return pattern.replace(/\{\{([^}]+)\}\}/g, (_, fmt) => moment().format(fmt.trim()));
+}
+
+/**
+ * 获取今日日记文件路径（默认文件夹 + 默认日期格式）
+ */
+export function getDiaryPath(settings: DaybookSettings): string {
   const date = moment().format(settings.dateFormat);
   const folder = settings.diaryFolder.trim().replace(/\/$/, "");
   return normalizePath(`${folder}/${date}.md`);
+}
+
+/**
+ * 解析章节对应的今日文件路径
+ * - 有自定义 filePath：替换 {{}} 变量，确保 .md 后缀
+ * - 无自定义：回退到默认 diaryFolder/dateFormat.md
+ */
+export function resolveSectionPath(settings: DaybookSettings, section?: SectionConfig): string {
+  if (section?.filePath && section.filePath.trim()) {
+    let p = section.filePath.trim().replace(/^\/+/, "");
+    p = resolvePathPattern(p);
+    if (!p.endsWith(".md")) p += ".md";
+    return normalizePath(p);
+  }
+  return getDiaryPath(settings);
+}
+
+/**
+ * 获取章节文件所在的文件夹路径（用于扫描文件）
+ */
+function getSectionFolder(settings: DaybookSettings, section?: SectionConfig): string {
+  const fullPath = resolveSectionPath(settings, section);
+  const idx = fullPath.lastIndexOf("/");
+  return idx > 0 ? fullPath.slice(0, idx) : "";
+}
+
+/**
+ * 收集所有章节涉及的文件夹列表（去重），用于 fileReader 扫描
+ */
+export function getSectionFolders(settings: DaybookSettings): string[] {
+  const folders = new Set<string>();
+  const defaultFolder = settings.diaryFolder.trim().replace(/\/$/, "");
+  folders.add(defaultFolder);
+  for (const sec of getAllSections(settings)) {
+    if (sec.filePath && sec.filePath.trim()) {
+      const folder = getSectionFolder(settings, sec);
+      if (folder) folders.add(folder);
+    }
+  }
+  return [...folders];
 }
 
 /**
@@ -35,14 +85,15 @@ function getTimestamp(): string {
  */
 export async function appendToSection(
   app: App,
-  settings: LifeJournalSettings,
+  settings: DaybookSettings,
   sectionLabel: string,
   sectionType: SectionType,
-  content: string
+  content: string,
+  section?: SectionConfig
 ): Promise<void> {
   const sectionTitle = sectionLabel;
-  const diaryPath = getDiaryPath(settings);
-  const folderPath = settings.diaryFolder.trim().replace(/\/$/, "");
+  const diaryPath = resolveSectionPath(settings, section);
+  const folderPath = diaryPath.includes("/") ? diaryPath.slice(0, diaryPath.lastIndexOf("/")) : "";
 
   // 确保文件夹存在
   await ensureFolder(app, folderPath);

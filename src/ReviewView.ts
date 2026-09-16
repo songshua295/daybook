@@ -1,5 +1,4 @@
 import {
-  MarkdownRenderer,
   MarkdownView,
   Menu,
   Modal,
@@ -9,8 +8,10 @@ import {
   normalizePath,
   type App,
 } from "obsidian";
-import type LifeJournalPlugin from "./main";
-import { isTypeEnabled } from "./settings";
+import { renderMarkdown } from "./renderMarkdown";
+import type DaybookPlugin from "./main";
+import { isTypeEnabled, getVisibleSections, getVisiblePanels } from "./settings";
+import { resolveSectionPath } from "./fileManager";
 import {
   readAllJournalEntries,
   setTodoStatesInFile,
@@ -27,7 +28,6 @@ import {
   type PriorityLevel,
   type DayGroup,
   type JournalEntry,
-  type EntryType,
   type TodoItem,
 } from "./fileReader";
 import {
@@ -36,9 +36,10 @@ import {
   replaceLineRange,
   removeLineRange,
 } from "./fileManager";
+import { createLiveEditor, type LiveEditor } from "./liveEditor";
 
-/** 筛选标签类型（"all" 表示全部，否则为章节 id） */
-type FilterTag = "all" | EntryType;
+/** 筛选标签类型（"all" 表示全部，否则为版块 id） */
+type FilterTag = "all" | string;
 
 /** 宽松解析日期：兼容 2026-9-10 等无前导零格式，返回 YYYY-MM-DD 或 null */
 function parseFlexibleDate(s: string): string | null {
@@ -81,14 +82,14 @@ class ConfirmModal extends Modal {
 
 /** 计划块编辑弹窗：逐条编辑任务文字/完成/优先级/截止日期，支持增删任务 */
 class PlanEditModal extends Modal {
-  private plugin: LifeJournalPlugin;
+  private plugin: DaybookPlugin;
   private entry: JournalEntry;
   private onSave: (title: string, rows: PlanTodoRow[]) => void;
   private rows: PlanTodoRow[] = [];
 
   constructor(
     app: App,
-    plugin: LifeJournalPlugin,
+    plugin: DaybookPlugin,
     entry: JournalEntry,
     onSave: (title: string, rows: PlanTodoRow[]) => void
   ) {
@@ -260,14 +261,14 @@ function planTaskLine(t: TodoItem, completedField: string): string {
 }
 
 export class ReviewView {
-  private plugin: LifeJournalPlugin;
+  private plugin: DaybookPlugin;
   private container: HTMLElement;
   private activeFilter: FilterTag = "all";
   private activeInlineTag: string | null = null;
   private isLoading = false;
 
-  // plansMode=true：计划模式（整页只展示待办计划）；false：阅读模式
-  private plansMode: boolean;
+  // 阅读模式（不再有独立计划模式，按版块/章节筛选）
+  private get plansMode(): boolean { return isTypeEnabled(this.plugin.settings, "plans"); }
 
   // 分组 / 排序 / 筛选 / 搜索状态（持久化保存在 settings.reviewState）
   private searchVisible: boolean;
@@ -280,6 +281,7 @@ export class ReviewView {
   private filterDateFrom: string;
   private filterDateTo: string;
   private filterPriorities: Set<string>;
+  private filterCompletion: "all" | "done" | "undone";
 
   // 计划视图：分组与排序
   private groupVisible: boolean;
@@ -291,11 +293,12 @@ export class ReviewView {
   private collapsedGroups = new Set<string>(); // 收缩状态仅会话内保留
   private groupOrder: string[];
   private lastGroupKeys: string[] = [];
+  // 内联编辑用的实时渲染编辑器（render 重建时统一销毁）
+  private liveEditors = new Set<LiveEditor>();
 
-  constructor(container: HTMLElement, plugin: LifeJournalPlugin, plansMode = false) {
+  constructor(container: HTMLElement, plugin: DaybookPlugin) {
     this.container = container;
     this.plugin = plugin;
-    this.plansMode = plansMode;
     const rs = plugin.settings.reviewState;
     this.groupVisible = rs.groupVisible;
     this.sortVisible = rs.sortVisible;
@@ -307,6 +310,7 @@ export class ReviewView {
     this.filterDateFrom = rs.filterDateFrom;
     this.filterDateTo = rs.filterDateTo;
     this.filterPriorities = new Set(rs.filterPriorities);
+    this.filterCompletion = rs.filterCompletion ?? "all";
     this.groupOrder = rs.groupOrder ?? [];
     this.searchVisible = rs.searchVisible;
     this.searchQuery = rs.searchQuery;
@@ -327,6 +331,7 @@ export class ReviewView {
     rs.filterDateFrom = this.filterDateFrom;
     rs.filterDateTo = this.filterDateTo;
     rs.filterPriorities = [...this.filterPriorities];
+    rs.filterCompletion = this.filterCompletion;
     rs.groupOrder = [...this.groupOrder];
     rs.searchVisible = this.searchVisible;
     rs.searchQuery = this.searchQuery;
@@ -339,6 +344,12 @@ export class ReviewView {
 
   /** 渲染整个回顾视图 */
   async render() {
+    // 销毁上一轮内联编辑的实时编辑器
+    this.liveEditors.forEach(ed => {
+      try { ed.destroy(); } catch (e) { /* ignore */ }
+    });
+    this.liveEditors.clear();
+
     this.container.empty();
     this.container.addClass("lj-review-root");
 
@@ -374,11 +385,20 @@ export class ReviewView {
     this.renderLoadingState(scrollArea);
 
     try {
+      // 选中版块时，按该版块包含的章节 id 集合过滤；"全部" 时不限
+      let filterTypes: Set<string> | undefined;
+      if (this.activeFilter !== "all") {
+        const panel = this.plugin.settings.panels.find(p => p.id === this.activeFilter);
+        if (panel) {
+          filterTypes = new Set(panel.sections
+            .filter(s => s.enabled && isTypeEnabled(this.plugin.settings, s.type))
+            .map(s => s.id));
+        }
+      }
       const groups = await readAllJournalEntries(
         this.plugin.app,
         this.plugin.settings,
-        // 计划模式固定展示全部计划章节，不套用章节筛选
-        this.plansMode || this.activeFilter === "all" ? undefined : this.activeFilter
+        filterTypes
       );
 
       // 收集该类别下所有标签（供标签面板展示）
@@ -411,6 +431,18 @@ export class ReviewView {
           .filter(g => g.entries.length > 0);
       }
 
+      // 计划模式：完成状态筛选
+      if (this.plansMode && this.filterCompletion !== "all") {
+        visibleGroups = visibleGroups
+          .map(g => ({
+            ...g,
+            entries: g.entries.filter(e => e.todos?.some(t =>
+              this.filterCompletion === "done" ? t.done : !t.done
+            )),
+          }))
+          .filter(g => g.entries.length > 0);
+      }
+
       // 多关键字模糊搜索（空格分隔，全部命中才算匹配）
       const query = this.searchQuery.trim();
       if (query) {
@@ -438,7 +470,7 @@ export class ReviewView {
       }
     } catch (e) {
       // 透出真实错误信息便于定位问题
-      console.error("Life Journal: 读取日记失败", e);
+      console.error("Daybook: 读取日记失败", e);
       scrollArea.empty();
       const tip = scrollArea.createDiv({ cls: "lj-review-empty", text: "读取日记失败，请检查日记目录设置" });
       tip.createDiv({ cls: "lj-review-panel-empty", text: String((e as Error)?.message ?? e) });
@@ -586,9 +618,8 @@ export class ReviewView {
       btn.createSpan({ text: "\u{1F4C4}" });
       btn.createSpan({ text: "\u6253\u5F00\u4ECA\u65E5\u539F\u6587" });
       btn.addEventListener("click", () => {
-        const today = moment().format(this.plugin.settings.dateFormat || "YYYY-MM-DD");
-        const folder = this.plugin.settings.diaryFolder.trim().replace(/\/$/, "");
-        const filePath = normalizePath(`${folder}/${today}.md`);
+        const firstSection = getVisibleSections(this.plugin.settings)[0];
+        const filePath = resolveSectionPath(this.plugin.settings, firstSection);
         const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
         if (file instanceof TFile) {
           const leaf = this.plugin.app.workspace.getLeaf(false);
@@ -603,7 +634,7 @@ export class ReviewView {
     const groupSet = this.planGroupBy !== "none";
     const sortSet = this.planSortBy !== "priority" || this.planSortAsc;
     const searchSet = !!this.searchQuery || !!this.activeInlineTag ||
-      !!this.filterDateFrom || !!this.filterDateTo || this.filterPriorities.size > 0;
+      !!this.filterDateFrom || !!this.filterDateTo || this.filterPriorities.size > 0 || this.filterCompletion !== "all";
 
     // 分组按钮（仅计划模式）
     if (this.plansMode) {
@@ -858,6 +889,20 @@ export class ReviewView {
       });
     }
 
+    // 计划模式：完成状态筛选
+    if (this.plansMode) {
+      const row3 = panel.createDiv({ cls: "lj-review-filter-row" });
+      row3.createSpan({ cls: "lj-review-filter-label", text: "\u2705 完成" });
+      (["all", "undone", "done"] as const).forEach(v => {
+        const label = v === "all" ? "全部" : v === "done" ? "已完成" : "未完成";
+        this.mkChip(row3, label, this.filterCompletion === v, () => {
+          this.filterCompletion = v;
+          this.persistState();
+          void this.refreshResults();
+        });
+      });
+    }
+
     const clearBtn = panel.createDiv({
       cls: "lj-review-filter-clear",
       text: "\u2715 清除筛选",
@@ -867,6 +912,7 @@ export class ReviewView {
       this.filterDateFrom = "";
       this.filterDateTo = "";
       this.filterPriorities.clear();
+      this.filterCompletion = "all";
       fromField.set("");
       toField.set("");
       this.persistState();
@@ -989,20 +1035,13 @@ export class ReviewView {
 
   /** 渲染筛选标签栏（复用编辑视图的 lj-tab-bar 样式） */
   private renderFilterBar() {
-    // 计划模式：计划已独立成板块，不再显示章节筛选栏
-    if (this.plansMode) return;
-
-    // 阅读模式：计划单独成板块或计划类型已关闭时，筛选栏不显示计划类章节
-    const includePlansInReading = this.plugin.settings.plansDisplay !== "separate" && isTypeEnabled(this.plugin.settings, "plans");
-    const visibleSections = this.plugin.settings.sections.filter(s =>
-      s.enabled && isTypeEnabled(this.plugin.settings, s.type) && (includePlansInReading || s.type !== "plans")
-    );
-    // 只有一个可见章节时不显示章节选择栏（含"全部"），直接展示内容
-    if (visibleSections.length <= 1) return;
+    const visiblePanels = getVisiblePanels(this.plugin.settings);
+    // 只有一个可见版块时不显示版块选择栏（含"全部"），直接展示内容
+    if (visiblePanels.length <= 1) return;
     if (this.activeFilter !== "all") {
-      const activeSec = this.plugin.settings.sections.find(s => s.id === this.activeFilter);
-      if (!activeSec || !visibleSections.includes(activeSec)) {
-        this.activeFilter = "all"; // 当前筛选的章节已移出阅读，回退到全部
+      const activePanel = this.plugin.settings.panels.find(p => p.id === this.activeFilter);
+      if (!activePanel || !visiblePanels.includes(activePanel)) {
+        this.activeFilter = "all"; // 当前筛选的版块已移出阅读，回退到全部
       }
     }
 
@@ -1020,17 +1059,15 @@ export class ReviewView {
       this.render();
     });
 
-    // 从 settings.sections 动态渲染筛选标签（仅显示启用的章节）
-    this.plugin.settings.sections.filter(s => s.enabled && isTypeEnabled(this.plugin.settings, s.type)).forEach(sec => {
-      if (!includePlansInReading && sec.type === "plans") return;
+    // 从所有版块动态渲染筛选标签（版块 = 阅读模式下的章节合并组）
+    visiblePanels.forEach(panel => {
       const btn = bar.createDiv({
-        cls: `lj-tab filter-${sec.id} ${this.activeFilter === sec.id ? "active" : ""}`,
+        cls: `lj-tab filter-${panel.id} ${this.activeFilter === panel.id ? "active" : ""}`,
       });
-      btn.createDiv({ cls: "lj-tab-emoji", text: sec.emoji });
-      btn.createDiv({ text: sec.label });
+      btn.createDiv({ text: panel.name });
       btn.addEventListener("click", () => {
-        if (this.activeFilter === sec.id) return;
-        this.activeFilter = sec.id;
+        if (this.activeFilter === panel.id) return;
+        this.activeFilter = panel.id;
         this.render();
       });
     });
@@ -1087,18 +1124,18 @@ export class ReviewView {
 
   /** 渲染日期分组列表（按模式过滤：计划模式只看计划；阅读模式按设置决定是否混入计划） */
   private renderGroups(container: HTMLElement, groups: DayGroup[]) {
-    const includePlansInReading = this.plugin.settings.plansDisplay !== "separate" && isTypeEnabled(this.plugin.settings, "plans");
     const memosEnabled = isTypeEnabled(this.plugin.settings, "memos");
+    const plansEnabled = isTypeEnabled(this.plugin.settings, "plans");
     const collapsible = this.plansMode && this.planGroupBy !== "none";
     let dragKey: string | null = null;
 
-    // 预计算每个分组的可见条目（类型开关：计划模式只看计划，阅读模式按 plansDisplay 与类型开关，旧 mood/text 归入闪念）
+    // 预计算每个分组的可见条目（类型开关）
     const rendered = groups
       .map(group => ({
         group,
         entries: group.entries.filter(entry => {
-          if (entry.renderType === "plans") return this.plansMode ? true : includePlansInReading;
-          return !this.plansMode && memosEnabled;
+          if (entry.renderType === "plans") return plansEnabled;
+          return memosEnabled;
         }),
       }))
       .filter(r => r.entries.length > 0);
@@ -1220,16 +1257,34 @@ export class ReviewView {
       header.createDiv({ cls: "lj-review-card-time", text: entry.time });
     }
 
-    // 卡片内容（v3.1.4：多行内容换行渲染）
+    // 卡片内容（采用 Thino 渲染方式：MarkdownRenderer + internal-link 悬浮预览 + 长内容懒渲染）
     if (entry.renderType === "plans" && entry.todos) {
       this.renderTodoCard(card, entry);
     } else {
-      const textWrap = card.createDiv({ cls: "lj-review-card-text markdown-rendered" });
+      const textWrap = card.createDiv({ cls: "lj-review-card-text" });
       // v3.1.4：多行内容用 pre-wrap 保留换行
       if (entry.text.includes("\n")) {
         textWrap.style.whiteSpace = "pre-wrap";
       }
-      void MarkdownRenderer.render(this.plugin.app, entry.text, textWrap, entry.filePath, this.plugin);
+      void renderMarkdown(this.plugin.app, entry.text, textWrap, {
+        sourcePath: entry.filePath,
+        component: this.plugin,
+        lazyThreshold: 10,
+        onRendered: (el) => {
+          // 将正文中的 #标签 链接改为点击筛选（而非跳转全局搜索）
+          el.querySelectorAll("a.tag").forEach(link => {
+            const tag = link.getAttribute("href")?.replace(/^#/, "") ?? link.textContent?.replace(/^#/, "");
+            if (!tag) return;
+            link.addEventListener("click", (evt) => {
+              evt.preventDefault();
+              evt.stopPropagation();
+              this.activeInlineTag = this.activeInlineTag === tag ? null : tag;
+              this.persistState();
+              this.render();
+            });
+          });
+        },
+      });
     }
 
     this.renderEntryTags(card, entry.tags);
@@ -1416,20 +1471,40 @@ export class ReviewView {
     });
 
     const editWrap = card.createDiv({ cls: "lj-review-card-edit" });
-    const textarea = editWrap.createEl("textarea");
-    textarea.value = entry.text;
+    // 内嵌 Live Preview：编辑时即看到 Obsidian 原生渲染效果
+    const sourceAf = this.plugin.app.vault.getAbstractFileByPath(entry.filePath);
+    let editor: LiveEditor | null = null;
+    editor = createLiveEditor(
+      this.plugin.app,
+      editWrap,
+      {
+        value: entry.text,
+        onEnter: (mod) => {
+          // Cmd/Ctrl+Enter 保存
+          if (mod) { saveBtn.click(); return true; }
+          return false;
+        },
+      },
+      "lj-live-editor-review",
+      sourceAf instanceof TFile ? sourceAf : null
+    );
+    this.liveEditors.add(editor);
 
     const actions = editWrap.createDiv({ cls: "lj-review-card-edit-actions" });
     const cancelBtn = actions.createEl("button", { text: "取消", cls: "lj-review-edit-cancel" });
     const saveBtn = actions.createEl("button", { text: "保存", cls: "lj-review-edit-save" });
 
     cancelBtn.onclick = () => {
+      editor?.destroy();
+      if (editor) this.liveEditors.delete(editor);
+      editor = null;
       editWrap.remove();
       Array.from(card.children).forEach(el => (el as HTMLElement).removeClass("lj-hidden-for-edit"));
     };
 
     saveBtn.onclick = async () => {
-      const newText = textarea.value.trim();
+      if (!editor) return;
+      const newText = editor.getValue().trim();
       if (!newText) {
         new Notice("内容不能为空～");
         return;
@@ -1456,7 +1531,7 @@ export class ReviewView {
       }
     };
 
-    textarea.focus();
+    editor.focus();
   }
 
   /** 按当前任务顺序重写计划块（拖拽排序后调用，保留置顶/归档字段行） */

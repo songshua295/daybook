@@ -1,204 +1,57 @@
 /* ════════════════════════════════════════════════════════
-   Daybook · v3.0.2 · 键盘适配 + v2.0 风格还原
-   核心原则：
-   - lj-root = flex column，overflow-y:auto（唯一滚动容器）
-   - lj-header / lj-mode-toggle-fixed / lj-tab-bar = flex-shrink:0 固定
-   - lj-content-scroll = flex:1，不设 overflow-y（普通流）
-   - textarea = rows=5 固定行数，不 flex:1
-   - lj-save-btn-sticky = 普通流式，键盘弹起时随内容上移
+   Daybook · v4.0 · iOS/Notion 风格重设计
+   设计原则：
+   - 配色完全跟随 Obsidian 主题（零硬编码颜色）
+   - Notion 风格：扁平表面、细线分隔、克制留白
+   - iOS 风格：圆角卡片、底部指示线、44px 触摸目标
+   - 仅 transform/opacity 动画，will-change 硬件加速
    ═══════════════════════════════════════════════════════ */
 
+/* ════════════════════════════════════════════════════════
+   设计令牌（iOS/Notion × Obsidian 原生变量）
+   全部映射 Obsidian 原生变量：自动适配明暗模式与用户自定义主题。
+   禁止硬编码颜色；扁平表面替代渐变；轻量阴影。
+   ════════════════════════════════════════════════════════ */
+.lj-root {
+  --lj-bg:           var(--background-primary);
+  --lj-surface:      var(--background-primary);
+  --lj-surface2:     var(--background-secondary);
+  --lj-border:       var(--background-modifier-border);
+  --lj-accent:       var(--interactive-accent);
+  --lj-accent-soft:  color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+  --lj-text:         var(--text-normal);
+  --lj-text-muted:   var(--text-muted);
+  --lj-text-sub:     var(--text-faint);
+  --lj-shadow:       0 1px 3px rgba(0,0,0,0.06);
+  --lj-shadow-sm:    0 1px 2px rgba(0,0,0,0.04);
+  --lj-shadow-md:    0 3px 8px rgba(0,0,0,0.08);
+  --lj-radius:       10px;
+  --lj-radius-sm:    8px;
+  --lj-radius-lg:    14px;
+  /* Notion 风格：扁平色替代渐变 */
+  --lj-grad-from:    var(--background-primary);
+  --lj-grad-to:      var(--background-primary);
+  --lj-grad-shadow:  rgba(0, 0, 0, 0.04);
+  --lj-bg-grad:      var(--background-primary);
+  /* HIG 字体栈 */
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+               var(--font-interface), "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
 /* ── 配色皮肤变量 ────────────────────────────────────────── */
-/* 🌿 晨林 Forest（默认） */
-body.lj-theme-forest {
-  --lj-bg:           #f4f7f2;
-  --lj-surface:      #ffffff;
-  --lj-surface2:     #eef3eb;
-  --lj-border:       #d4e2cc;
-  --lj-accent:       #4a8c5c;
-  --lj-accent-soft:  #c8e6c9;
-  --lj-text:         #2d3b2a;
-  --lj-text-muted:   #5c7a50;
-  --lj-text-sub:     #6a8a58;
-  --lj-shadow:       rgba(74, 140, 92, 0.12);
-  --lj-radius:       14px;
-  /* 渐变色：Header / 按钮 / Tab active */
-  --lj-grad-from:    #40916c;
-  --lj-grad-to:      #2d6a4f;
-  --lj-bg-grad:      linear-gradient(160deg, #f0f7ec 0%, #e8f5e2 50%, #f2f8ee 100%);
-  --lj-grad-shadow:  rgba(74, 140, 92, 0.35);
-}
-
-/* 🌊 海浪 Ocean */
-body.lj-theme-ocean {
-  --lj-bg:           #f0f5fa;
-  --lj-surface:      #ffffff;
-  --lj-surface2:     #e8f2fb;
-  --lj-border:       #c5d9ee;
-  --lj-accent:       #2a6fa8;
-  --lj-accent-soft:  #bbdefb;
-  --lj-text:         #1a2f45;
-  --lj-text-muted:   #5580a4;
-  --lj-text-sub:     #5c86a8;
-  --lj-shadow:       rgba(42, 111, 168, 0.12);
-  --lj-radius:       14px;
-  /* 渐变色 */
-  --lj-grad-from:    #1a8bb5;
-  --lj-grad-to:      #0d4f8a;
-  --lj-bg-grad:      linear-gradient(160deg, #eef5fc 0%, #deeeff 50%, #eaf4fd 100%);
-  --lj-grad-shadow:  rgba(42, 111, 168, 0.35);
-}
-
-/* 🏜️ 暮沙 Desert */
-body.lj-theme-desert {
-  --lj-bg:           #faf6f0;
-  --lj-surface:      #ffffff;
-  --lj-surface2:     #f5ede0;
-  --lj-border:       #e8d5bb;
-  --lj-accent:       #b5651d;
-  --lj-accent-soft:  #ffcc80;
-  --lj-text:         #3e2a14;
-  --lj-text-muted:   #8d6035;
-  --lj-text-sub:     #9a7040;
-  --lj-shadow:       rgba(181, 101, 29, 0.12);
-  --lj-radius:       14px;
-  /* 渐变色 */
-  --lj-grad-from:    #d06d1a;
-  --lj-grad-to:      #b5400a;
-  --lj-bg-grad:      linear-gradient(160deg, #fdf6ee 0%, #faebd8 50%, #fdf3e8 100%);
-  --lj-grad-shadow:  rgba(181, 101, 29, 0.35);
-}
-
-/* 🌸 樱落 Cherry */
-body.lj-theme-cherry {
-  --lj-bg:           #fdf5f8;
-  --lj-surface:      #ffffff;
-  --lj-surface2:     #fce8f0;
-  --lj-border:       #f0c8da;
-  --lj-accent:       #c2185b;
-  --lj-accent-soft:  #f8bbd0;
-  --lj-text:         #3b0a20;
-  --lj-text-muted:   #9c3a60;
-  --lj-text-sub:     #b06080;
-  --lj-shadow:       rgba(194, 24, 91, 0.10);
-  --lj-radius:       18px;
-  /* 渐变色 */
-  --lj-grad-from:    #e91e8c;
-  --lj-grad-to:      #9c0050;
-  --lj-bg-grad:      linear-gradient(160deg, #fff0f5 0%, #fce4ee 50%, #fff5f8 100%);
-  --lj-grad-shadow:  rgba(194, 24, 91, 0.35);
-}
-
-/* 🌅 暮霞 Dusk */
-body.lj-theme-dusk {
-  --lj-bg:           #faf3f0;
-  --lj-surface:      #ffffff;
-  --lj-surface2:     #f5e8e0;
-  --lj-border:       #e8cec0;
-  --lj-accent:       #b05020;
-  --lj-accent-soft:  #ffab91;
-  --lj-text:         #3a1f14;
-  --lj-text-muted:   #8a4a30;
-  --lj-text-sub:     #a2603f;
-  --lj-shadow:       rgba(176, 80, 32, 0.12);
-  --lj-radius:       14px;
-  /* 渐变色 */
-  --lj-grad-from:    #e5650a;
-  --lj-grad-to:      #b05020;
-  --lj-bg-grad:      linear-gradient(160deg, #fff5f0 0%, #fde8dc 50%, #fff0e8 100%);
-  --lj-grad-shadow:  rgba(176, 80, 32, 0.35);
-}
-
-/* 🌙 极夜 Midnight */
-body.lj-theme-midnight {
-  --lj-bg:           #0f1117;
-  --lj-surface:      #1a1d26;
-  --lj-surface2:     #252a36;
-  --lj-border:       #2a3040;
-  --lj-accent:       #6b7cf0;
-  --lj-accent-soft:  rgba(107, 124, 240, 0.15);
-  --lj-text:         #e8e8f0;
-  --lj-text-muted:   #a0a0b8;
-  --lj-text-sub:     #8a8aa8;
-  --lj-shadow:       rgba(0, 0, 0, 0.3);
-  --lj-radius:       14px;
-  /* 渐变色 */
-  --lj-grad-from:    #6b7cf0;
-  --lj-grad-to:      #9333ea;
-  --lj-bg-grad:      linear-gradient(160deg, #0d0d18 0%, #141228 50%, #0d0d18 100%);
-  --lj-grad-shadow:  rgba(107, 124, 240, 0.4);
-}
-
-/* 💜 薰衣草 Lavender */
-body.lj-theme-lavender {
-  --lj-bg:           #f5f0fa;
-  --lj-surface:      #ffffff;
-  --lj-surface2:     #ebe3f5;
-  --lj-border:       #d5c4e8;
-  --lj-accent:       #7b5dc4;
-  --lj-accent-soft:  #d1c4e9;
-  --lj-text:         #2a2045;
-  --lj-text-muted:   #6a5090;
-  --lj-text-sub:     #7d64a8;
-  --lj-shadow:       rgba(123, 93, 196, 0.12);
-  --lj-radius:       16px;
-  /* 渐变色 */
-  --lj-grad-from:    #9c6ee8;
-  --lj-grad-to:      #6530b8;
-  --lj-bg-grad:      linear-gradient(160deg, #f8f4ff 0%, #ede4fa 50%, #f5f0ff 100%);
-  --lj-grad-shadow:  rgba(123, 93, 196, 0.35);
-}
-
-/* 🍵 抹茶 Matcha */
-body.lj-theme-matcha {
-  --lj-bg:           #f2f5ec;
-  --lj-surface:      #ffffff;
-  --lj-surface2:     #e8f0dc;
-  --lj-border:       #c8d8b0;
-  --lj-accent:       #5a8a5a;
-  --lj-accent-soft:  #c5e1a5;
-  --lj-text:         #2a3a24;
-  --lj-text-muted:   #5a7050;
-  --lj-text-sub:     #6d855f;
-  --lj-shadow:       rgba(90, 138, 90, 0.12);
-  --lj-radius:       14px;
-  /* 渐变色 */
-  --lj-grad-from:    #619a36;
-  --lj-grad-to:      #3d7a3d;
-  --lj-bg-grad:      linear-gradient(160deg, #f0f5e8 0%, #e4f0d4 50%, #eef5e4 100%);
-  --lj-grad-shadow:  rgba(90, 138, 90, 0.35);
-}
-
-/* 🎨 跟随 Obsidian：映射 Obsidian 主题变量，明暗主题自动适配 */
-body.lj-theme-obsidian {
-  --lj-bg:           var(--background-secondary, #f6f6f6);
-  --lj-surface:      var(--background-primary, #ffffff);
-  --lj-surface2:     color-mix(in srgb, var(--background-secondary, #f6f6f6) 60%, var(--background-primary, #ffffff));
-  --lj-border:       var(--background-modifier-border, #e0e0e0);
-  --lj-accent:       var(--interactive-accent, #7c3aed);
-  --lj-accent-soft:  color-mix(in srgb, var(--interactive-accent, #7c3aed) 15%, var(--background-primary, #ffffff));
-  --lj-text:         var(--text-normal, #1a1a1a);
-  --lj-text-muted:   var(--text-muted, #666666);
-  --lj-text-sub:     var(--text-faint, #999999);
-  --lj-shadow:       rgba(0, 0, 0, 0.12);
-  --lj-radius:       14px;
-  /* 渐变色：由 Obsidian 强调色派生，向深色混合以保证白色文字可读 */
-  --lj-grad-from:    color-mix(in srgb, var(--interactive-accent, #7c3aed) 82%, #1a1a2e);
-  --lj-grad-to:      color-mix(in srgb, var(--interactive-accent, #7c3aed) 60%, #1a1a2e);
-  --lj-bg-grad:      linear-gradient(160deg, var(--background-secondary, #f6f6f6) 0%, var(--background-primary, #ffffff) 50%, var(--background-secondary, #f6f6f6) 100%);
-  --lj-grad-shadow:  color-mix(in srgb, var(--interactive-accent, #7c3aed) 35%, transparent);
-}
 
 /* ── v3.2 组件别名变量：统一映射到当前皮肤，避免未定义变量回退到硬编码浅色 ── */
 body,
 .lj-root {
-  --lj-text-primary:   var(--lj-text, #1a1a1a);
-  --lj-text-secondary: var(--lj-text-muted, #6b7280);
-  --lj-text-tertiary:  var(--lj-text-sub, #9ca3af);
-  --lj-bg-primary:     var(--lj-surface, #ffffff);
-  --lj-bg-secondary:   var(--lj-surface2, #f9fafb);
-  --lj-bg-hover:       color-mix(in srgb, var(--lj-text, #1a1a1a) 6%, var(--lj-surface, #ffffff));
-  --lj-border-color:   var(--lj-border, #e5e7eb);
+  --lj-text-primary:   var(--text-normal);
+  --lj-text-secondary: var(--text-muted);
+  --lj-text-tertiary:  var(--text-faint);
+  --lj-bg-primary:     var(--background-primary);
+  --lj-bg-secondary:   var(--background-secondary);
+  --lj-bg-hover:       color-mix(in srgb, var(--text-normal) 5%, var(--background-primary));
+  --lj-border-color:   var(--background-modifier-border);
 }
 
 /* ════════════════════════════════════════════════════════
@@ -226,8 +79,9 @@ body,
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 16px 8px;
-  background: linear-gradient(135deg, var(--lj-grad-from, var(--lj-accent)), var(--lj-grad-to, var(--lj-accent)));
+  padding: 14px 16px 10px;
+  background: var(--lj-surface);
+  border-bottom: 1px solid var(--lj-border);
   flex-shrink: 0;
 }
 
@@ -235,41 +89,68 @@ body,
 .lj-mode-toggle-bar {
   display: flex;
   justify-content: center;
-  padding: 6px 0 4px;
+  padding: 8px 12px 6px;
   background: var(--lj-surface);
-  border-bottom: 1px solid var(--lj-border);
   flex-shrink: 0;
 }
 
 .lj-mode-toggle {
   display: flex;
-  gap: 4px;
+  gap: 2px;
   background: var(--lj-surface2);
   padding: 3px;
-  border-radius: 20px;
+  border-radius: 10px;
+  border: 1px solid var(--lj-border);
 }
 
 .lj-mode-btn {
-  padding: 5px 16px;
-  border-radius: 16px;
-  font-size: 12px;
+  padding: 6px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--lj-text-muted);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: transform 0.15s ease, opacity 0.15s ease, background-color 0.2s ease, color 0.2s ease;
   white-space: nowrap;
+  will-change: transform;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+}
+
+.lj-mode-btn:hover {
+  color: var(--lj-text);
 }
 
 .lj-mode-btn.active {
-  background: var(--lj-accent);
-  color: white;
-  font-weight: 500;
+  background: var(--lj-surface);
+  color: var(--lj-text);
+  font-weight: 600;
+  box-shadow: var(--lj-shadow-sm);
+}
+
+.lj-mode-btn:active {
+  transform: scale(0.96);
+  opacity: 0.8;
+}
+
+.lj-mode-btn.disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.lj-mode-btn.disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 /* ── Tab 栏 ──────────────────────────────────────────── */
 .lj-tab-bar {
   display: flex;
-  gap: 3px;
-  padding: 6px 10px 8px;   /* ← v3.1.1 fix：顶部加 6px，Tab 不贴顶 */
+  gap: 0;
+  padding: 0 8px;
   background: var(--lj-surface);
   border-bottom: 1px solid var(--lj-border);
   flex-shrink: 0;
@@ -277,29 +158,49 @@ body,
 
 .lj-tab {
   flex: 1;
-  padding: 5px 2px;
+  padding: 10px 4px 8px;
   text-align: center;
-  border-radius: 10px;
+  border-radius: 0;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--lj-text-muted);
-  transition: all 0.2s;
-  background: var(--lj-surface2);
-  /* ← v3.1.1 fix：flex 居中，emoji + 文字垂直居中 */
+  transition: color 0.2s ease, opacity 0.15s ease;
+  background: transparent;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  position: relative;
+  will-change: transform;
+}
+
+.lj-tab:hover {
+  color: var(--lj-text);
 }
 
 .lj-tab.active {
-  background: var(--lj-accent);
-  color: white;
+  color: var(--lj-accent);
   font-weight: 600;
-  box-shadow: 0 2px 8px var(--lj-shadow);
+  background: transparent;
 }
 
-.lj-tab-emoji { font-size: 16px; margin-bottom: 2px; }
+.lj-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 20%;
+  right: 20%;
+  height: 2px;
+  background: var(--lj-accent);
+  border-radius: 1px;
+}
+
+.lj-tab:active {
+  opacity: 0.6;
+}
+
+.lj-tab-emoji { font-size: 18px; margin-bottom: 3px; }
 
 /* ── 内容区（v3.0.2：普通流式，不独立滚动，跟随 lj-root） ── */
 .lj-content-scroll {
@@ -340,8 +241,8 @@ body,
 }
 
 .lj-mood-pill.selected {
-  background: var(--lj-accent-soft);
-  border-color: var(--lj-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 8%, var(--background-primary));
+  border-color: color-mix(in srgb, var(--interactive-accent) 30%, transparent);
 }
 
 .lj-mood-pill.selected span {
@@ -385,7 +286,7 @@ body,
 /* 占位符跟随皮肤配色，避免 Obsidian 主题的 --text-faint 与皮肤底色冲突导致看不清 */
 .lj-root textarea::placeholder,
 .lj-root input::placeholder {
-  color: var(--lj-text-sub, #9ca3af);
+  color: var(--text-faint);
   opacity: 1;
 }
 
@@ -440,7 +341,7 @@ body,
   gap: 8px;
   padding: 13px;
   margin: 8px 12px 16px;
-  background: linear-gradient(135deg, var(--lj-grad-from, var(--lj-accent)), var(--lj-grad-to, var(--lj-accent)));
+  background: var(--lj-surface);
   border-radius: 14px;
   color: white;
   font-weight: 700;
@@ -461,7 +362,7 @@ body,
   justify-content: center;
   gap: 8px;
   padding: 11px;
-  background: linear-gradient(135deg, var(--lj-grad-from, var(--lj-accent)), var(--lj-grad-to, var(--lj-accent)));
+  background: var(--lj-surface);
   border-radius: 14px;
   color: white;
   font-weight: 700;
@@ -754,8 +655,8 @@ body,
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
-  color: #fff;
-  background: linear-gradient(135deg, var(--lj-grad-from, var(--lj-accent)), var(--lj-grad-to, var(--lj-accent)));
+  color: var(--text-on-accent);
+  background: var(--lj-surface);
 }
 
 .lj-review-edit-save:disabled { opacity: 0.6; cursor: default; }
@@ -791,7 +692,7 @@ body,
 }
 
 .lj-review-inline-tag.active {
-  color: #fff;
+  color: var(--text-on-accent);
   background: var(--lj-accent);
   border-color: var(--lj-accent);
 }
@@ -917,147 +818,7 @@ body,
    三套 UI 风格覆盖（v3.0.2：全面还原 v2.0 设计稿质感）
    ══════════════════════════════════════════════════════ */
 
-/* 风格 A：极简墨白 —— 保持黑白为主，accent 变量做细节点缀 */
-body.lj-style-minimal .lj-root { background: var(--lj-bg, #fafaf8); }
-body.lj-style-minimal .lj-header { background: #111; }
-body.lj-style-minimal .lj-mode-toggle-bar { background: var(--lj-bg, #fafaf8); border-bottom: 1px solid var(--lj-border, #e8e6e0); }
-body.lj-style-minimal .lj-tab-bar { background: var(--lj-bg, #fafaf8); border-bottom: 1px solid var(--lj-border, #e8e6e0); }
-body.lj-style-minimal .lj-tab { background: var(--lj-surface2, #f0efeb); color: var(--lj-text-muted, #999); }
-body.lj-style-minimal .lj-tab.active { background: #1a1a1a; color: #fff; box-shadow: none; }
-body.lj-style-minimal .lj-textarea { background: var(--lj-surface, #fff); border-color: var(--lj-border, #e0ded8); border-radius: 10px; }
-body.lj-style-minimal .lj-textarea:focus { border-color: #1a1a1a; box-shadow: none; }
-body.lj-style-minimal .lj-mood-pill { background: var(--lj-surface2, #f0efeb); border-radius: 8px; }
-body.lj-style-minimal .lj-mood-pill.selected { background: #1a1a1a; border-color: #1a1a1a; }
-body.lj-style-minimal .lj-mood-pill.selected span { color: #fff; }
-body.lj-style-minimal .lj-save-btn-sticky { background: #1a1a1a; box-shadow: none; }
-body.lj-style-minimal .lj-save-btn { background: #1a1a1a; box-shadow: none; }
-body.lj-style-minimal .lj-mode-btn.active { background: #1a1a1a; }
-body.lj-style-minimal .lj-review-card { background: var(--lj-surface, #fff); border: 1px solid var(--lj-border, #e8e6e0); box-shadow: none; }
-
 /* 风格 B：霓光深夜 —— 读主题渐变变量；背景保持暗色，渐变色随主题变化
-   neon 固定深色底，故在 .lj-root 上覆盖文字/表面变量，避免浅色皮肤出现"深底深字" */
-body.lj-style-neon .lj-root {
-  --lj-text: #e8e8f0;
-  --lj-text-muted: #a8a8c0;
-  --lj-text-sub: #8a8aa8;
-  --lj-surface: #1a1d2b;
-  --lj-surface2: #232838;
-  --lj-accent-soft: color-mix(in srgb, var(--lj-accent) 22%, transparent);
-  background: linear-gradient(160deg, #0d0d14 0%, #1a1228 60%, #0d0d14 100%);
-  color: var(--lj-text, #e8e8f0);
-}
-body.lj-style-neon .lj-header { background: linear-gradient(135deg, var(--lj-grad-from, #f97316) 0%, var(--lj-grad-to, #a855f7) 100%); }
-body.lj-style-neon .lj-mode-toggle-bar { background: rgba(255,255,255,0.04); border-bottom: 1px solid rgba(255,255,255,0.07); }
-body.lj-style-neon .lj-tab-bar { background: rgba(255,255,255,0.03); border-bottom: 1px solid rgba(255,255,255,0.07); }
-body.lj-style-neon .lj-tab { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.55); }
-body.lj-style-neon .lj-tab.active { background: linear-gradient(135deg, var(--lj-grad-from, #f97316), var(--lj-grad-to, #a855f7)); color: #fff; box-shadow: 0 2px 12px var(--lj-grad-shadow, rgba(168,85,247,0.4)); }
-body.lj-style-neon .lj-root .lj-textarea {
-  background: rgba(255,255,255,0.06);
-  border-color: rgba(255,255,255,0.12);
-  color: var(--lj-text, #e8e8f0);
-}
-body.lj-style-neon .lj-root .lj-textarea:focus {
-  border-color: color-mix(in srgb, var(--lj-grad-to, #a855f7) 60%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lj-grad-to, #a855f7) 15%, transparent);
-}
-body.lj-style-neon .lj-mood-pill { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.08); }
-body.lj-style-neon .lj-mood-pill span { color: rgba(255,255,255,0.55); }
-body.lj-style-neon .lj-mood-pill.selected { background: color-mix(in srgb, var(--lj-grad-to, #a855f7) 20%, transparent); border-color: var(--lj-grad-to, #a855f7); box-shadow: 0 0 8px var(--lj-grad-shadow, rgba(168,85,247,0.3)); }
-body.lj-style-neon .lj-root .lj-todo-item { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.1); }
-body.lj-style-neon .lj-todo-add-btn { background: linear-gradient(135deg, var(--lj-grad-from, #f97316), var(--lj-grad-to, #a855f7)); }
-body.lj-style-neon .lj-save-btn-sticky { background: linear-gradient(135deg, var(--lj-grad-from, #f97316), var(--lj-grad-to, #a855f7)); box-shadow: 0 4px 20px var(--lj-grad-shadow, rgba(168,85,247,0.4)); }
-body.lj-style-neon .lj-save-btn { background: linear-gradient(135deg, var(--lj-grad-from, #f97316), var(--lj-grad-to, #a855f7)); }
-body.lj-style-neon .lj-mode-btn.active { background: linear-gradient(135deg, var(--lj-grad-from, #f97316), var(--lj-grad-to, #a855f7)); }
-body.lj-style-neon .lj-root .lj-review-card { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.08); }
-
-/* 风格 C：柔光卡片（默认）—— 读主题渐变变量，配色皮肤切换生效 */
-body.lj-style-soft .lj-root {
-  background: var(--lj-bg-grad, linear-gradient(160deg, #fff8f5 0%, #f5f0ff 50%, #f0f5ff 100%));
-}
-body.lj-style-soft .lj-header {
-  background: linear-gradient(135deg, var(--lj-grad-from, #f97316), var(--lj-grad-to, #a855f7));
-}
-body.lj-style-soft .lj-mode-toggle-bar {
-  background: transparent;
-  border-bottom: none;
-  padding-top: 8px;
-}
-body.lj-style-soft .lj-mode-toggle {
-  background: rgba(0,0,0,0.06);
-}
-body.lj-style-soft .lj-mode-btn {
-  color: var(--lj-text-muted, #888);
-}
-body.lj-style-soft .lj-mode-btn.active {
-  background: var(--lj-surface, #fff);
-  color: var(--lj-text, #1a1a2e);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
-}
-body.lj-style-soft .lj-tab-bar {
-  background: transparent;
-  border-bottom: none;
-  padding: 0 12px 8px;
-}
-body.lj-style-soft .lj-tab {
-  background: color-mix(in srgb, var(--lj-surface, #fff) 55%, transparent);
-  color: var(--lj-text-muted, #999);
-  border-radius: 14px;
-}
-body.lj-style-soft .lj-tab.active {
-  background: linear-gradient(135deg, var(--lj-grad-from, #f97316), var(--lj-grad-to, #a855f7));
-  color: #fff;
-  font-weight: 600;
-  box-shadow: 0 2px 10px var(--lj-grad-shadow, rgba(168,85,247,0.25));
-}
-body.lj-style-soft .lj-textarea {
-  background: color-mix(in srgb, var(--lj-surface, #fff) 72%, transparent);
-  border-color: color-mix(in srgb, var(--lj-surface, #fff) 90%, transparent);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border-radius: 14px;
-  font-size: 14px;
-}
-body.lj-style-soft .lj-textarea:focus {
-  background: color-mix(in srgb, var(--lj-surface, #fff) 88%, transparent);
-  border-color: color-mix(in srgb, var(--lj-grad-to, #a855f7) 40%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lj-grad-to, #a855f7) 10%, transparent);
-}
-body.lj-style-soft .lj-mood-pill {
-  background: color-mix(in srgb, var(--lj-surface, #fff) 72%, transparent);
-  border-color: color-mix(in srgb, var(--lj-surface, #fff) 90%, transparent);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  border-radius: 12px;
-}
-body.lj-style-soft .lj-mood-pill.selected {
-  background: color-mix(in srgb, var(--lj-accent, #a855f7) 12%, transparent);
-  border-color: color-mix(in srgb, var(--lj-accent, #a855f7) 40%, transparent);
-}
-body.lj-style-soft .lj-mood-pill span { color: var(--lj-text-muted, #aaa); }
-body.lj-style-soft .lj-todo-item {
-  background: color-mix(in srgb, var(--lj-surface, #fff) 72%, transparent);
-  border-color: color-mix(in srgb, var(--lj-surface, #fff) 90%, transparent);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  border-radius: 10px;
-}
-body.lj-style-soft .lj-todo-add-btn {
-  background: linear-gradient(135deg, var(--lj-grad-from, #f97316), var(--lj-grad-to, #a855f7));
-}
-body.lj-style-soft .lj-save-btn-sticky {
-  background: linear-gradient(135deg, var(--lj-grad-from, #f97316), var(--lj-grad-to, #a855f7));
-  box-shadow: 0 4px 20px var(--lj-grad-shadow, rgba(168,85,247,0.25));
-}
-body.lj-style-soft .lj-save-btn {
-  background: linear-gradient(135deg, var(--lj-grad-from, #f97316), var(--lj-grad-to, #a855f7));
-}
-body.lj-style-soft .lj-review-card {
-  background: color-mix(in srgb, var(--lj-surface, #fff) 72%, transparent);
-  border: 1px solid color-mix(in srgb, var(--lj-surface, #fff) 90%, transparent);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-}
 
 /* ════════════════════════════════════════════════════════
    设置页面
@@ -1079,49 +840,6 @@ body.lj-style-soft .lj-review-card {
   font-size: 12px;
   color: var(--lj-text-sub);
   margin-bottom: 12px;
-}
-
-.lj-style-grid,
-.lj-theme-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  margin-bottom: 20px;
-}
-
-.lj-style-card,
-.lj-theme-card {
-  padding: 12px;
-  background: var(--lj-surface);
-  border: 2px solid var(--lj-border);
-  border-radius: var(--lj-radius);
-  cursor: pointer;
-  transition: all 0.2s;
-  text-align: center;
-}
-
-.lj-style-card.active,
-.lj-theme-card.active {
-  border-color: var(--lj-accent);
-  background: var(--lj-accent-soft);
-}
-
-.lj-style-emoji,
-.lj-theme-emoji { font-size: 28px; margin-bottom: 6px; }
-
-.lj-style-name,
-.lj-theme-name {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--lj-text);
-  margin-bottom: 4px;
-}
-
-.lj-style-desc,
-.lj-theme-desc {
-  font-size: 10px;
-  color: var(--lj-text-sub);
-  line-height: 1.3;
 }
 
 /* 选中卡片：accent-soft 底上改用加深的 accent 文字，保证可读 */
@@ -1390,9 +1108,9 @@ body.lj-style-soft .lj-review-card {
 
 .lj-todo-due.overdue,
 .lj-review-due.overdue {
-  background: #fff0f0;
-  color: #d32f2f;
-  border-color: #ffcdd2;
+  background: color-mix(in srgb, var(--text-error) 8%, var(--background-primary));
+  color: var(--text-error);
+  border-color: color-mix(in srgb, var(--text-error) 24%, transparent);
   font-weight: 600;
 }
 
@@ -1400,7 +1118,7 @@ body.lj-style-soft .lj-review-card {
 .lj-todo-completed,
 .lj-review-todo-completed {
   margin-top: 4px;
-  color: #2e7d32; /* 覆盖父元素完成态的淡化文字色 */
+  color: var(--color-green, #2e7d32); /* 覆盖父元素完成态的淡化文字色 */
 }
 
 .lj-todo-completed-item,
@@ -1412,9 +1130,9 @@ body.lj-style-soft .lj-review-card {
   padding: 1px 9px;
   margin-right: 4px;
   border-radius: 999px;
-  background: color-mix(in srgb, #4caf50 22%, transparent);
-  border: 1px solid color-mix(in srgb, #4caf50 38%, transparent);
-  color: #2e7d32;
+  background: color-mix(in srgb, var(--color-green, #4caf50) 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-green, #4caf50) 38%, transparent);
+  color: var(--color-green, #2e7d32);
   white-space: nowrap;
   text-decoration: none;
 }
@@ -1440,16 +1158,16 @@ body.lj-style-soft .lj-review-card {
 .lj-plan-edit-modal .lj-plan-edit-time {
   font-size: 12px;
   font-weight: 600;
-  color: var(--lj-text-muted, #888);
+  color: var(--text-muted);
   white-space: nowrap;
 }
 .lj-plan-edit-modal .lj-plan-edit-title {
   flex: 1;
   padding: 6px 10px;
-  border: 1px solid var(--lj-border, #ddd);
+  border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
-  background: var(--lj-surface, #fff);
-  color: var(--lj-text, #333);
+  background: var(--background-primary);
+  color: var(--text-normal);
 }
 .lj-plan-edit-modal .lj-plan-edit-list {
   display: flex;
@@ -1474,38 +1192,38 @@ body.lj-style-soft .lj-review-card {
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
-  border: 1px solid var(--lj-border, #ddd);
+  border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
-  background: var(--lj-surface, #fff);
-  color: var(--lj-text, #333);
+  background: var(--background-primary);
+  color: var(--text-normal);
 }
 .lj-plan-edit-modal .lj-plan-edit-priority {
   flex-shrink: 0;
   padding: 4px 2px;
-  border: 1px solid var(--lj-border, #ddd);
+  border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
-  background: var(--lj-surface, #fff);
-  color: var(--lj-text, #333);
+  background: var(--background-primary);
+  color: var(--text-normal);
 }
 .lj-plan-edit-modal .lj-plan-edit-due {
   flex-shrink: 0;
   width: 92px;
   padding: 5px 6px;
-  border: 1px solid var(--lj-border, #ddd);
+  border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
-  background: var(--lj-surface, #fff);
-  color: var(--lj-text, #333);
+  background: var(--background-primary);
+  color: var(--text-normal);
   font-size: 12px;
 }
 .lj-plan-edit-modal .lj-plan-edit-del {
   flex-shrink: 0;
   font-size: 16px;
-  color: var(--lj-text-sub, #999);
+  color: var(--lj-text-sub);
   cursor: pointer;
   padding: 0 4px;
 }
 .lj-plan-edit-modal .lj-plan-edit-del:hover {
-  color: #d32f2f;
+  color: var(--text-error);
 }
 .lj-plan-edit-modal .lj-plan-edit-add {
   margin-bottom: 12px;
@@ -1523,11 +1241,11 @@ body.lj-style-soft .lj-review-card {
 }
 .lj-todo-item.drop-before,
 .lj-review-todo-item.drop-before {
-  box-shadow: inset 0 2px 0 var(--lj-accent, #a855f7);
+  box-shadow: inset 0 2px 0 var(--interactive-accent);
 }
 .lj-todo-item.drop-after,
 .lj-review-todo-item.drop-after {
-  box-shadow: inset 0 -2px 0 var(--lj-accent, #a855f7);
+  box-shadow: inset 0 -2px 0 var(--interactive-accent);
 }
 
 /* ── 子任务层级 ── */
@@ -1541,7 +1259,7 @@ body.lj-style-soft .lj-review-card {
   content: "↳";
   position: absolute;
   left: -16px;
-  color: var(--lj-text-sub, #999);
+  color: var(--lj-text-sub);
   font-size: 11px;
   top: 50%;
   transform: translateY(-50%);
@@ -1556,18 +1274,18 @@ body.lj-style-soft .lj-review-card {
 }
 .lj-todo-add-sub {
   font-size: 14px;
-  color: var(--lj-text-sub, #999);
+  color: var(--lj-text-sub);
   cursor: pointer;
   padding: 0 4px;
 }
 .lj-todo-add-sub:hover,
 .lj-todo-add-sub.active {
-  color: var(--lj-accent, #a855f7);
+  color: var(--interactive-accent);
 }
 
 /* ── 子任务添加提示 ── */
 .lj-subtask-hint {
-  color: var(--lj-accent, #a855f7);
+  color: var(--interactive-accent);
 }
 
 /* ── 可收缩分组头 ── */
@@ -1578,12 +1296,12 @@ body.lj-style-soft .lj-review-card {
   padding: 6px 10px;
   margin-bottom: 6px;
   border-radius: 10px;
-  background: color-mix(in srgb, var(--lj-accent, #a855f7) 8%, transparent);
+  background: color-mix(in srgb, var(--interactive-accent) 8%, transparent);
   cursor: pointer;
   user-select: none;
 }
 .lj-review-group-head:hover {
-  background: color-mix(in srgb, var(--lj-accent, #a855f7) 14%, transparent);
+  background: color-mix(in srgb, var(--interactive-accent) 14%, transparent);
 }
 .lj-review-group-head[draggable="true"] {
   cursor: grab;
@@ -1592,23 +1310,23 @@ body.lj-style-soft .lj-review-card {
   opacity: 0.4;
 }
 .lj-review-group-head.drop-before {
-  box-shadow: inset 0 2px 0 var(--lj-accent, #a855f7);
+  box-shadow: inset 0 2px 0 var(--interactive-accent);
 }
 .lj-review-group-head.drop-after {
-  box-shadow: inset 0 -2px 0 var(--lj-accent, #a855f7);
+  box-shadow: inset 0 -2px 0 var(--interactive-accent);
 }
 .lj-review-group-arrow {
   font-size: 12px;
-  color: var(--lj-text-sub, #888);
+  color: var(--lj-text-sub);
 }
 .lj-review-group-title {
   font-size: 13px;
   font-weight: 600;
-  color: var(--lj-text, #333);
+  color: var(--text-normal);
 }
 .lj-review-group-count {
   font-size: 11px;
-  color: var(--lj-text-sub, #888);
+  color: var(--lj-text-sub);
   margin-left: auto;
 }
 
@@ -1618,7 +1336,7 @@ body.lj-style-soft .lj-review-card {
   flex-direction: column;
   gap: 2px;
   padding: 2px 0 4px;
-  border-bottom: 1px solid var(--lj-border, #e5e7eb);
+  border-bottom: 1px solid var(--background-modifier-border);
 }
 
 /* ── 标签面板 / 筛选面板 ── */
@@ -1632,13 +1350,13 @@ body.lj-style-soft .lj-review-card {
 }
 .lj-review-panel-label {
   font-size: 12px;
-  color: var(--lj-text-sub, #888);
+  color: var(--lj-text-sub);
   white-space: nowrap;
   line-height: 26px;
 }
 .lj-review-panel-empty {
   font-size: 12px;
-  color: var(--lj-text-sub, #999);
+  color: var(--lj-text-sub);
 }
 .lj-review-tag-chips {
   display: flex;
@@ -1653,34 +1371,34 @@ body.lj-style-soft .lj-review-card {
 }
 .lj-review-filter-label {
   font-size: 12px;
-  color: var(--lj-text-sub, #888);
+  color: var(--lj-text-sub);
   white-space: nowrap;
 }
 .lj-review-filter-date {
   width: 130px;
   padding: 4px 8px;
-  border: 1px solid var(--lj-border, #ddd);
+  border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
-  background: var(--lj-surface, #fff);
-  color: var(--lj-text, #333);
+  background: var(--background-primary);
+  color: var(--text-normal);
   font-size: 12px;
 }
 .lj-review-filter-sep {
   font-size: 12px;
-  color: var(--lj-text-sub, #888);
+  color: var(--lj-text-sub);
 }
 .lj-review-filter-clear {
   font-size: 12px;
   padding: 3px 10px;
   border-radius: 999px;
-  border: 1px solid var(--lj-border, #ddd);
-  color: var(--lj-text, #333);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-normal);
   cursor: pointer;
   white-space: nowrap;
 }
 .lj-review-filter-clear:hover {
-  color: #d32f2f;
-  border-color: #d32f2f;
+  color: var(--text-error);
+  border-color: var(--text-error);
 }
 
 /* ── 计划编辑弹窗：子任务缩进 ── */
@@ -1690,13 +1408,13 @@ body.lj-style-soft .lj-review-card {
 .lj-plan-edit-modal .lj-plan-edit-indent {
   flex-shrink: 0;
   font-size: 14px;
-  color: var(--lj-text-sub, #999);
+  color: var(--lj-text-sub);
   cursor: pointer;
   padding: 0 4px;
 }
 .lj-plan-edit-modal .lj-plan-edit-indent:hover,
 .lj-plan-edit-modal .lj-plan-edit-indent.active {
-  color: var(--lj-accent, #a855f7);
+  color: var(--interactive-accent);
 }
 
 /* ── 闪念编辑器：格式化工具栏 ── */
@@ -1719,33 +1437,36 @@ body.lj-style-soft .lj-review-card {
   justify-content: center;
   font-size: 12px;
   font-weight: 600;
-  border-radius: 8px;
-  background: var(--lj-surface2, #f3f4f6);
-  border: 1px solid var(--lj-border, #e5e7eb);
-  color: var(--lj-text, #333);
+  border-radius: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
   cursor: pointer;
   user-select: none;
-  transition: border-color 0.15s, color 0.15s;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
 }
 .lj-memo-tb-btn:hover {
-  border-color: var(--lj-accent, #a855f7);
-  color: var(--lj-accent, #a855f7);
+  background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
+  color: var(--interactive-accent);
+}
+.lj-memo-tb-btn:active {
+  transform: scale(0.92);
+  background: color-mix(in srgb, var(--interactive-accent) 18%, transparent);
 }
 
-/* img 字符 logo 按钮 */
-.lj-memo-tb-img {
-  padding: 0 6px;
+/* 图标按钮（照片/录音） */
+.lj-memo-tb-icon {
+  padding: 0 5px;
 }
-.lj-memo-tb-img-logo {
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  line-height: 1;
-  padding: 2px 4px;
-  border: 1.5px solid currentColor;
-  border-radius: 4px;
-  color: inherit;
+.lj-memo-tb-icon svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.8;
+}
+.lj-memo-tb-audio.recording {
+  color: #ef4444 !important;
+  background: color-mix(in srgb, #ef4444 12%, transparent);
+  animation: lj-pulse 1.2s ease-in-out infinite;
 }
 
 /* ── 闪念编辑器：双链/标签自动补全弹层 ── */
@@ -1756,8 +1477,8 @@ body.lj-style-soft .lj-review-card {
   max-width: 320px;
   max-height: 220px;
   overflow-y: auto;
-  background: var(--lj-bg-primary, #fff);
-  border: 1px solid var(--lj-border-color, #e5e7eb);
+  background: var(--lj-bg-primary);
+  border: 1px solid var(--background-modifier-border);
   border-radius: 10px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
   padding: 4px;
@@ -1771,15 +1492,15 @@ body.lj-style-soft .lj-review-card {
   border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
-  color: var(--lj-text, #333);
+  color: var(--text-normal);
 }
 .lj-memo-ac-item:hover,
 .lj-memo-ac-item.active {
-  background: color-mix(in srgb, var(--lj-accent, #a855f7) 12%, transparent);
+  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
 }
 .lj-memo-ac-detail {
   font-size: 11px;
-  color: var(--lj-text-sub, #999);
+  color: var(--lj-text-sub);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1789,48 +1510,6 @@ body.lj-style-soft .lj-review-card {
 /* ── 多行内容换行渲染 ── */
 .lj-review-card-text {
   white-space: pre-wrap;
-}
-
-/* ── 霓光深夜风格覆盖：优先级/日期 ── */
-body.lj-style-neon .lj-todo-due,
-body.lj-style-neon .lj-review-due {
-  background: rgba(255,255,255,0.06);
-  color: var(--lj-text-muted, #a0a0b8);
-  border-color: rgba(255,255,255,0.1);
-}
-body.lj-style-neon .lj-todo-due.overdue,
-body.lj-style-neon .lj-review-due.overdue {
-  background: rgba(211,47,47,0.15);
-  color: #ef5350;
-  border-color: rgba(211,47,47,0.3);
-}
-body.lj-style-neon .lj-todo-completed,
-body.lj-style-neon .lj-review-todo-completed {
-  color: #7bd88a;
-}
-body.lj-style-neon .lj-todo-completed-item,
-body.lj-style-neon .lj-review-todo-completed-item {
-  background: rgba(76, 175, 80, 0.24);
-  border-color: rgba(76, 175, 80, 0.45);
-  color: #7bd88a;
-}
-
-/* ── 柔光卡片风格覆盖：优先级/日期 ── */
-body.lj-style-soft .lj-todo-due,
-body.lj-style-soft .lj-review-due {
-  background: color-mix(in srgb, var(--lj-accent, #a855f7) 8%, transparent);
-}
-body.lj-style-soft .lj-todo-due {
-  border-color: color-mix(in srgb, var(--lj-surface, #fff) 70%, transparent);
-}
-body.lj-style-soft .lj-todo-completed,
-body.lj-style-soft .lj-review-todo-completed {
-  color: #2e7d32;
-}
-body.lj-style-soft .lj-todo-completed-item,
-body.lj-style-soft .lj-review-todo-completed-item {
-  background: color-mix(in srgb, #4caf50 18%, transparent);
-  border-color: color-mix(in srgb, #4caf50 35%, transparent);
 }
 
 /* ════════════════════════════════════════════════════════
@@ -1867,7 +1546,7 @@ body.lj-style-soft .lj-review-todo-completed-item {
 
 .lj-mood-grid.lj-mood-grid-4col .lj-mood-pill .lj-mood-label {
   font-size: 11px;
-  color: var(--lj-text-secondary, #6b7280);
+  color: var(--text-muted);
   line-height: 1.2;
 }
 
@@ -1902,7 +1581,7 @@ body.lj-style-soft .lj-review-todo-completed-item {
 
 .lj-mood-modal-row label {
   font-size: 12px;
-  color: var(--lj-text-secondary, #6b7280);
+  color: var(--text-muted);
   font-weight: 500;
 }
 
@@ -1911,17 +1590,17 @@ body.lj-style-soft .lj-review-todo-completed-item {
   text-align: center;
   font-size: 20px;
   padding: 6px 8px;
-  border: 1px solid var(--lj-border-color, #e5e7eb);
+  border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
-  background: var(--lj-bg-secondary, #f9fafb);
+  background: var(--background-secondary);
 }
 
 .lj-mood-modal-label-input {
   padding: 6px 10px;
-  border: 1px solid var(--lj-border-color, #e5e7eb);
+  border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
   font-size: 14px;
-  background: var(--lj-bg-secondary, #f9fafb);
+  background: var(--background-secondary);
 }
 
 .lj-mood-modal-btns {
@@ -1933,16 +1612,16 @@ body.lj-style-soft .lj-review-todo-completed-item {
 .lj-mood-modal-btns button {
   padding: 6px 14px;
   border-radius: 6px;
-  border: 1px solid var(--lj-border-color, #e5e7eb);
-  background: var(--lj-bg-secondary, #f9fafb);
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
   cursor: pointer;
   font-size: 13px;
 }
 
 .lj-mood-modal-btns .mod-cta {
-  background: var(--lj-accent, #a855f7);
+  background: var(--interactive-accent);
   color: white;
-  border-color: var(--lj-accent, #a855f7);
+  border-color: var(--interactive-accent);
 }
 
 .lj-mood-modal-del-btn {
@@ -1952,50 +1631,9 @@ body.lj-style-soft .lj-review-todo-completed-item {
 }
 
 /* ── 媒体按钮行（📷/🎤） ── */
-.lj-media-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border-top: 1px solid var(--lj-border-color, #f3f4f6);
-}
-
-.lj-media-btn {
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 16px;
-  transition: all 0.2s ease;
-  -webkit-user-select: none;
-  user-select: none;
-}
-
-.lj-media-btn:hover {
-  background: var(--lj-bg-hover, #f3f4f6);
-}
-
-.lj-media-btn:active {
-  transform: scale(0.92);
-}
-
-.lj-media-audio-btn.recording {
-  color: #ef4444;
-  animation: lj-pulse 1.2s ease-in-out infinite;
-}
-
 @keyframes lj-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.6; transform: scale(1.08); }
-}
-
-.lj-media-hint {
-  font-size: 11px;
-  color: var(--lj-text-tertiary, #9ca3af);
-  margin-left: 4px;
 }
 
 /* ── 快捷标签 chips ── */
@@ -2009,7 +1647,7 @@ body.lj-style-soft .lj-review-todo-completed-item {
 }
 
 .lj-quick-tags-label {
-  color: var(--lj-text-sub, #9ca3af);
+  color: var(--text-faint);
   font-size: 11px;
 }
 
@@ -2018,8 +1656,8 @@ body.lj-style-soft .lj-review-todo-completed-item {
   align-items: center;
   padding: 2px 8px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--lj-accent, #a855f7) 10%, transparent);
-  color: color-mix(in srgb, var(--lj-accent, #a855f7) 65%, var(--lj-text, #1a1a1a));
+  background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
+  color: color-mix(in srgb, var(--interactive-accent) 65%, var(--text-normal));
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
@@ -2029,7 +1667,7 @@ body.lj-style-soft .lj-review-todo-completed-item {
 }
 
 .lj-quick-tag-chip:hover {
-  background: color-mix(in srgb, var(--lj-accent, #a855f7) 18%, transparent);
+  background: color-mix(in srgb, var(--interactive-accent) 18%, transparent);
 }
 
 .lj-quick-tag-chip:active {
@@ -2052,7 +1690,7 @@ body.lj-style-soft .lj-review-todo-completed-item {
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  background: var(--lj-accent, #a855f7);
+  background: var(--interactive-accent);
   color: white;
   font-size: 18px;
   font-weight: 500;
@@ -2080,7 +1718,7 @@ body.lj-style-soft .lj-review-todo-completed-item {
   background: transparent;
   font-size: 14px;
   line-height: 1.5;
-  color: var(--lj-text-primary, #111827);
+  color: var(--lj-text-primary);
   font-family: inherit;
   padding: 4px 0;
   min-height: 24px;
@@ -2089,7 +1727,7 @@ body.lj-style-soft .lj-review-todo-completed-item {
 }
 
 .lj-plans-input-wrap .lj-todo-textarea::placeholder {
-  color: var(--lj-text-tertiary, #9ca3af);
+  color: var(--text-faint);
 }
 
 /* ── 优先级按钮与弹出层 ── */
@@ -2105,22 +1743,22 @@ body.lj-style-soft .lj-review-todo-completed-item {
   border-radius: 999px;
   font-size: 12px;
   cursor: pointer;
-  border: 1px solid var(--lj-border-color, #e5e7eb);
-  background: var(--lj-bg-secondary, #f9fafb);
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
   transition: all 0.15s ease;
   -webkit-user-select: none;
   user-select: none;
 }
 
 .lj-priority-btn:hover {
-  border-color: var(--lj-accent, #a855f7);
+  border-color: var(--interactive-accent);
 }
 
 .lj-priority-popover {
   position: absolute;
   z-index: 100;
-  background: var(--lj-bg-primary, #ffffff);
-  border: 1px solid var(--lj-border-color, #e5e7eb);
+  background: var(--lj-bg-primary);
+  border: 1px solid var(--background-modifier-border);
   border-radius: 10px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.1);
   padding: 4px;
@@ -2141,15 +1779,15 @@ body.lj-style-soft .lj-review-todo-completed-item {
 }
 
 .lj-priority-option:hover {
-  background: var(--lj-bg-hover, #f3f4f6);
+  background: var(--lj-bg-hover);
 }
 
 .lj-priority-option.active {
-  background: color-mix(in srgb, var(--lj-accent, #a855f7) 10%, transparent);
-  color: color-mix(in srgb, var(--lj-accent, #a855f7) 65%, var(--lj-text, #1a1a1a));
+  background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
+  color: color-mix(in srgb, var(--interactive-accent) 65%, var(--text-normal));
 }
 
-.lj-priority-option.clear { color: var(--lj-text-secondary, #6b7280); }
+.lj-priority-option.clear { color: var(--text-muted); }
 
 /* ── 回顾页「打开今日原文」按钮 ── */
 .lj-review-open-today-row {
@@ -2165,8 +1803,8 @@ body.lj-style-soft .lj-review-todo-completed-item {
   gap: 6px;
   padding: 6px 12px;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--lj-accent, #a855f7) 10%, transparent);
-  color: color-mix(in srgb, var(--lj-accent, #a855f7) 65%, var(--lj-text, #1a1a1a));
+  background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
+  color: color-mix(in srgb, var(--interactive-accent) 65%, var(--text-normal));
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -2176,7 +1814,7 @@ body.lj-style-soft .lj-review-todo-completed-item {
 }
 
 .lj-review-open-today-btn:hover {
-  background: color-mix(in srgb, var(--lj-accent, #a855f7) 18%, transparent);
+  background: color-mix(in srgb, var(--interactive-accent) 18%, transparent);
 }
 
 .lj-review-open-today-btn:active {
@@ -2194,15 +1832,15 @@ body.lj-style-soft .lj-review-todo-completed-item {
   border-radius: 8px;
   font-size: 14px;
   cursor: pointer;
-  background: color-mix(in srgb, var(--lj-accent, #a855f7) 10%, transparent);
-  color: color-mix(in srgb, var(--lj-accent, #a855f7) 65%, var(--lj-text, #1a1a1a));
+  background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
+  color: color-mix(in srgb, var(--interactive-accent) 65%, var(--text-normal));
   transition: background 0.15s, transform 0.1s;
   -webkit-user-select: none;
   user-select: none;
 }
 
 .lj-review-search-toggle:hover {
-  background: color-mix(in srgb, var(--lj-accent, #a855f7) 18%, transparent);
+  background: color-mix(in srgb, var(--interactive-accent) 18%, transparent);
 }
 
 .lj-review-search-toggle:active {
@@ -2210,14 +1848,14 @@ body.lj-style-soft .lj-review-todo-completed-item {
 }
 
 .lj-review-search-toggle.active {
-  background: linear-gradient(135deg, var(--lj-grad-from, var(--lj-accent)), var(--lj-grad-to, var(--lj-accent)));
+  background: var(--lj-surface);
 }
 
 /* 已配置状态：加深颜色，直观可见 */
 .lj-review-search-toggle.set {
-  background: linear-gradient(135deg, var(--lj-grad-from, var(--lj-accent)), var(--lj-grad-to, var(--lj-accent)));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--lj-accent, #a855f7) 35%, transparent),
-              0 2px 6px color-mix(in srgb, var(--lj-accent, #a855f7) 40%, transparent);
+  background: var(--lj-surface);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 35%, transparent),
+              0 2px 6px color-mix(in srgb, var(--interactive-accent) 40%, transparent);
   filter: saturate(1.4) brightness(1.05);
 }
 .lj-review-search-toggle.set:not(.active) {
@@ -2234,9 +1872,9 @@ body.lj-style-soft .lj-review-todo-completed-item {
   left: 0;
   z-index: 100;
   padding: 8px;
-  border: 1px solid var(--lj-border, #ddd);
+  border: 1px solid var(--background-modifier-border);
   border-radius: 10px;
-  background: var(--lj-surface, #fff);
+  background: var(--background-primary);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
   width: 216px;
 }
@@ -2250,20 +1888,20 @@ body.lj-style-soft .lj-review-todo-completed-item {
   flex: 1;
   min-width: 0;
   padding: 4px 8px;
-  border: 1px solid var(--lj-border, #ddd);
+  border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
-  background: var(--lj-surface, #fff);
-  color: var(--lj-text, #333);
+  background: var(--background-primary);
+  color: var(--text-normal);
   font-size: 12px;
 }
 .lj-review-datepicker .ljd-close {
   font-size: 15px;
-  color: var(--lj-text-sub, #999);
+  color: var(--lj-text-sub);
   cursor: pointer;
   padding: 0 3px;
 }
 .lj-review-datepicker .ljd-close:hover {
-  color: #d32f2f;
+  color: var(--text-error);
 }
 .lj-review-datepicker .ljd-head {
   display: flex;
@@ -2274,7 +1912,7 @@ body.lj-style-soft .lj-review-todo-completed-item {
 .lj-review-datepicker .ljd-title {
   font-size: 12px;
   font-weight: 600;
-  color: var(--lj-text, #333);
+  color: var(--text-normal);
 }
 .lj-review-datepicker .ljd-nav {
   font-size: 15px;
@@ -2282,12 +1920,12 @@ body.lj-style-soft .lj-review-todo-completed-item {
   padding: 2px 8px;
   border-radius: 6px;
   cursor: pointer;
-  color: var(--lj-text-sub, #888);
+  color: var(--lj-text-sub);
   user-select: none;
 }
 .lj-review-datepicker .ljd-nav:hover {
-  background: color-mix(in srgb, var(--lj-accent, #a855f7) 12%, transparent);
-  color: var(--lj-accent, #a855f7);
+  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+  color: var(--interactive-accent);
 }
 .lj-review-datepicker .ljd-grid {
   display: grid;
@@ -2297,7 +1935,7 @@ body.lj-style-soft .lj-review-todo-completed-item {
 .lj-review-datepicker .ljd-wd {
   font-size: 10px;
   text-align: center;
-  color: var(--lj-text-sub, #999);
+  color: var(--lj-text-sub);
   padding: 2px 0;
 }
 .lj-review-datepicker .ljd-day {
@@ -2306,21 +1944,21 @@ body.lj-style-soft .lj-review-todo-completed-item {
   padding: 4px 0;
   border-radius: 6px;
   cursor: pointer;
-  color: var(--lj-text, #333);
+  color: var(--text-normal);
   user-select: none;
 }
 .lj-review-datepicker .ljd-day.empty {
   cursor: default;
 }
 .lj-review-datepicker .ljd-day:not(.empty):hover {
-  background: color-mix(in srgb, var(--lj-accent, #a855f7) 12%, transparent);
+  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
 }
 .lj-review-datepicker .ljd-day.today {
-  border: 1px solid color-mix(in srgb, var(--lj-accent, #a855f7) 45%, transparent);
+  border: 1px solid color-mix(in srgb, var(--interactive-accent) 45%, transparent);
 }
 .lj-review-datepicker .ljd-day.selected {
-  background: linear-gradient(135deg, var(--lj-grad-from, var(--lj-accent)), var(--lj-grad-to, var(--lj-accent)));
-  color: #fff;
+  background: var(--lj-surface);
+  color: var(--text-on-accent);
   font-weight: 600;
 }
 
@@ -2436,127 +2074,14 @@ body.lj-style-soft .lj-review-todo-completed-item {
 }
 
 .lj-mood-add-btn:hover {
-  border-color: var(--lj-accent, #a855f7);
-  color: color-mix(in srgb, var(--lj-accent, #a855f7) 65%, var(--lj-text, #1a1a1a));
+  border-color: var(--interactive-accent);
+  color: color-mix(in srgb, var(--interactive-accent) 65%, var(--text-normal));
 }
 
 .lj-mood-add-btn.is-disabled {
   opacity: 0.5;
   cursor: not-allowed;
   pointer-events: none;
-}
-
-/* ── 柔光风格适配：新增组件 ── */
-body.lj-style-soft .lj-media-btn:hover {
-  background: color-mix(in srgb, var(--lj-surface, #fff) 50%, transparent);
-}
-
-body.lj-style-soft .lj-quick-tag-chip {
-  background: color-mix(in srgb, var(--lj-surface, #fff) 55%, transparent);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  color: color-mix(in srgb, var(--lj-accent, #a855f7) 65%, var(--lj-text, #1a1a1a));
-}
-
-body.lj-style-soft .lj-quick-tag-chip:hover {
-  background: color-mix(in srgb, var(--lj-surface, #fff) 70%, transparent);
-}
-
-body.lj-style-soft .lj-priority-btn {
-  background: color-mix(in srgb, var(--lj-surface, #fff) 55%, transparent);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  border-color: color-mix(in srgb, var(--lj-surface, #fff) 70%, transparent);
-  color: var(--lj-text-primary, #111827);
-}
-
-body.lj-style-soft .lj-review-open-today-btn {
-  background: color-mix(in srgb, var(--lj-surface, #fff) 55%, transparent);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  color: color-mix(in srgb, var(--lj-accent, #a855f7) 65%, var(--lj-text, #1a1a1a));
-}
-
-body.lj-style-soft .lj-review-open-today-btn:hover {
-  background: color-mix(in srgb, var(--lj-surface, #fff) 70%, transparent);
-}
-
-body.lj-style-soft .lj-priority-popover {
-  background: color-mix(in srgb, var(--lj-surface, #fff) 96%, transparent);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
-
-body.lj-style-soft .lj-mood-grid.lj-mood-grid-4col .lj-mood-pill {
-  background: color-mix(in srgb, var(--lj-surface, #fff) 45%, transparent);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-}
-
-body.lj-style-soft .lj-mood-grid.lj-mood-grid-4col .lj-mood-pill.selected {
-  background: color-mix(in srgb, var(--lj-surface, #fff) 85%, transparent);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-}
-
-body.lj-style-soft .lj-mood-grid.lj-mood-grid-4col .lj-mood-label {
-  color: var(--lj-text-muted, #6b7280);
-}
-
-/* ── 极简风格适配 ── */
-body.lj-style-minimal .lj-media-btn:hover {
-  background: #f3f4f6;
-}
-
-body.lj-style-minimal .lj-quick-tag-chip {
-  background: #f3f4f6;
-  color: #111827;
-}
-
-body.lj-style-minimal .lj-quick-tag-chip:hover {
-  background: #e5e7eb;
-}
-
-/* ── 霓光风格适配 ── */
-body.lj-style-neon .lj-media-btn:hover {
-  background: rgba(255,255,255,0.1);
-}
-
-body.lj-style-neon .lj-quick-tag-chip {
-  background: rgba(168,85,247,0.2);
-  color: #c084fc;
-}
-
-body.lj-style-neon .lj-quick-tag-chip:hover {
-  background: rgba(168,85,247,0.3);
-}
-
-body.lj-style-neon .lj-priority-popover {
-  background: #1f2937;
-  border-color: #374151;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-}
-
-body.lj-style-neon .lj-priority-option:hover {
-  background: rgba(255,255,255,0.1);
-}
-
-body.lj-style-neon .lj-review-open-today-btn {
-  background: rgba(168,85,247,0.2);
-  color: #c084fc;
-}
-
-body.lj-style-neon .lj-review-open-today-btn:hover {
-  background: rgba(168,85,247,0.3);
-}
-
-body.lj-style-neon .lj-mood-grid.lj-mood-grid-4col .lj-mood-pill {
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.1);
-}
-
-body.lj-style-neon .lj-mood-grid.lj-mood-grid-4col .lj-mood-pill.selected {
-  background: rgba(168,85,247,0.2);
-  border-color: rgba(168,85,247,0.5);
 }
 
 /* ════════════════════════════════════════════════════════
@@ -2651,7 +2176,7 @@ body.lj-style-neon .lj-mood-grid.lj-mood-grid-4col .lj-mood-pill.selected {
 }
 
 .lj-root .lj-section-toggle.enabled {
-  color: color-mix(in srgb, #22c55e 70%, var(--lj-text, #1a1a1a));
+  color: color-mix(in srgb, #22c55e 70%, var(--text-normal));
 }
 
 .lj-section-toggle:not(.enabled) {
@@ -2778,4 +2303,1336 @@ body.lj-style-neon .lj-mood-grid.lj-mood-grid-4col .lj-mood-pill.selected {
   opacity: 0.5;
   cursor: not-allowed;
   pointer-events: none;
+}
+
+
+/* ════════════════════════════════════════════════════════
+   HIG 组件层（macOS 分段控件 / 44px 触控目标 / 轻量动画）
+   动画仅使用 transform 与 opacity，避免移动端布局重排；
+   交互组件加 will-change 提示，滚动容器保持零滤镜。
+   ════════════════════════════════════════════════════════ */
+
+/* ── macOS 风格分段控件（顶部模式切换） ── */
+.lj-mode-toggle-bar {
+  background: var(--background-secondary);
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding: 8px 12px;
+}
+.lj-mode-toggle {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--background-secondary-alt);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  width: fit-content;
+  margin: 0 auto;
+}
+.lj-mode-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 6px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  /* 仅过渡 transform/opacity/background，GPU 友好 */
+  transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease;
+  will-change: transform;
+}
+.lj-mode-btn:hover {
+  color: var(--text-normal);
+}
+.lj-mode-btn:active {
+  transform: scale(0.97);
+}
+.lj-mode-btn.active {
+  background: var(--background-primary);
+  color: var(--text-normal);
+  /* 抬起式浮层：hairline 描边 + 轻投影 */
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 1px var(--background-modifier-border);
+}
+
+/* ── 触控目标 ≥ 44px（移动端） ── */
+.lj-save-btn,
+.lj-save-btn-sticky {
+  min-height: 44px;
+  border-radius: 14px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  will-change: transform;
+}
+.lj-save-btn:active,
+.lj-save-btn-sticky:active {
+  transform: scale(0.98);
+}
+.lj-todo-checkbox,
+.lj-plan-edit-done {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--interactive-accent);
+}
+.lj-review-checkbox {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--background-modifier-border-hover);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.lj-review-checkbox.checked {
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+}
+.lj-todo-add-btn,
+.lj-todo-add-btn-left {
+  min-width: 44px;
+  min-height: 44px;
+}
+.lj-review-card-more {
+  min-width: 32px;
+  min-height: 32px;
+}
+
+@media (hover: none) {
+  /* 移动端进一步放大触控目标 */
+  .lj-mode-btn { min-height: 44px; }
+  .lj-tab { min-height: 44px; }
+  .lj-todo-del, .lj-todo-add-sub { padding: 8px 10px; }
+  .lj-review-search-toggle { width: 40px; height: 40px; }
+}
+
+/* ── 卡片与输入件：原生表面 + hairline 边框 + 轻投影 ── */
+.lj-review-card {
+  border-radius: 16px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+.lj-textarea,
+.lj-todo-textarea,
+.lj-review-search-input,
+.lj-review-filter-date,
+.lj-plan-edit-text,
+.lj-plan-edit-title {
+  border-radius: 12px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-normal);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.lj-textarea:focus,
+.lj-todo-textarea:focus,
+.lj-review-search-input:focus {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--interactive-accent) 18%, transparent);
+}
+
+/* ── 语义色改用 Obsidian 原生色变量（过期/完成/优先级） ── */
+.lj-todo-due.overdue,
+.lj-review-due.overdue {
+  background: color-mix(in srgb, var(--color-red, #d32f2f) 14%, transparent);
+  color: var(--color-red, #d32f2f);
+  border-color: color-mix(in srgb, var(--color-red, #d32f2f) 30%, transparent);
+}
+.lj-todo-completed-item,
+.lj-review-todo-completed-item {
+  background: color-mix(in srgb, var(--color-green, #4caf50) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-green, #4caf50) 30%, transparent);
+  color: var(--color-green, #4caf50);
+}
+/* ════════════════════════════════════════════════════════
+   Daybook Dashboard · Apple HIG × Obsidian Native CSS
+   ────────────────────────────────────────────────────────
+   设计原则：
+   1. 零硬编码颜色 — 全部使用 Obsidian CSS 变量
+   2. 无 backdrop-filter — 轻量半透明层替代（Android 性能）
+   3. 44px 最小触摸目标（Apple HIG）
+   4. 仅 transform/opacity 动画 — 避免 layout reflow
+   5. will-change 硬件加速 — GPU 合成层
+   6. border-radius 16/24px — Apple 圆角语言
+   ════════════════════════════════════════════════════════ */
+
+/* ── 设计令牌 ── */
+.db-root {
+  --db-bg:          var(--background-primary);
+  --db-surface:     var(--background-secondary);
+  --db-surface-alt: var(--background-primary-alt);
+  --db-border:      var(--background-modifier-border);
+  --db-border-hair: var(--background-modifier-border-hover);
+  --db-accent:      var(--interactive-accent);
+  --db-accent-text: var(--text-on-accent);
+  --db-text:        var(--text-normal);
+  --db-text-muted:  var(--text-muted);
+  --db-text-faint:  var(--text-faint);
+  --db-shadow-sm:   0 1px 3px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.02);
+  --db-shadow-md:   0 4px 12px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.03);
+  --db-shadow-lg:   0 8px 24px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.04);
+  --db-radius:      16px;
+  --db-radius-lg:   24px;
+  --db-radius-pill: 999px;
+
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+               var(--font-interface), "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ── 根布局 ── */
+.db-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--db-bg);
+  color: var(--db-text);
+  container-type: inline-size;
+}
+.db-root * { box-sizing: border-box; }
+
+/* ════════════════════════════════════════════════════════
+   1. Header Bar
+   ════════════════════════════════════════════════════════ */
+.db-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 12px;
+  flex-shrink: 0;
+}
+
+.db-header-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.db-header-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--db-text);
+}
+.db-header-title svg { color: var(--db-accent); }
+
+.db-header-title-text { line-height: 1.2; }
+
+.db-header-date {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--db-text-muted);
+  letter-spacing: 0.01em;
+}
+
+.db-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Icon Button (44x44 touch target) ── */
+.db-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--db-radius-pill);
+  background: var(--db-surface-alt);
+  border: 1px solid var(--db-border);
+  color: var(--db-text-muted);
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease, background-color 0.15s ease;
+  will-change: transform;
+}
+.db-icon-btn:hover {
+  background: var(--db-surface);
+  color: var(--db-text);
+  border-color: var(--db-border-hair);
+}
+.db-icon-btn:active {
+  transform: scale(0.92);
+  opacity: 0.7;
+}
+
+/* ════════════════════════════════════════════════════════
+   2. Segmented Control (macOS style)
+   ════════════════════════════════════════════════════════ */
+.db-segment-container {
+  padding: 0 20px 12px;
+  flex-shrink: 0;
+}
+
+.db-segment-control {
+  display: flex;
+  position: relative;
+  background: var(--db-surface-alt);
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius-pill);
+  padding: 3px;
+  gap: 0;
+}
+
+/* Sliding indicator — transform only for 60fps */
+.db-segment-indicator {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc((100% - 6px) / 3);
+  height: calc(100% - 6px);
+  background: var(--db-surface);
+  border-radius: var(--db-radius-pill);
+  box-shadow: var(--db-shadow-sm);
+  transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+  will-change: transform;
+  z-index: 0;
+}
+
+.db-segment {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 1;
+  min-height: 38px;
+  padding: 6px 12px;
+  border-radius: var(--db-radius-pill);
+  color: var(--db-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  position: relative;
+  z-index: 1;
+  transition: color 0.2s ease;
+  user-select: none;
+}
+.db-segment.active {
+  color: var(--db-text);
+}
+.db-segment-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.db-segment-label {
+  white-space: nowrap;
+}
+
+/* ════════════════════════════════════════════════════════
+   3. Content Area
+   ════════════════════════════════════════════════════════ */
+.db-content {
+  flex: 1;
+  padding: 4px 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── Section Title ── */
+.db-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 4px 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--db-text-faint);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.db-section-title svg { color: var(--db-text-faint); }
+
+/* ════════════════════════════════════════════════════════
+   4. Stat Cards Grid
+   ════════════════════════════════════════════════════════ */
+.db-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.db-stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  background: var(--db-surface);
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius);
+  box-shadow: var(--db-shadow-sm);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  will-change: transform;
+}
+.db-stat-card:active {
+  transform: scale(0.97);
+  box-shadow: var(--db-shadow-md);
+}
+
+/* Accent variant — uses interactive-accent tint (no hardcode) */
+.db-stat-accent {
+  background: color-mix(in srgb, var(--db-accent) 8%, var(--db-surface));
+  border-color: color-mix(in srgb, var(--db-accent) 24%, var(--db-border));
+}
+
+.db-stat-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--db-surface-alt);
+  color: var(--db-text-muted);
+}
+.db-stat-accent .db-stat-icon {
+  background: color-mix(in srgb, var(--db-accent) 16%, transparent);
+  color: var(--db-accent);
+}
+
+.db-stat-value-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.db-stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--db-text);
+  line-height: 1.1;
+}
+.db-stat-sublabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--db-text-muted);
+}
+.db-stat-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--db-text-muted);
+  letter-spacing: 0.01em;
+}
+
+/* ════════════════════════════════════════════════════════
+   5. Toggle Switch Card (Apple HIG)
+   ════════════════════════════════════════════════════════ */
+.db-toggle-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: var(--db-surface);
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius);
+  box-shadow: var(--db-shadow-sm);
+  cursor: pointer;
+  transition: transform 0.15s ease;
+  will-change: transform;
+  min-height: 64px;
+}
+.db-toggle-card:active { transform: scale(0.985); }
+
+.db-toggle-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+.db-toggle-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--db-surface-alt);
+  color: var(--db-text-muted);
+  flex-shrink: 0;
+}
+.db-toggle-text { min-width: 0; }
+.db-toggle-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--db-text);
+  line-height: 1.3;
+}
+.db-toggle-subtitle {
+  font-size: 12px;
+  color: var(--db-text-muted);
+  margin-top: 2px;
+  line-height: 1.3;
+}
+
+/* ── Apple Toggle Switch ── */
+.db-toggle-switch-wrap { flex-shrink: 0; padding-left: 12px; }
+
+.db-toggle-track {
+  position: relative;
+  width: 51px;
+  height: 31px;
+  border-radius: var(--db-radius-pill);
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+  will-change: background-color;
+  flex-shrink: 0;
+}
+.db-toggle-track.on {
+  background: var(--db-accent);
+}
+.db-toggle-track.off {
+  background: color-mix(in srgb, var(--db-text-muted) 30%, transparent);
+  border: 1px solid var(--db-border);
+}
+
+.db-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.05);
+  transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+  will-change: transform;
+}
+.db-toggle-track.on .db-toggle-thumb {
+  transform: translateX(20px);
+}
+.db-toggle-track.off .db-toggle-thumb {
+  transform: translateX(0);
+}
+
+/* ════════════════════════════════════════════════════════
+   6. Slider Card (Apple HIG)
+   ════════════════════════════════════════════════════════ */
+.db-slider-card {
+  padding: 16px;
+  background: var(--db-surface);
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius);
+  box-shadow: var(--db-shadow-sm);
+}
+
+.db-slider-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.db-slider-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.db-slider-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--db-surface-alt);
+  color: var(--db-text-muted);
+  flex-shrink: 0;
+}
+.db-slider-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--db-text);
+}
+.db-slider-subtitle {
+  font-size: 12px;
+  color: var(--db-text-muted);
+  margin-top: 2px;
+}
+
+/* ── Value Badge ── */
+.db-slider-badge {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  padding: 6px 12px;
+  border-radius: var(--db-radius-pill);
+  background: color-mix(in srgb, var(--db-accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--db-accent) 20%, transparent);
+}
+.db-slider-badge-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--db-accent);
+  font-variant-numeric: tabular-nums;
+}
+.db-slider-badge-unit {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--db-accent);
+  opacity: 0.7;
+}
+
+/* ── Slider Track ── */
+.db-slider-track-wrap {
+  position: relative;
+  height: 44px; /* touch target */
+  display: flex;
+  align-items: center;
+}
+.db-slider-rail {
+  position: relative;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--db-surface-alt);
+  border: 1px solid var(--db-border);
+  overflow: visible;
+}
+.db-slider-fill {
+  position: absolute;
+  top: 0; left: 0;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--db-accent);
+  transition: width 0.1s ease;
+  will-change: width;
+}
+.db-slider-thumb {
+  position: absolute;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 1px solid var(--db-border);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  transform: translate(-50%, -50%);
+  transition: left 0.1s ease, transform 0.15s ease;
+  will-change: left, transform;
+  pointer-events: none;
+}
+/* Invisible native range input for touch + a11y */
+.db-slider-range {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* ════════════════════════════════════════════════════════
+   7. Activity Card
+   ════════════════════════════════════════════════════════ */
+.db-activity-card {
+  background: var(--db-surface);
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius);
+  box-shadow: var(--db-shadow-sm);
+  overflow: hidden;
+}
+.db-activity-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  min-height: 48px;
+  border-bottom: 1px solid var(--db-border);
+}
+.db-activity-row:last-child { border-bottom: none; }
+
+.db-activity-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--db-surface-alt);
+  color: var(--db-text-muted);
+  flex-shrink: 0;
+}
+.db-activity-text {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--db-text);
+}
+.db-activity-time {
+  font-size: 12px;
+  color: var(--db-text-faint);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ════════════════════════════════════════════════════════
+   8. Responsive — Mobile (Android/iOS)
+   ════════════════════════════════════════════════════════ */
+@container (max-width: 480px) {
+  .db-header { padding: 12px 16px 8px; }
+  .db-header-title { font-size: 18px; }
+  .db-segment-container { padding: 0 16px 10px; }
+  .db-content { padding: 4px 16px 20px; gap: 10px; }
+
+  /* 2-column stat grid on mobile */
+  .db-stat-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .db-stat-card { padding: 12px; }
+  .db-stat-value { font-size: 20px; }
+
+  /* Compact mode — tighter spacing */
+  .db-compact .db-content { gap: 8px; }
+  .db-compact .db-stat-card { padding: 10px; }
+  .db-compact .db-toggle-card { padding: 10px 12px; min-height: 56px; }
+  .db-compact .db-slider-card { padding: 12px; }
+}
+
+@container (max-width: 360px) {
+  .db-segment-label { display: none; }
+  .db-segment { gap: 0; }
+}
+
+/* ════════════════════════════════════════════════════════
+   9. Dark Mode Adjustments (via Obsidian variables — auto)
+   ── No manual dark mode overrides needed ──
+   All colors reference Obsidian CSS variables which
+   automatically adjust for Light/Dark themes.
+   ════════════════════════════════════════════════════════ */
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .db-segment-indicator,
+  .db-toggle-thumb,
+  .db-slider-fill,
+  .db-slider-thumb,
+  .db-icon-btn,
+  .db-stat-card,
+  .db-toggle-card {
+    transition: none !important;
+    will-change: auto !important;
+  }
+}
+
+/* ════════════════════════════════════════════════════════
+   10. Lucide Icon Sizing (via CSS — no setIcon size arg)
+   ════════════════════════════════════════════════════════ */
+.db-header-title svg         { width: 20px; height: 20px; }
+.db-icon-btn svg             { width: 18px; height: 18px; }
+.db-segment-icon svg         { width: 16px; height: 16px; }
+.db-section-title svg        { width: 16px; height: 16px; }
+.db-stat-icon svg            { width: 22px; height: 22px; }
+.db-toggle-icon svg          { width: 20px; height: 20px; }
+.db-slider-icon svg          { width: 20px; height: 20px; }
+.db-activity-icon svg        { width: 16px; height: 16px; }
+
+
+/* ════════════════════════════════════════════════════════
+   11. Settings — iOS Grouped Cards
+   ════════════════════════════════════════════════════════ */
+
+/* Remove default Obsidian setting heading styling when grouped */
+.lj-settings-grouped > h3 { display: none; }
+
+/* Card container */
+.lj-settings-card {
+  margin-bottom: 16px;
+  border-radius: 10px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  overflow: hidden;
+}
+
+/* Card header */
+.lj-settings-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary-alt);
+}
+
+.lj-settings-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  flex-shrink: 0;
+}
+
+.lj-settings-card-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.lj-settings-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+/* Card body */
+.lj-settings-card-body {
+  padding: 4px 0;
+}
+
+/* Settings inside cards: tighter spacing, no extra borders */
+.lj-settings-card-body > .setting-item {
+  border-bottom: none;
+  padding: 10px 16px;
+}
+
+.lj-settings-card-body > .setting-item:last-child {
+  padding-bottom: 14px;
+}
+
+/* Hint text inside cards */
+.lj-settings-card-body > .lj-settings-hint {
+  padding: 8px 16px 4px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+
+/* Section editor inside cards */
+.lj-settings-card-body > .lj-section-editor {
+  padding: 0 16px;
+}
+
+/* Add button inside cards */
+.lj-settings-card-body > .lj-section-add-btn,
+.lj-settings-card-body > .lj-mood-add-btn {
+  margin: 8px 16px 12px;
+}
+
+/* Mood editor inside cards */
+.lj-settings-card-body > .lj-mood-editor {
+  padding: 0 16px;
+}
+
+/* Responsive: wider cards on larger screens */
+@media (min-width: 600px) {
+  .lj-settings-grouped {
+    max-width: 640px;
+  }
+}
+
+
+/* ════════════════════════════════════════════════════════
+   12. Settings — Panel Editor (two-level: panel → sections)
+   ════════════════════════════════════════════════════════ */
+
+/* Panel editor container */
+.lj-panel-editor {
+  padding: 0 16px;
+  margin-top: 8px;
+}
+
+/* Panel card (outer level) */
+.lj-panel-card {
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+/* Panel card header */
+.lj-panel-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--background-secondary-alt);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+/* Panel name input */
+.lj-panel-name-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-normal);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
+.lj-panel-name-input:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}
+
+/* Panel section count hint */
+.lj-panel-section-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Sections list inside panel */
+.lj-panel-sections {
+  padding: 8px 12px 4px;
+}
+
+/* Nested section card (smaller, indented) */
+.lj-section-card-nested {
+  margin-bottom: 8px;
+  border-radius: 6px;
+}
+
+.lj-section-card-nested .lj-section-card-head {
+  padding: 8px 10px;
+  background: var(--background-secondary);
+}
+
+.lj-section-card-nested .lj-section-card-body {
+  padding: 8px 10px 10px;
+}
+
+/* Small add button (inside panel) */
+.lj-section-add-btn-sm {
+  width: 100%;
+  margin: 4px 0 8px;
+  padding: 6px;
+  font-size: 12px;
+}
+
+/* Mode bar: allow wrapping for many panels */
+.lj-mode-toggle-fixed .lj-mode-toggle {
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.lj-mode-toggle-fixed .lj-mode-btn {
+  white-space: nowrap;
+}
+
+
+/* ════════════════════════════════════════════════════════
+   13. Settings — Collapsible Cards
+   ════════════════════════════════════════════════════════ */
+
+/* Card header: clickable cursor */
+.lj-settings-card-header {
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Chevron icon */
+.lj-settings-card-chevron {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.lj-settings-card-chevron svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Collapsed card: hide body */
+.lj-card-collapsed > .lj-settings-card-body {
+  display: none;
+}
+
+/* Panel card collapse */
+.lj-panel-card-head {
+  cursor: pointer;
+  user-select: none;
+}
+
+.lj-panel-chevron {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.lj-panel-chevron svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Collapsed panel: hide sections list */
+.lj-panel-collapsed > .lj-panel-sections {
+  display: none;
+}
+
+/* Section file path input */
+.lj-section-edit-filepath {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 5px;
+  background: var(--background-primary);
+  font-size: 12px;
+  font-family: var(--font-monospace, monospace);
+}
+.lj-section-field-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+.lj-section-field-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* ════════════════════════════════════════════════════
+   §12 实时渲染预览层（参考 Thino Live Preview 效果）
+   ════════════════════════════════════════════════════ */
+
+/* 预览容器：紧贴 textarea 下方，圆角卡片风格 */
+.lj-live-editor-preview {
+  margin-top: -2px;
+  padding: 10px 14px 12px;
+  border: 1.5px solid var(--background-modifier-border);
+  border-top: none;
+  border-radius: 0 0 14px 14px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  font-size: 14px;
+  line-height: 1.7;
+  overflow: hidden;
+  max-height: 280px;
+  overflow-y: auto;
+  animation: lj-preview-fade-in 0.2s ease;
+  /* 渲染内容使用 Obsidian 原生 markdown 样式 */
+}
+
+/* 当 textarea 获焦时，预览层上边框与 textarea 下边框融为一体 */
+.lj-textarea:focus + .lj-live-editor-preview,
+.lj-live-editor-wrap:focus-within .lj-live-editor-preview {
+  border-color: var(--interactive-accent);
+}
+
+/* 预览层内的 markdown 元素样式（复用 Obsidian 原生变量） */
+.lj-live-editor-preview p {
+  margin: 0 0 0.5em;
+}
+.lj-live-editor-preview p:last-child {
+  margin-bottom: 0;
+}
+.lj-live-editor-preview h1,
+.lj-live-editor-preview h2,
+.lj-live-editor-preview h3,
+.lj-live-editor-preview h4,
+.lj-live-editor-preview h5,
+.lj-live-editor-preview h6 {
+  margin: 0.6em 0 0.3em;
+  font-weight: 600;
+}
+.lj-live-editor-preview h1 { font-size: 1.3em; }
+.lj-live-editor-preview h2 { font-size: 1.2em; }
+.lj-live-editor-preview h3 { font-size: 1.1em; }
+.lj-live-editor-preview h4,
+.lj-live-editor-preview h5,
+.lj-live-editor-preview h6 { font-size: 1em; }
+
+.lj-live-editor-preview ul,
+.lj-live-editor-preview ol {
+  margin: 0.3em 0;
+  padding-left: 1.5em;
+}
+.lj-live-editor-preview li {
+  margin: 0.15em 0;
+}
+.lj-live-editor-preview code {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--code-background, var(--background-modifier-border));
+  font-family: var(--font-monospace, monospace);
+  font-size: 0.9em;
+}
+.lj-live-editor-preview pre {
+  margin: 0.5em 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--code-background, var(--background-secondary));
+  overflow-x: auto;
+}
+.lj-live-editor-preview pre code {
+  padding: 0;
+  background: none;
+}
+.lj-live-editor-preview blockquote {
+  margin: 0.5em 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--interactive-accent);
+  color: var(--text-muted);
+}
+.lj-live-editor-preview a.tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+  color: var(--interactive-accent);
+  font-size: 0.85em;
+  text-decoration: none;
+  cursor: default;
+}
+.lj-live-editor-preview a.internal-link,
+.lj-live-editor-preview a.data-link {
+  color: var(--text-accent);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--text-accent);
+  cursor: default;
+}
+.lj-live-editor-preview strong { font-weight: 700; }
+.lj-live-editor-preview em { font-style: italic; }
+.lj-live-editor-preview del { text-decoration: line-through; opacity: 0.7; }
+.lj-live-editor-preview img {
+  max-width: 100%;
+  border-radius: 8px;
+  margin: 4px 0;
+}
+.lj-live-editor-preview hr {
+  border: none;
+  border-top: 1px solid var(--background-modifier-border);
+  margin: 0.8em 0;
+}
+.lj-live-editor-preview input[type="checkbox"] {
+  margin-right: 6px;
+}
+/* 任务列表样式 */
+.lj-live-editor-preview ul.contains-task-list {
+  list-style: none;
+  padding-left: 0.5em;
+}
+
+/* 实时预览提示标签 */
+.lj-live-editor-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 12px 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-style: italic;
+}
+.lj-live-editor-hint::before {
+  content: "◉";
+  font-size: 8px;
+  color: var(--interactive-accent);
+  animation: lj-preview-pulse 1.5s ease-in-out infinite;
+}
+
+/* 淡入动画 */
+@keyframes lj-preview-fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes lj-preview-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* 计划输入区的预览层适配 */
+.lj-plans-input-wrap .lj-live-editor-preview {
+  border-radius: 0 0 12px 12px;
+  max-height: 200px;
+  font-size: 13px;
+  padding: 8px 12px 10px;
+}
+
+/* 移动端适配 */
+@media (max-width: 600px) {
+  .lj-live-editor-preview {
+    max-height: 200px;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+  .lj-plans-input-wrap .lj-live-editor-preview {
+    max-height: 150px;
+  }
+}
+
+/* ════════════════════════════════════════════════════════
+   v4.1 内嵌 Live Preview 编辑器（同 Thino：输入即渲染）
+   根元素 .lj-live-editor，内部为 Obsidian 原生 CM6 编辑器
+   ════════════════════════════════════════════════════════ */
+
+/* 外壳：与原 .lj-textarea 一致的圆角边框输入区 */
+.lj-live-editor {
+  width: 100%;
+  border: 1.5px solid var(--lj-border, var(--background-modifier-border));
+  border-radius: 14px;
+  background: var(--lj-surface, var(--background-primary));
+  overflow: hidden;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.lj-live-editor:focus-within {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--interactive-accent) 18%, transparent);
+}
+
+/* 清除 embed 容器与 MSV 自带的边框/背景/内边距 */
+.lj-live-editor .markdown-embed,
+.lj-live-editor .markdown-embed-content,
+.lj-live-editor .markdown-source-view.mod-cm6,
+.lj-live-editor .cm-editor {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+.lj-live-editor .markdown-embed,
+.lj-live-editor .markdown-embed-content {
+  padding: 0;
+  margin: 0;
+}
+
+/* 高度由内容驱动（CM 默认 height:100%，内嵌需改 auto） */
+.lj-live-editor .cm-editor {
+  height: auto;
+  padding: 10px 12px;
+  font-size: 14px;
+  line-height: 1.7;
+}
+.lj-live-editor .cm-scroller {
+  overflow: hidden;
+  font-family: inherit;
+  line-height: inherit;
+}
+.lj-live-editor .cm-content {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  padding: 0;
+  min-height: 60px;
+}
+.lj-live-editor .cm-line {
+  padding: 0 2px;
+}
+.lj-live-editor .cm-placeholder {
+  color: var(--lj-text-muted, var(--text-muted));
+  font-style: normal;
+}
+/* 内嵌输入区里标题不放大，避免一两行标题撑高输入框 */
+.lj-live-editor .cm-formatting-header,
+.lj-live-editor .cm-header {
+  font-size: 1em;
+  line-height: inherit;
+}
+.lj-live-editor .cm-content img {
+  max-width: 100%;
+}
+
+/* 移动端：更紧凑 */
+@media (max-width: 600px) {
+  .lj-live-editor-mobile .cm-editor {
+    padding: 8px 10px;
+  }
+  .lj-live-editor-mobile .cm-content {
+    min-height: 45px;
+  }
+  .lj-live-editor-mobile.lj-live-editor-fallback .lj-live-textarea {
+    min-height: 45px;
+  }
+}
+
+/* ── 计划输入框：单行起步、随内容增长、最高 120px、无边框（贴合原样式） ── */
+.lj-plans-input-wrap .lj-todo-add-row-textarea .lj-live-editor {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+.lj-plans-input-wrap .lj-todo-add-row-textarea .lj-live-editor:focus-within {
+  box-shadow: none;
+}
+.lj-live-editor-plan .cm-editor {
+  padding: 2px 0;
+  max-height: 120px;
+}
+.lj-live-editor-plan .cm-scroller {
+  overflow-y: auto;
+}
+.lj-live-editor-plan .cm-content {
+  min-height: 24px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.lj-live-editor-plan .cm-placeholder {
+  color: var(--text-faint);
+}
+
+/* ── 阅读卡片内联编辑 ── */
+.lj-review-card-edit .lj-live-editor {
+  border: 1.5px solid var(--lj-border, var(--background-modifier-border));
+  border-radius: 10px;
+}
+.lj-live-editor-review .cm-editor {
+  min-height: 90px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.lj-live-editor-review .cm-content {
+  min-height: 64px;
+}
+.lj-review-card-edit .lj-live-editor:focus-within {
+  border-color: var(--lj-accent, var(--interactive-accent));
+  box-shadow: 0 0 0 3px var(--lj-accent-soft, transparent);
+}
+
+/* ── textarea 降级：外壳提供边框，内层 textarea 去边框 ── */
+.lj-live-editor-fallback .lj-live-textarea {
+  width: 100%;
+  border: none;
+  border-radius: 14px;
+  background: transparent;
+  min-height: 60px;
+  padding: 10px 12px;
+  font-size: 14px;
+  line-height: 1.7;
+  resize: none;
+}
+.lj-live-editor-fallback .lj-live-textarea:focus {
+  outline: none;
+  box-shadow: none;
+}
+/* 计划页降级：无边框、最高 120px */
+.lj-live-editor-plan.lj-live-editor-fallback .lj-live-textarea {
+  min-height: 24px;
+  max-height: 120px;
+  padding: 2px 0;
+  line-height: 1.5;
+}
+/* 阅读卡片降级 */
+.lj-live-editor-review.lj-live-editor-fallback .lj-live-textarea {
+  min-height: 90px;
+  font-size: 13px;
+  line-height: 1.6;
 }

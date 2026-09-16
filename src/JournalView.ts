@@ -1,13 +1,14 @@
-import { ItemView, WorkspaceLeaf, Notice, moment, TFile, Modal } from "obsidian";
-import type LifeJournalPlugin from "./main";
-import { appendToSection } from "./fileManager";
+import { ItemView, WorkspaceLeaf, Notice, moment, TFile, Modal, setIcon } from "obsidian";
+import type DaybookPlugin from "./main";
+import { appendToSection, resolveSectionPath } from "./fileManager";
 import { appendTodoCompletionInfo, createPriorityBadge, effectivePriority, getCompletedFieldName, moveTodoSubtree, PRIORITY_EMOJI, PRIORITY_META, shouldShowPriorityBadge, type PriorityLevel } from "./fileReader";
-import { isTypeEnabled, type SectionConfig, type UIStyle, type MoodOption } from "./settings";
+import { getVisiblePanels, getVisibleSections, getAllSections, type SectionConfig, type MoodOption } from "./settings";
 import { ReviewView } from "./ReviewView";
 import type { TodoItem } from "./fileReader";
 import { attachMemoEditor } from "./memoEditor";
+import { createLiveEditor, type LiveEditor, type LiveEditorOptions } from "./liveEditor";
 
-export const VIEW_TYPE_JOURNAL = "life-journal-view";
+export const VIEW_TYPE_JOURNAL = "daybook-view";
 
 function isMobile(): boolean { return window.innerWidth < 600; }
 
@@ -179,16 +180,18 @@ class MoodEditModal extends Modal {
   }
 }
 
-export class LifeJournalView extends ItemView {
-  plugin: LifeJournalPlugin;
+export class DaybookView extends ItemView {
+  plugin: DaybookPlugin;
   private selectedMood: string | null = null; // emoji 作为选中标识
   private activeSectionId: string = "memos";
   private todoItems: TodoItem[] = [];
-  private viewMode: "record" | "review" | "plans" = "record";
+  private viewMode: string = ""; // "edit" or "review"
+  private activePanelId: string = "";
   private _vpResizeHandler: (() => void) | null = null;
   // 录音相关
   private mediaRecorder: any = null;
   private audioChunks: Blob[] = [];
+  private _currentSection?: SectionConfig;
   private isRecording = false;
   // 计划优先级
   private currentPriority: PriorityLevel | null = null;
@@ -196,8 +199,10 @@ export class LifeJournalView extends ItemView {
   private subtaskTarget: number | null = null;
   // 上一次渲染的编辑上下文（用于离开计划编辑时清空未保存草稿）
   private lastEditCtx = "";
+  // 当前页面上的内嵌实时渲染编辑器（buildUI 重建/onClose 时统一销毁）
+  private liveEditors = new Set<LiveEditor>();
 
-  constructor(leaf: WorkspaceLeaf, plugin: LifeJournalPlugin) {
+  constructor(leaf: WorkspaceLeaf, plugin: DaybookPlugin) {
     super(leaf);
     this.plugin = plugin;
   }
@@ -213,6 +218,7 @@ export class LifeJournalView extends ItemView {
 
   async onClose() {
     this.teardownViewportAdapter();
+    this.destroyLiveEditors();
     // 停止录音并释放资源
     if (this.mediaRecorder && this.isRecording) {
       try {
@@ -246,12 +252,37 @@ export class LifeJournalView extends ItemView {
     }
   }
 
+  /** 销毁所有内嵌编辑器（buildUI 全量重建/视图关闭前调用） */
+  private destroyLiveEditors() {
+    this.liveEditors.forEach(ed => {
+      try { ed.destroy(); } catch (e) { /* ignore */ }
+    });
+    this.liveEditors.clear();
+  }
+
+  /**
+   * 创建内嵌 Live Preview 编辑器并登记生命周期。
+   * 文件上下文取当前章节对应的日记文件（双链/附件路径解析用）。
+   */
+  private makeEditor(parent: HTMLElement, opts: LiveEditorOptions, extraCls = ""): LiveEditor {
+    let sourceFile: TFile | null = null;
+    try {
+      const sectionPath = resolveSectionPath(this.plugin.settings, this._currentSection);
+      const af = this.app.vault.getAbstractFileByPath(sectionPath);
+      if (af instanceof TFile) sourceFile = af;
+    } catch (e) { /* ignore */ }
+    const editor = createLiveEditor(this.app, parent, opts, extraCls, sourceFile);
+    this.liveEditors.add(editor);
+    return editor;
+  }
+
   buildUI() {
-    // 离开计划编辑（计划模式或计划类章节）时清空未保存的草稿
-    const ctx = this.viewMode === "plans" ? "@plans" : this.viewMode === "record" ? `#${this.activeSectionId}` : `@${this.viewMode}`;
+    // 离开计划编辑时清空未保存的草稿
+    const allSecs = getAllSections(this.plugin.settings);
+    const ctx = this.viewMode === "review" ? "@review" : `#${this.activeSectionId}`;
     if (ctx !== this.lastEditCtx) {
-      const leavingPlans = this.lastEditCtx === "@plans"
-        || (this.lastEditCtx.startsWith("#") && this.plugin.settings.sections.find(sec => `#${sec.id}` === this.lastEditCtx)?.type === "plans");
+      const leavingPlans = this.lastEditCtx.startsWith("#")
+        && allSecs.find(sec => `#${sec.id}` === this.lastEditCtx)?.type === "plans";
       if (leavingPlans) {
         this.todoItems = [];
         this.subtaskTarget = null;
@@ -260,18 +291,16 @@ export class LifeJournalView extends ItemView {
       this.lastEditCtx = ctx;
     }
     const root = this.containerEl.children[1] as HTMLElement;
+    this.destroyLiveEditors();
     root.empty();
     root.setAttribute("class", "lj-root");
     root.style.height = "";
     root.style.maxHeight = "";
-    // 设置切回「融入阅读列表」时，避免停留在已移除的计划模式
-    if (this.viewMode === "plans" && (this.plugin.settings.plansDisplay !== "separate" || !isTypeEnabled(this.plugin.settings, "plans"))) {
-      this.viewMode = "record";
+    // 确保当前模式有效：非 review 即 edit
+    const visiblePanels = getVisiblePanels(this.plugin.settings);
+    if (this.viewMode !== "review" && this.viewMode !== "edit") {
+      this.viewMode = visiblePanels.length > 0 ? "edit" : "review";
     }
-    const style = this.plugin.settings.uiStyle;
-    if (style === "minimal") this.buildMinimalHeader(root);
-    else if (style === "neon") this.buildNeonHeader(root);
-    else this.buildSoftHeader(root);
     this.buildModeToggleFixed(root);
     if (this.viewMode === "review") {
       root.addClass("lj-root-review-v3");
@@ -279,70 +308,45 @@ export class LifeJournalView extends ItemView {
       new ReviewView(rc, this.plugin).render();
       return;
     }
-    if (this.viewMode === "plans") {
-      // 计划模式：与阅读模式同层级，整页只展示待办计划
-      root.addClass("lj-root-review-v3");
-      const rc = root.createDiv({ cls: "lj-review-container" });
-      new ReviewView(rc, this.plugin, true).render();
-      return;
-    }
-    this.buildTabsAndContent(root, style);
+    this.buildEditContent(root);
   }
 
   private buildModeToggleFixed(root: HTMLElement) {
     const bar = root.createDiv({ cls: "lj-mode-toggle-bar lj-mode-toggle-fixed" });
     const toggle = bar.createDiv({ cls: "lj-mode-toggle" });
-    const rb = toggle.createDiv({ cls: `lj-mode-btn ${this.viewMode === "record" ? "active" : ""}`, text: "\u270F\uFE0F \u7F16\u8F91" });
+    // 编辑按钮（统一入口，所有章节在此切换编辑）
+    const visiblePanels = getVisiblePanels(this.plugin.settings);
+    const eb = toggle.createDiv({
+      cls: `lj-mode-btn ${this.viewMode === "edit" ? "active" : ""}`,
+      text: "\u270F\uFE0F \u7F16\u8F91",
+    });
+    eb.toggleClass("disabled", visiblePanels.length === 0);
+    eb.addEventListener("click", () => {
+      if (this.viewMode !== "edit" && visiblePanels.length > 0) { this.viewMode = "edit"; this.buildUI(); }
+    });
+    // 阅读按钮
     const rv = toggle.createDiv({ cls: `lj-mode-btn ${this.viewMode === "review" ? "active" : ""}`, text: "\u{1F4D6} \u9605\u8BFB" });
-    rb.addEventListener("click", () => { if (this.viewMode !== "record") { this.viewMode = "record"; this.buildUI(); } });
     rv.addEventListener("click", () => { if (this.viewMode !== "review") { this.viewMode = "review"; this.buildUI(); } });
-    // 计划单独板块时，模式栏新增「📋 计划」入口
-    if (this.plugin.settings.plansDisplay === "separate" && isTypeEnabled(this.plugin.settings, "plans")) {
-      const rp = toggle.createDiv({ cls: `lj-mode-btn ${this.viewMode === "plans" ? "active" : ""}`, text: "\u{1F4CB} \u8BA1\u5212" });
-      rp.addEventListener("click", () => { if (this.viewMode !== "plans") { this.viewMode = "plans"; this.buildUI(); } });
+  }
+
+  private buildEditContent(root: HTMLElement) {
+    // 编辑模式：统一展示所有版块下的所有可见章节，方便跨章节编辑/合并
+    const sections = getVisibleSections(this.plugin.settings);
+    // ⚠️ tab 栏必须先于内容区创建（lj-root 是 flex column + 整体滚动，
+    // 若内容区 flex:1 在前，tab 栏会被推到所有内容的最底部，不可见）
+    if (sections.length === 0) {
+      const content = root.createDiv({ cls: "lj-content lj-content-scroll" });
+      content.createDiv({ cls: "lj-todo-empty", text: "没有可见章节" });
+      return;
     }
-  }
-
-  private buildMinimalHeader(root: HTMLElement) {
-    const d = new Date();
-    const header = root.createDiv({ cls: "lj-header" });
-    const left = header.createDiv({ cls: "lj-header-left" });
-    left.createDiv({ cls: "lj-date-tiny", text: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }).toUpperCase() + " \xB7 " + ["\u65E5","\u4E00","\u4E8C","\u4E09","\u56DB","\u4E94","\u516D"][d.getDay()] });
-    left.createDiv({ cls: "lj-title", text: "Daybook" });
-    header.createDiv({ cls: "lj-header-icon", text: "\u2726" });
-  }
-
-  private buildNeonHeader(root: HTMLElement) {
-    const d = new Date();
-    const header = root.createDiv({ cls: "lj-header" });
-    const toprow = header.createDiv({ cls: "lj-header-toprow" });
-    const logoWrap = toprow.createDiv({ cls: "lj-logo-wrap" });
-    logoWrap.createDiv({ cls: "lj-logo-icon", text: "\u2726" });
-    logoWrap.createDiv({ cls: "lj-logo-text", text: "Daybook" });
-    toprow.createDiv({ cls: "lj-date-badge", text: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }).toUpperCase() });
-    const greeting = header.createDiv({ cls: "lj-greeting" });
-    greeting.createSpan({ text: "\u4ECA\u5929\uFF0C\u597D\u597D" });
-    greeting.createSpan({ cls: "lj-greeting-accent", text: "\u8BB0\u5F55\u81EA\u5DF1" });
-  }
-
-  private buildSoftHeader(root: HTMLElement) {
-    const d = new Date();
-    const m = d.getMonth() + 1;
-    const day = d.getDate();
-    const weekDays = ["\u661F\u671F\u65E5","\u661F\u671F\u4E00","\u661F\u671F\u4E8C","\u661F\u671F\u4E09","\u661F\u671F\u56DB","\u661F\u671F\u4E94","\u661F\u671F\u516D"];
-    const header = root.createDiv({ cls: "lj-header" });
-    const toprow = header.createDiv({ cls: "lj-header-toprow" });
-    const brand = toprow.createDiv({ cls: "lj-brand" });
-    brand.createDiv({ cls: "lj-brand-dot" });
-    brand.createSpan({ text: "Daybook" });
-    toprow.createDiv({ cls: "lj-streak-pill", text: "\u2726 \u4ECA\u65E5\u8BB0\u5F55" });
-    const dateRow = header.createDiv({ cls: "lj-date-row" });
-    dateRow.createSpan({ cls: "lj-date-large", text: `${m}\u6708${day}\u65E5` });
-    dateRow.createSpan({ cls: "lj-date-sub", text: weekDays[d.getDay()] });
-  }
-
-  private buildTabsAndContent(root: HTMLElement, style: UIStyle) {
-    const sections = this.plugin.settings.sections.filter(s => s.enabled && isTypeEnabled(this.plugin.settings, s.type));
+    // 单章节：直接显示
+    if (sections.length === 1) {
+      const content = root.createDiv({ cls: "lj-content lj-content-scroll" });
+      this.activeSectionId = sections[0].id;
+      this.renderTabContent(content, sections[0]);
+      return;
+    }
+    // 多章节：先建 tab 栏（在内容区上方），再建内容区
     const tabBar = root.createDiv({ cls: "lj-tab-bar" });
     sections.forEach(sec => {
       const btn = tabBar.createDiv({ cls: `lj-tab ${this.activeSectionId === sec.id ? "active" : ""}` });
@@ -352,51 +356,32 @@ export class LifeJournalView extends ItemView {
     });
     const content = root.createDiv({ cls: "lj-content lj-content-scroll" });
     const active = sections.find(s => s.id === this.activeSectionId) ?? sections[0];
-    if (active) {
-      this.activeSectionId = active.id;
-      this.renderTabContent(content, active, style);
-    } else {
-      content.createDiv({ cls: "lj-todo-empty", text: "\u8BF7\u5728\u8BBE\u7F6E\u4E2D\u6DFB\u52A0\u7AE0\u8282" });
-    }
+    this.activeSectionId = active.id;
+    this.renderTabContent(content, active);
   }
 
-  private renderTabContent(container: HTMLElement, section: SectionConfig, style: UIStyle) {
-    if (section.type === "plans") this.renderPlansTab(container, section, style);
-    else this.renderMemosTab(container, section, style);
+  private renderTabContent(container: HTMLElement, section: SectionConfig) {
+    if (section.type === "plans") this.renderPlansTab(container, section);
+    else this.renderMemosTab(container, section);
   }
 
-  private mountTagPreview(inputEl: HTMLTextAreaElement | HTMLInputElement, previewEl: HTMLElement) {
-    const handler = () => {
-      const tags = extractInlineTags(inputEl.value);
-      previewEl.empty();
-      previewEl.toggleClass("has-tags", tags.length > 0);
-      if (tags.length === 0) return;
-      previewEl.createDiv({ cls: "lj-tag-preview-label", text: "\u5DF2\u8BC6\u522B\u6807\u7B7E" });
-      const list = previewEl.createDiv({ cls: "lj-tag-preview-list" });
-      tags.forEach(tag => { list.createDiv({ cls: "lj-tag-chip", text: tag }); });
-    };
-    inputEl.addEventListener("input", handler);
-    handler();
+  /** 根据当前文本刷新"已识别标签"预览 */
+  private refreshTagPreview(value: string, previewEl: HTMLElement) {
+    const tags = extractInlineTags(value);
+    previewEl.empty();
+    previewEl.toggleClass("has-tags", tags.length > 0);
+    if (tags.length === 0) return;
+    previewEl.createDiv({ cls: "lj-tag-preview-label", text: "\u5DF2\u8BC6\u522B\u6807\u7B7E" });
+    const list = previewEl.createDiv({ cls: "lj-tag-preview-list" });
+    tags.forEach(tag => { list.createDiv({ cls: "lj-tag-chip", text: tag }); });
   }
 
-  /** 在 textarea 上监听图片粘贴，保存到 vault 并插入 ![[image.png]] 引用 */
-  /** 在 textarea 上设置媒体支持：图片粘贴/上传 + 录音 */
-  private setupMediaSupport(textarea: HTMLTextAreaElement, wrap: HTMLElement) {
-    // 粘贴上传图片
-    textarea.addEventListener("paste", async (evt: ClipboardEvent) => {
-      const files = evt.clipboardData?.files;
-      if (!files || files.length === 0) return;
-
-      let hasImage = false;
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        if (!file.type.startsWith("image/")) continue;
-        evt.preventDefault();
-        hasImage = true;
-        await this.saveImageToVault(file, textarea);
-      }
-    });
-
+  /**
+   * 媒体支持：图片文件选择 + 图片粘贴（粘贴由编辑器 onPasteFiles 传入）+ 录音。
+   * toolbarSlot 存在时渲染精简工具栏（拍照 + 录音）；实时渲染模式下不再需要
+   * B/S/双链 等格式化按钮——标记语法在输入时即被原生渲染。
+   */
+  private setupMediaSupport(editor: LiveEditor, wrap: HTMLElement, section?: SectionConfig, toolbarSlot?: HTMLElement) {
     // 图片文件选择
     const fileInput = wrap.createEl("input", {
       cls: "lj-img-file-input",
@@ -407,34 +392,39 @@ export class LifeJournalView extends ItemView {
       const files = fileInput.files;
       if (!files) return;
       for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        await this.saveImageToVault(file, textarea);
+        await this.saveImageToVault(files[i], editor);
       }
       fileInput.value = "";
     });
 
-    // 媒体按钮行（📷 图片 + 🎤 录音）
-    const mediaBar = wrap.createDiv({ cls: "lj-media-bar" });
-    const imgBtn = mediaBar.createDiv({ cls: "lj-media-btn lj-media-img-btn", text: "\u{1F4F7}", attr: { "aria-label": "添加图片" } });
-    const audioBtn = mediaBar.createDiv({ cls: "lj-media-btn lj-media-audio-btn", text: "\u{1F3A4}", attr: { "aria-label": "录音" } });
-    const hintText = mediaBar.createDiv({ cls: "lj-media-hint", text: "支持粘贴图片、点击录音" });
+    if (!toolbarSlot) return;
 
-    imgBtn.addEventListener("click", () => fileInput.click());
+    // 精简工具栏：照片 + 录音
+    toolbarSlot.empty();
+    toolbarSlot.addClass("lj-memo-toolbar");
 
-    // 录音按钮
-    audioBtn.addEventListener("click", async () => {
-      if (this.isRecording) {
-        // 停止录音
-        this.stopRecording(textarea, audioBtn);
-      } else {
-        // 开始录音
-        this.startRecording(textarea, audioBtn);
-      }
+    const photoBtn = toolbarSlot.createDiv({
+      cls: "lj-memo-tb-btn lj-memo-tb-icon",
+      attr: { role: "button", "aria-label": "上传照片", title: "上传照片" },
+    });
+    setIcon(photoBtn, "image");
+    photoBtn.addEventListener("mousedown", e => e.preventDefault());
+    photoBtn.addEventListener("click", () => fileInput.click());
+
+    const micBtn = toolbarSlot.createDiv({
+      cls: "lj-memo-tb-btn lj-memo-tb-icon lj-memo-tb-audio",
+      attr: { role: "button", "aria-label": "录音", title: "录音" },
+    });
+    setIcon(micBtn, "mic");
+    micBtn.addEventListener("mousedown", e => e.preventDefault());
+    micBtn.addEventListener("click", () => {
+      if (this.isRecording) this.stopRecording(editor, micBtn);
+      else this.startRecording(editor, micBtn);
     });
   }
 
   /** 开始录音 */
-  private async startRecording(textarea: HTMLTextAreaElement, btn: HTMLElement) {
+  private async startRecording(editor: LiveEditor, btn: HTMLElement) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       this.audioChunks = [];
@@ -467,18 +457,10 @@ export class LifeJournalView extends ItemView {
         this.isRecording = false;
         btn.removeClass("recording");
 
-        // 检测 textarea 是否还在 DOM 中（重渲染可能导致失效）
-        if (!textarea.isConnected) {
-          // 仍然保存文件，但告知用户
-          const blob = new Blob(this.audioChunks, { type: mimeType || "audio/webm" });
-          const ext = mimeType.includes("mp4") ? "m4a" : mimeType.includes("ogg") ? "ogg" : "webm";
-          this.saveAudioBlob(blob, ext, null);
-          return;
-        }
-
+        // 编辑器可能已因重渲染被销毁（脱离 DOM），此时只保存文件
         const blob = new Blob(this.audioChunks, { type: mimeType || "audio/webm" });
         const ext = mimeType.includes("mp4") ? "m4a" : mimeType.includes("ogg") ? "ogg" : "webm";
-        this.saveAudioBlob(blob, ext, textarea);
+        this.saveAudioBlob(blob, ext, editor.el.isConnected ? editor : null);
       };
 
       this.mediaRecorder.start();
@@ -490,20 +472,21 @@ export class LifeJournalView extends ItemView {
   }
 
   /** 停止录音 */
-  private stopRecording(textarea: HTMLTextAreaElement, btn: HTMLElement) {
+  private stopRecording(_editor: LiveEditor, _btn: HTMLElement) {
     if (this.mediaRecorder && this.isRecording) {
       this.mediaRecorder.stop();
     }
   }
 
-  /** 保存音频 blob 到 vault，可选插入到 textarea */
-  private async saveAudioBlob(blob: Blob, ext: string, textarea: HTMLTextAreaElement | null) {
+  /** 保存音频 blob 到 vault，可选插入到编辑器 */
+  private async saveAudioBlob(blob: Blob, ext: string, editor: LiveEditor | null) {
     try {
       const now = new Date();
       const ts = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,"0")}${String(now.getDate()).padStart(2,"0")}-${String(now.getHours()).padStart(2,"0")}${String(now.getMinutes()).padStart(2,"0")}${String(now.getSeconds()).padStart(2,"0")}`;
       const fileName = `lj-audio-${ts}.${ext}`;
 
-      const diaryFolder = this.plugin.settings.diaryFolder.trim().replace(/\/$/, "");
+      const fullPath = resolveSectionPath(this.plugin.settings, this._currentSection);
+      const diaryFolder = fullPath.includes("/") ? fullPath.slice(0, fullPath.lastIndexOf("/")) : this.plugin.settings.diaryFolder.trim().replace(/\/$/, "");
       const audioPath = `${diaryFolder}/${fileName}`;
 
       const arrayBuffer = await blob.arrayBuffer();
@@ -511,15 +494,8 @@ export class LifeJournalView extends ItemView {
 
       await this.app.vault.createBinary(audioPath, uint8);
 
-      if (textarea) {
-        const insertText = `\n![[${fileName}]]\n`;
-        const start = textarea.selectionStart;
-        const end = textarea.selectionEnd;
-        const before = textarea.value.substring(0, start);
-        const after = textarea.value.substring(end);
-        textarea.value = before + insertText + after;
-        textarea.selectionStart = textarea.selectionEnd = start + insertText.length;
-        textarea.dispatchEvent(new Event("input"));
+      if (editor) {
+        editor.insertAtCursor(`\n![[${fileName}]]\n`);
       }
 
       new Notice(`\u{1F3A4} 录音已保存：${fileName}`);
@@ -529,14 +505,15 @@ export class LifeJournalView extends ItemView {
     }
   }
 
-  private async saveImageToVault(file: File, textarea: HTMLTextAreaElement) {
+  private async saveImageToVault(file: File, editor: LiveEditor) {
     try {
       const now = new Date();
       const ts = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,"0")}${String(now.getDate()).padStart(2,"0")}-${String(now.getHours()).padStart(2,"0")}${String(now.getMinutes()).padStart(2,"0")}${String(now.getSeconds()).padStart(2,"0")}`;
       const ext = file.name.split(".").pop() || "png";
       const fileName = `lj-img-${ts}.${ext}`;
 
-      const diaryFolder = this.plugin.settings.diaryFolder.trim().replace(/\/$/, "");
+      const fullPath = resolveSectionPath(this.plugin.settings, this._currentSection);
+      const diaryFolder = fullPath.includes("/") ? fullPath.slice(0, fullPath.lastIndexOf("/")) : this.plugin.settings.diaryFolder.trim().replace(/\/$/, "");
       const imagePath = `${diaryFolder}/${fileName}`;
 
       const arrayBuffer = await file.arrayBuffer();
@@ -544,14 +521,7 @@ export class LifeJournalView extends ItemView {
 
       await this.app.vault.createBinary(imagePath, uint8);
 
-      const insertText = `\n![[${fileName}]]\n`;
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      const before = textarea.value.substring(0, start);
-      const after = textarea.value.substring(end);
-      textarea.value = before + insertText + after;
-      textarea.selectionStart = textarea.selectionEnd = start + insertText.length;
-      textarea.dispatchEvent(new Event("input"));
+      editor.insertAtCursor(`\n![[${fileName}]]\n`);
 
       new Notice(`\u{1F4F7} 图片已添加：${fileName}`);
     } catch (e) {
@@ -561,7 +531,7 @@ export class LifeJournalView extends ItemView {
   }
 
   /** 闪念 Tab：快速记录（心情选择器可选，支持 Markdown/双链/标签的增强编辑器） */
-  private renderMemosTab(container: HTMLElement, section: SectionConfig, _style: UIStyle) {
+  private renderMemosTab(container: HTMLElement, section: SectionConfig) {
     const mobile = isMobile();
     const moods = this.plugin.settings.customMoods;
     const showMood = section.showMoodPicker !== false;
@@ -635,31 +605,44 @@ export class LifeJournalView extends ItemView {
     }
 
     const wrap = container.createDiv({ cls: "lj-input-wrap" });
-    // 工具栏挂载点（位于输入框上方）
+    // 工具栏挂载点（位于输入框上方）：照片 + 录音
     const toolbarSlot = wrap.createDiv({ cls: "lj-memo-toolbar-slot" });
-    const textarea = wrap.createEl("textarea", {
-      cls: `lj-textarea lj-mood-textarea ${mobile ? "lj-textarea-mobile" : ""}`,
-      attr: { placeholder: section.placeholder, rows: mobile ? "2" : "3" },
-    });
+    this._currentSection = section;
 
-    // 快捷标签 chips
-    this.renderQuickTags(wrap, textarea);
+    // 内嵌 Live Preview 编辑器：输入即渲染（Obsidian 原生 Markdown 效果）
+    // tagPreview 在下方声明，onChange 回调触发时它必然已存在
+    const tagPreviewRef: { el: HTMLElement | null } = { el: null };
+    const editor = this.makeEditor(wrap, {
+      placeholder: section.placeholder,
+      onChange: (value) => { if (tagPreviewRef.el) this.refreshTagPreview(value, tagPreviewRef.el); },
+      onPasteFiles: (files) => {
+        files.forEach(f => this.saveImageToVault(f, editor));
+      },
+    }, mobile ? "lj-live-editor-mobile" : "");
 
+    // 快捷标签 chips（紧跟输入框）
+    this.renderQuickTags(wrap, editor);
+    // 标签识别预览
     const tagPreview = wrap.createDiv({ cls: "lj-tag-preview" });
-    this.mountTagPreview(textarea, tagPreview);
-    this.setupMediaSupport(textarea, wrap);
-    // 增强编辑器：格式化工具栏（B/S/双链/标签/图片）+ 双链/标签自动补全
-    const imageInput = wrap.querySelector<HTMLInputElement>(".lj-img-file-input");
-    attachMemoEditor(this.app, this.plugin, textarea, wrap, { toolbar: true, toolbarSlot, imageInput });
+    tagPreviewRef.el = tagPreview;
+    this.refreshTagPreview(editor.getValue(), tagPreview);
+
+    // 媒体：图片选择/粘贴 + 录音（精简工具栏渲染到 toolbarSlot）
+    this.setupMediaSupport(editor, wrap, section, toolbarSlot);
+    // textarea 降级模式：保留旧的双链/标签自动补全（实时渲染模式使用原生补全）
+    if (!editor.isLive && editor.nativeInput) {
+      attachMemoEditor(this.app, this.plugin, editor.nativeInput, wrap, { toolbar: false });
+    }
 
     const saveBtn = wrap.createDiv({ cls: "lj-save-btn lj-save-btn-sticky" });
     saveBtn.createDiv({ cls: "lj-btn-icon", text: section.emoji });
     saveBtn.createDiv({ cls: "lj-btn-text", text: `\u4FDD\u5B58${section.label}` });
-    textarea.addEventListener("focus", () => {
+    // focusin 对 textarea 与 CM contentDOM 均可冒泡捕获
+    editor.el.addEventListener("focusin", () => {
       setTimeout(() => saveBtn.scrollIntoView({ block: "nearest", behavior: "smooth" }), 350);
     });
     saveBtn.addEventListener("click", async () => {
-      const text = textarea.value.trim();
+      const text = editor.getValue().trim();
       if (!text && !this.selectedMood) { new Notice("\u8BF7\u5148\u8F93\u5165\u5185\u5BB9\uFF5E"); return; }
       const mood = moods.find(m => m.emoji === this.selectedMood);
       const content = mood
@@ -667,10 +650,9 @@ export class LifeJournalView extends ItemView {
         : text;
       saveBtn.addClass("loading");
       try {
-        await appendToSection(this.app, this.plugin.settings, section.label, section.type, content);
+        await appendToSection(this.app, this.plugin.settings, section.label, section.type, content, section);
         new Notice("\u2726 \u95EA\u5FF5\u5DF2\u8BB0\u5F55");
-        textarea.value = "";
-        textarea.dispatchEvent(new Event("input"));
+        editor.setValue("");
         this.selectedMood = null;
         this.buildUI();
       } catch (e) { new Notice("\u8BB0\u5F55\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u65E5\u8BB0\u76EE\u5F55\u8BBE\u7F6E"); }
@@ -678,8 +660,8 @@ export class LifeJournalView extends ItemView {
     });
   }
 
-  /** 渲染快捷标签 chips，点击向 textarea 追加 #标签 */
-  private renderQuickTags(container: HTMLElement, textarea: HTMLTextAreaElement) {
+  /** 渲染快捷标签 chips，点击向编辑器插入 #标签 */
+  private renderQuickTags(container: HTMLElement, editor: LiveEditor) {
     const tags = this.plugin.settings.quickTags;
     if (tags.length === 0) return;
 
@@ -693,61 +675,78 @@ export class LifeJournalView extends ItemView {
       });
       chip.addEventListener("click", () => {
         const insertText = `#${tag} `;
-        const start = textarea.selectionStart;
+        const sel = editor.getSelection();
         // 光标前已有 '#'（如补全触发中）时替换它，避免出现 ##标签
-        let from = start;
-        if (from > 0 && textarea.value[from - 1] === "#") from--;
-        const before = textarea.value.substring(0, from);
-        const after = textarea.value.substring(textarea.selectionEnd);
-        textarea.value = before + insertText + after;
-        textarea.selectionStart = textarea.selectionEnd = from + insertText.length;
-        textarea.dispatchEvent(new Event("input"));
-        textarea.focus();
+        let from = sel.from;
+        if (from > 0 && editor.getValue()[from - 1] === "#") from--;
+        editor.replaceRange(from, sel.to, insertText);
       });
     });
   }
 
-  private renderPlansTab(container: HTMLElement, section: SectionConfig, _style: UIStyle) {
+  private renderPlansTab(container: HTMLElement, section: SectionConfig) {
     const mobile = isMobile();
     const wrap = container.createDiv({ cls: "lj-input-wrap lj-plans-input-wrap" });
 
-    // 输入行：左侧 + 按钮，右侧 textarea
+    // 输入行：左侧 + 按钮，右侧内嵌 Live Preview 编辑器
     const addRow = wrap.createDiv({ cls: "lj-todo-add-row lj-todo-add-row-textarea" });
     const addBtn = addRow.createDiv({ cls: "lj-todo-add-btn lj-todo-add-btn-left", text: "+", attr: { "aria-label": "添加待办" } });
-    const textarea = addRow.createEl("textarea", {
-      cls: "lj-todo-textarea",
-      attr: {
-        placeholder: section.placeholder,
-        rows: "1",
-        "aria-label": "添加待办",
+
+    this._currentSection = section;
+
+    // 提示区元素在编辑器后创建，onChange 触发时通过 ref 访问
+    const hintRefs: { date: HTMLElement | null; tags: HTMLElement | null } = { date: null, tags: null };
+
+    // 单行增长型实时编辑器：Enter 添加、Shift+Enter 换行（高度由 CSS 自适应，最高 120px）
+    const editor = this.makeEditor(addRow, {
+      placeholder: section.placeholder,
+      onChange: (value) => {
+        // 降级 textarea 才需要 JS 自动增高；CM 由 CSS 自适应
+        if (!editor.isLive && editor.nativeInput) {
+          const ta = editor.nativeInput;
+          ta.style.height = "auto";
+          ta.style.height = Math.min(ta.scrollHeight, 120) + "px";
+        }
+        const dateHint = hintRefs.date;
+        if (dateHint) {
+          const result = extractDateFromText(value);
+          if (result.date) {
+            dateHint.setText(`\u{1F4C5} \u5DF2\u8BC6\u522B\uFF1A${formatDueDate(result.date)}（${result.date}）`);
+            dateHint.addClass("visible");
+          } else {
+            dateHint.setText("");
+            dateHint.removeClass("visible");
+          }
+        }
+        if (hintRefs.tags) this.refreshTagPreview(value, hintRefs.tags);
       },
-    });
+      onEnter: (_mod, shift) => {
+        if (!shift) {
+          addItem();
+          return true; // 吞掉 Enter，不插入换行
+        }
+        return false; // Shift+Enter 换行
+      },
+      onPasteFiles: (files) => {
+        files.forEach(f => this.saveImageToVault(f, editor));
+      },
+    }, "lj-live-editor-plan");
 
-    // 自动增高
-    const autoResize = () => {
-      textarea.style.height = "auto";
-      textarea.style.height = Math.min(textarea.scrollHeight, 120) + "px";
-    };
-    textarea.addEventListener("input", autoResize);
+    // 降级 textarea 初始为单行（CM 模式高度完全由 CSS 控制）
+    if (!editor.isLive && editor.nativeInput) editor.nativeInput.rows = 1;
 
-    // 快捷标签 chips
-    this.renderQuickTags(wrap, textarea);
-
+    // 快捷标签 chips（紧跟输入行）
+    this.renderQuickTags(wrap, editor);
     // 自动识别日期的提示区
     const dateHint = wrap.createDiv({ cls: "lj-date-hint" });
-    textarea.addEventListener("input", () => {
-      const result = extractDateFromText(textarea.value);
-      if (result.date) {
-        dateHint.setText(`\u{1F4C5} \u5DF2\u8BC6\u522B\uFF1A${formatDueDate(result.date)}（${result.date}）`);
-        dateHint.addClass("visible");
-      } else {
-        dateHint.setText("");
-        dateHint.removeClass("visible");
-      }
-    });
-
+    hintRefs.date = dateHint;
     // 子任务添加提示区
     const subHint = wrap.createDiv({ cls: "lj-date-hint lj-subtask-hint" });
+    // 标签识别预览
+    const tagPreview = wrap.createDiv({ cls: "lj-tag-preview lj-tag-preview-plans" });
+    hintRefs.tags = tagPreview;
+    this.refreshTagPreview(editor.getValue(), tagPreview);
+
     const updateSubHint = () => {
       const target = this.subtaskTarget !== null ? this.todoItems[this.subtaskTarget] : null;
       if (target) {
@@ -759,13 +758,12 @@ export class LifeJournalView extends ItemView {
       }
     };
 
-    const tagPreview = wrap.createDiv({ cls: "lj-tag-preview lj-tag-preview-plans" });
-    this.mountTagPreview(textarea, tagPreview);
-
-    // 媒体支持（图片 + 录音）
-    this.setupMediaSupport(textarea, wrap);
-    // 双链 / 标签自动补全（计划输入框不显示格式化工具栏）
-    attachMemoEditor(this.app, this.plugin, textarea, wrap, { toolbar: false });
+    // 媒体支持（图片粘贴/选择；计划页不放录音工具栏）
+    this.setupMediaSupport(editor, wrap, section);
+    // textarea 降级模式：保留旧的双链/标签自动补全
+    if (!editor.isLive && editor.nativeInput) {
+      attachMemoEditor(this.app, this.plugin, editor.nativeInput, wrap, { toolbar: false });
+    }
 
     // 优先级按钮行
     const priorityRow = wrap.createDiv({ cls: "lj-priority-row" });
@@ -832,7 +830,7 @@ export class LifeJournalView extends ItemView {
     const saveBtn = container.createDiv({ cls: "lj-save-btn lj-save-btn-sticky" });
     saveBtn.createDiv({ cls: "lj-btn-icon", text: section.emoji });
     saveBtn.createDiv({ cls: "lj-btn-text", text: `\u4FDD\u5B58${section.label}` });
-    textarea.addEventListener("focus", () => {
+    editor.el.addEventListener("focusin", () => {
       setTimeout(() => saveBtn.scrollIntoView({ block: "nearest", behavior: "smooth" }), 350);
     });
 
@@ -840,11 +838,11 @@ export class LifeJournalView extends ItemView {
     this.renderTodoItems(todoList, { onAddSubtask: (idx) => {
       this.subtaskTarget = this.subtaskTarget === idx ? null : idx;
       updateSubHint();
-      textarea.focus();
+      editor.focus();
     } });
 
     const addItem = () => {
-      const rawText = textarea.value.trim();
+      const rawText = editor.getValue().trim();
       if (!rawText) return;
       const { date, text } = extractDateFromText(rawText);
       const item: TodoItem = {
@@ -866,35 +864,27 @@ export class LifeJournalView extends ItemView {
         this.todoItems.unshift(item);
       }
       this.subtaskTarget = null;
-      textarea.value = "";
-      textarea.style.height = "auto";
+      editor.setValue("");
       dateHint.setText("");
       dateHint.removeClass("visible");
       updateSubHint();
-      textarea.dispatchEvent(new Event("input"));
       this.renderTodoItems(todoList, { onAddSubtask: (idx) => {
         this.subtaskTarget = this.subtaskTarget === idx ? null : idx;
         updateSubHint();
-        textarea.focus();
+        editor.focus();
       } });
-      textarea.focus();
+      editor.focus();
     };
 
     addBtn.addEventListener("click", addItem);
-    textarea.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        addItem();
-      }
-      // Shift+Enter 换行（默认行为）
-    });
+    // Enter 添加 / Shift+Enter 换行已由编辑器 onEnter 统一处理
 
     const clearRow = container.createDiv({ cls: "lj-todo-clear-row" });
     const clearBtn = clearRow.createDiv({ cls: "lj-todo-clear-btn", text: "\u6E05\u9664\u5DF2\u5B8C\u6210" });
     const rerender = () => this.renderTodoItems(todoList, { onAddSubtask: (idx) => {
       this.subtaskTarget = this.subtaskTarget === idx ? null : idx;
       updateSubHint();
-      textarea.focus();
+      editor.focus();
     } });
     clearBtn.addEventListener("click", () => { this.todoItems = this.todoItems.filter(t => !t.done); rerender(); });
 
@@ -939,7 +929,7 @@ export class LifeJournalView extends ItemView {
       ];
       saveBtn.addClass("loading");
       try {
-        await appendToSection(this.app, this.plugin.settings, section.label, section.type, lines.join("\n"));
+        await appendToSection(this.app, this.plugin.settings, section.label, section.type, lines.join("\n"), section);
         new Notice("\u2726 \u8BA1\u5212\u5DF2\u8BB0\u5F55");
         this.todoItems = [];
         this.currentPriority = null;

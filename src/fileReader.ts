@@ -1,5 +1,7 @@
 import { App, TFile, normalizePath, moment } from "obsidian";
-import type { LifeJournalSettings, SectionConfig, SectionType } from "./settings";
+import type { DaybookSettings, SectionConfig, SectionType } from "./settings";
+import { getAllSections } from "./settings";
+import { getSectionFolders } from "./fileManager";
 
 /** 从文本中提取行内标签 */
 function extractInlineTags(text: string): string[] {
@@ -69,7 +71,7 @@ export function effectivePriority(p: PriorityLevel | null | undefined): Priority
 }
 
 /** 是否显示优先级徽标：2 级默认隐藏，可在设置中开启 */
-export function shouldShowPriorityBadge(p: PriorityLevel | undefined, settings: LifeJournalSettings): boolean {
+export function shouldShowPriorityBadge(p: PriorityLevel | undefined, settings: DaybookSettings): boolean {
   return effectivePriority(p) !== "2" || settings.showMediumPriorityBadge;
 }
 
@@ -123,25 +125,30 @@ export interface DayGroup {
  */
 export async function readAllJournalEntries(
   app: App,
-  settings: LifeJournalSettings,
-  filterType?: EntryType
+  settings: DaybookSettings,
+  filterTypes?: Set<string>
 ): Promise<DayGroup[]> {
-  const folder = settings.diaryFolder.trim().replace(/\/$/, "");
-  const folderFile = app.vault.getAbstractFileByPath(normalizePath(folder));
-  if (!folderFile) return [];
-
-  // 获取所有 .md 文件，按文件名（日期）倒序
+  // 收集所有章节涉及的文件夹（默认 + 自定义路径），去重扫描
+  const folders = getSectionFolders(settings);
+  const seenPaths = new Set<string>();
   const files = app.vault.getMarkdownFiles()
-    .filter(f => f.path.startsWith(normalizePath(folder) + "/"))
+    .filter(f => {
+      if (seenPaths.has(f.path)) return false;
+      return folders.some(folder => {
+        const norm = normalizePath(folder);
+        return f.path.startsWith(norm + "/") || f.path === norm;
+      });
+    })
+    .filter(f => { seenPaths.add(f.path); return true; })
     .sort((a, b) => b.basename.localeCompare(a.basename));
 
   const groups: DayGroup[] = [];
 
   // 章节配置签名：章节变化时使解析缓存失效
-  const configSig = settings.sections.map(sc => `${sc.id}:${sc.label}:${sc.type}`).join("|");
+  const configSig = getAllSections(settings).map(sc => `${sc.id}:${sc.label}:${sc.type}`).join("|");
 
   for (const file of files) {
-    const entries = await parseJournalFile(app, file, settings, filterType, configSig);
+    const entries = await parseJournalFile(app, file, settings, filterTypes, configSig);
     if (entries.length === 0) continue;
 
     const date = file.basename; // YYYY-MM-DD
@@ -165,11 +172,11 @@ const parseCache = new Map<string, JournalEntry[]>();
 async function parseJournalFile(
   app: App,
   file: TFile,
-  settings: LifeJournalSettings,
-  filterType?: EntryType,
+  settings: DaybookSettings,
+  filterTypes?: Set<string>,
   configSig = ""
 ): Promise<JournalEntry[]> {
-  const cacheKey = `${file.path}|${file.stat.mtime}|${filterType ?? ""}|${configSig}`;
+  const cacheKey = `${file.path}|${file.stat.mtime}|${filterTypes ? [...filterTypes].sort().join(",") : ""}|${configSig}`;
   const cached = parseCache.get(cacheKey);
   if (cached) return cached;
 
@@ -178,7 +185,7 @@ async function parseJournalFile(
   const entries: JournalEntry[] = [];
 
   // 建立 section 标题 → SectionConfig 的映射
-  const sectionMap = buildSectionMap(settings.sections);
+  const sectionMap = buildSectionMap(getAllSections(settings));
 
   let currentConfig: SectionConfig | null = null;
   let currentLines: { text: string; lineIndex: number }[] = [];
@@ -186,7 +193,7 @@ async function parseJournalFile(
 
   const flushSection = () => {
     if (!currentConfig || currentLines.length === 0) return;
-    if (filterType && currentConfig.id !== filterType) {
+    if (filterTypes && !filterTypes.has(currentConfig.id)) {
       currentLines = [];
       return;
     }
@@ -308,7 +315,7 @@ function parsePlanSection(
   filePath: string,
   date: string,
   entries: JournalEntry[],
-  settings: LifeJournalSettings
+  settings: DaybookSettings
 ) {
   let currentHeader: string | null = null;
   let currentTime: string | undefined;
@@ -518,7 +525,7 @@ export async function setTodoStatesInFile(
   app: App,
   filePath: string,
   updates: TodoStateUpdate[],
-  settings: LifeJournalSettings
+  settings: DaybookSettings
 ): Promise<void> {
   const file = app.vault.getAbstractFileByPath(filePath) as TFile | null;
   if (!file) throw new Error(`文件不存在：${filePath}`);
@@ -613,7 +620,7 @@ export function createPriorityBadge(priority: PriorityLevel | null | undefined):
 }
 
 /** 获取完成时间行内字段名（设置中的字段名，默认 completedAt） */
-export function getCompletedFieldName(settings: LifeJournalSettings): string {
+export function getCompletedFieldName(settings: DaybookSettings): string {
   return (settings.todoCompletedField ?? "").trim() || "completedAt";
 }
 
@@ -639,7 +646,7 @@ function formatTodoDuration(createdAt: string | undefined, completedAt: string |
 /** 按设置计算已完成任务的展示信息：耗时 / 完成时间 */
 export function formatTodoCompletion(
   todo: TodoItem,
-  settings: LifeJournalSettings
+  settings: DaybookSettings
 ): { duration: string | null; time: string | null } {
   const display = settings.todoCompletionDisplay ?? "both";
   const duration = display === "time" ? null : formatTodoDuration(todo.createdAt, todo.completedAt);
@@ -659,7 +666,7 @@ export function formatTodoCompletion(
 export function appendTodoCompletionInfo(
   textEl: HTMLElement,
   todo: TodoItem,
-  settings: LifeJournalSettings,
+  settings: DaybookSettings,
   review: boolean
 ): void {
   const cls = review ? "lj-review-todo-completed" : "lj-todo-completed";

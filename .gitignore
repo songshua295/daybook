@@ -5,3 +5,11 @@ build/
 releases/
 v*/
 .trae/
+obsidian-thino-3.0.23/
+
+# 备份文件
+*.bak
+
+# AI 工具本地数据
+.opencode/
+.zcode/
