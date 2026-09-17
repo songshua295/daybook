@@ -376,6 +376,11 @@ export class ReviewView {
     await this.refreshResults();
   }
 
+  /** 外部新增记录后局部刷新结果流（保留筛选状态与滚动位置由 CSS 维持） */
+  async reload() {
+    await this.refreshResults();
+  }
+
   /** 加载并渲染结果列表（筛选 + 搜索过滤后） */
   private async refreshResults() {
     const scrollArea = this.scrollArea;

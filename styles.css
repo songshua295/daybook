@@ -3636,3 +3636,99 @@ body,
   font-size: 13px;
   line-height: 1.6;
 }
+
+/* ════════════════════════════════════════════════════════
+   v4.2 编辑/阅读合一：顶部记录卡片 + 阅读流主体
+   ════════════════════════════════════════════════════════ */
+
+/* root：composer 固定不滚，阅读流独立滚动 */
+.lj-root.lj-root-unified {
+  overflow: hidden;
+}
+
+/* ── 顶部记录卡片 ── */
+.lj-composer {
+  flex-shrink: 0;
+  background: var(--lj-surface, var(--background-primary));
+  border-bottom: 1px solid var(--lj-border, var(--background-modifier-border));
+  box-shadow: var(--lj-shadow-sm, 0 1px 2px rgba(0,0,0,0.04));
+  padding: 10px 14px 8px;
+  z-index: 5;
+  /* 不裁剪：优先级弹层等溢出元素需要正常弹出；长任务列表自行限高 */
+}
+
+/* 章节切换 chips */
+.lj-composer-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  margin-bottom: 2px;
+  scrollbar-width: none;
+}
+.lj-composer-tabs::-webkit-scrollbar { display: none; }
+.lj-composer-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--lj-border, var(--background-modifier-border));
+  background: var(--lj-surface2, var(--background-secondary));
+  color: var(--lj-text-muted, var(--text-muted));
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.lj-composer-tab:hover {
+  background: var(--lj-bg-hover, var(--background-modifier-hover));
+  color: var(--lj-text, var(--text-normal));
+}
+.lj-composer-tab.active {
+  background: var(--lj-accent, var(--interactive-accent));
+  border-color: var(--lj-accent, var(--interactive-accent));
+  color: var(--text-on-accent);
+  font-weight: 600;
+}
+.lj-composer-tab-emoji { font-size: 14px; }
+
+/* 记录卡片内部：去掉原全页输入区多余的外边距 */
+.lj-composer-body > :first-child { margin-top: 0; }
+.lj-composer-body > :last-child { margin-bottom: 0; }
+
+/* 计划攒批列表过长时在卡片内部滚动，不挤压阅读流 */
+.lj-composer .lj-todo-list {
+  max-height: 180px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 自定义心情很多时，心情网格自行滚动 */
+.lj-composer .lj-mood-grid {
+  max-height: 150px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 卡片内保存按钮不需要 sticky（卡片本身固定在顶部） */
+.lj-composer .lj-save-btn-sticky {
+  position: static;
+}
+
+/* ── 阅读流填满剩余空间 ── */
+.lj-root-unified .lj-review-container {
+  flex: 1;
+  min-height: 0;
+}
+
+/* 移动端：卡片更紧凑 */
+@media (max-width: 600px) {
+  .lj-composer {
+    padding: 8px 10px 6px;
+  }
+  .lj-composer .lj-todo-list {
+    max-height: 150px;
+  }
+}

@@ -185,8 +185,10 @@ export class DaybookView extends ItemView {
   private selectedMood: string | null = null; // emoji 作为选中标识
   private activeSectionId: string = "memos";
   private todoItems: TodoItem[] = [];
-  private viewMode: string = ""; // "edit" or "review"
-  private activePanelId: string = "";
+  // 合一视图：顶部记录卡片 + 下方阅读流
+  private composerEl: HTMLElement | null = null;
+  private reviewHostEl: HTMLElement | null = null;
+  private reviewView: ReviewView | null = null;
   private _vpResizeHandler: (() => void) | null = null;
   // 录音相关
   private mediaRecorder: any = null;
@@ -197,8 +199,6 @@ export class DaybookView extends ItemView {
   private currentPriority: PriorityLevel | null = null;
   // 子任务添加目标（编辑视图，index 指向顶级任务）
   private subtaskTarget: number | null = null;
-  // 上一次渲染的编辑上下文（用于离开计划编辑时清空未保存草稿）
-  private lastEditCtx = "";
   // 当前页面上的内嵌实时渲染编辑器（buildUI 重建/onClose 时统一销毁）
   private liveEditors = new Set<LiveEditor>();
 
@@ -277,87 +277,73 @@ export class DaybookView extends ItemView {
   }
 
   buildUI() {
-    // 离开计划编辑时清空未保存的草稿
-    const allSecs = getAllSections(this.plugin.settings);
-    const ctx = this.viewMode === "review" ? "@review" : `#${this.activeSectionId}`;
-    if (ctx !== this.lastEditCtx) {
-      const leavingPlans = this.lastEditCtx.startsWith("#")
-        && allSecs.find(sec => `#${sec.id}` === this.lastEditCtx)?.type === "plans";
-      if (leavingPlans) {
-        this.todoItems = [];
-        this.subtaskTarget = null;
-        this.currentPriority = null;
-      }
-      this.lastEditCtx = ctx;
-    }
     const root = this.containerEl.children[1] as HTMLElement;
     this.destroyLiveEditors();
     root.empty();
-    root.setAttribute("class", "lj-root");
+    root.setAttribute("class", "lj-root lj-root-unified");
     root.style.height = "";
     root.style.maxHeight = "";
-    // 确保当前模式有效：非 review 即 edit
-    const visiblePanels = getVisiblePanels(this.plugin.settings);
-    if (this.viewMode !== "review" && this.viewMode !== "edit") {
-      this.viewMode = visiblePanels.length > 0 ? "edit" : "review";
-    }
-    this.buildModeToggleFixed(root);
-    if (this.viewMode === "review") {
-      root.addClass("lj-root-review-v3");
-      const rc = root.createDiv({ cls: "lj-review-container" });
-      new ReviewView(rc, this.plugin).render();
-      return;
-    }
-    this.buildEditContent(root);
-  }
 
-  private buildModeToggleFixed(root: HTMLElement) {
-    const bar = root.createDiv({ cls: "lj-mode-toggle-bar lj-mode-toggle-fixed" });
-    const toggle = bar.createDiv({ cls: "lj-mode-toggle" });
-    // 编辑按钮（统一入口，所有章节在此切换编辑）
-    const visiblePanels = getVisiblePanels(this.plugin.settings);
-    const eb = toggle.createDiv({
-      cls: `lj-mode-btn ${this.viewMode === "edit" ? "active" : ""}`,
-      text: "\u270F\uFE0F \u7F16\u8F91",
-    });
-    eb.toggleClass("disabled", visiblePanels.length === 0);
-    eb.addEventListener("click", () => {
-      if (this.viewMode !== "edit" && visiblePanels.length > 0) { this.viewMode = "edit"; this.buildUI(); }
-    });
-    // 阅读按钮
-    const rv = toggle.createDiv({ cls: `lj-mode-btn ${this.viewMode === "review" ? "active" : ""}`, text: "\u{1F4D6} \u9605\u8BFB" });
-    rv.addEventListener("click", () => { if (this.viewMode !== "review") { this.viewMode = "review"; this.buildUI(); } });
-  }
-
-  private buildEditContent(root: HTMLElement) {
-    // 编辑模式：统一展示所有版块下的所有可见章节，方便跨章节编辑/合并
+    // 顶部记录卡片（无可见章节时不显示，页面只剩阅读流）
     const sections = getVisibleSections(this.plugin.settings);
-    // ⚠️ tab 栏必须先于内容区创建（lj-root 是 flex column + 整体滚动，
-    // 若内容区 flex:1 在前，tab 栏会被推到所有内容的最底部，不可见）
-    if (sections.length === 0) {
-      const content = root.createDiv({ cls: "lj-content lj-content-scroll" });
-      content.createDiv({ cls: "lj-todo-empty", text: "没有可见章节" });
-      return;
+    if (sections.length > 0) {
+      this.composerEl = root.createDiv({ cls: "lj-composer" });
+      this.renderComposer(sections);
+    } else {
+      this.composerEl = null;
     }
-    // 单章节：直接显示
-    if (sections.length === 1) {
-      const content = root.createDiv({ cls: "lj-content lj-content-scroll" });
-      this.activeSectionId = sections[0].id;
-      this.renderTabContent(content, sections[0]);
-      return;
-    }
-    // 多章节：先建 tab 栏（在内容区上方），再建内容区
-    const tabBar = root.createDiv({ cls: "lj-tab-bar" });
-    sections.forEach(sec => {
-      const btn = tabBar.createDiv({ cls: `lj-tab ${this.activeSectionId === sec.id ? "active" : ""}` });
-      btn.createDiv({ cls: "lj-tab-emoji", text: sec.emoji });
-      btn.createDiv({ text: sec.label });
-      btn.addEventListener("click", () => { if (this.activeSectionId !== sec.id) { this.activeSectionId = sec.id; this.buildUI(); } });
-    });
-    const content = root.createDiv({ cls: "lj-content lj-content-scroll" });
+
+    // 下方阅读流（功能主体：浏览/搜索/筛选/勾选/内联编辑）
+    this.reviewHostEl = root.createDiv({ cls: "lj-review-container" });
+    this.reviewView = new ReviewView(this.reviewHostEl, this.plugin);
+    void this.reviewView.render();
+  }
+
+  /** 渲染顶部记录卡片：章节切换 + 当前章节输入区 */
+  private renderComposer(sections: SectionConfig[]) {
+    const host = this.composerEl;
+    if (!host) return;
+
     const active = sections.find(s => s.id === this.activeSectionId) ?? sections[0];
     this.activeSectionId = active.id;
-    this.renderTabContent(content, active);
+    this._currentSection = active;
+
+    // 多章节：顶部 chips 切换记录目标
+    if (sections.length > 1) {
+      const tabBar = host.createDiv({ cls: "lj-composer-tabs" });
+      sections.forEach(sec => {
+        const btn = tabBar.createDiv({ cls: `lj-composer-tab ${this.activeSectionId === sec.id ? "active" : ""}` });
+        btn.createSpan({ cls: "lj-composer-tab-emoji", text: sec.emoji });
+        btn.createSpan({ text: sec.label });
+        btn.addEventListener("click", () => {
+          if (this.activeSectionId === sec.id) return;
+          // 离开计划章节时清空未保存草稿
+          if (active.type === "plans") {
+            this.todoItems = [];
+            this.subtaskTarget = null;
+            this.currentPriority = null;
+          }
+          this.activeSectionId = sec.id;
+          this.rerenderComposer();
+        });
+      });
+    }
+
+    const body = host.createDiv({ cls: "lj-composer-body" });
+    this.renderTabContent(body, active);
+  }
+
+  /** 只重建记录卡片（章节切换/优先级变更/保存后清空），不影响阅读流状态与滚动位置 */
+  private rerenderComposer() {
+    this.destroyLiveEditors();
+    if (this.composerEl) this.composerEl.empty();
+    const sections = getVisibleSections(this.plugin.settings);
+    if (sections.length === 0 || !this.composerEl) {
+      // 章节从有到无/卡片缺失（设置变更后）：整页重建
+      this.buildUI();
+      return;
+    }
+    this.renderComposer(sections);
   }
 
   private renderTabContent(container: HTMLElement, section: SectionConfig) {
@@ -568,7 +554,7 @@ export class DaybookView extends ItemView {
                 if (this.selectedMood === mood.emoji) {
                   this.selectedMood = emoji;
                 }
-                this.buildUI();
+                this.rerenderComposer();
               },
               async (i) => {
                 if (this.selectedMood === this.plugin.settings.customMoods[i].emoji) {
@@ -823,7 +809,7 @@ export class DaybookView extends ItemView {
     clearOpt.addEventListener("click", () => {
       document.removeEventListener("click", docClickHandler);
       this.currentPriority = null;
-      this.buildUI();
+      this.rerenderComposer();
     });
 
     // 保存按钮紧贴输入区，本次编辑的任务列表显示在其下方
@@ -936,6 +922,7 @@ export class DaybookView extends ItemView {
         this.subtaskTarget = null;
         updateSubHint();
         rerender();
+        void this.reviewView?.reload();
       } catch (e) { new Notice("\u8BB0\u5F55\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u65E5\u8BB0\u76EE\u5F55\u8BBE\u7F6E"); }
       finally { saveBtn.removeClass("loading"); }
     });
