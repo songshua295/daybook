@@ -31,6 +31,7 @@ const context = await esbuild.context({
     ...builtinModules],
   format: "cjs",
   target: "es2018",
+  loader: { ".mp3": "base64" },   // 完成音效内联进 main.js（手机端只需覆盖三个文件即可，且商店安装也只有这三个文件）
   logLevel: "info",
   sourcemap: prod ? false : "inline",
   treeShaking: false,  // ⚠️ 关闭 tree-shaking，确保 ReviewView 等类不被优化掉

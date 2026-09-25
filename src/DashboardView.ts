@@ -1,36 +1,62 @@
 import { ItemView, WorkspaceLeaf, setIcon, moment } from "obsidian";
 import type DaybookPlugin from "./main";
+import { readAllJournalEntries, formatDateLabel, type DayGroup, type JournalEntry } from "./fileReader";
+import { checkinState, isExecuteDay, loadHabits, type CheckinRow, type HabitConfig } from "./habitManager";
+import { isTypeEnabled, type SectionType } from "./settings";
 
 export const VIEW_TYPE_DASHBOARD = "daybook-dashboard-view";
 
 /* ════════════════════════════════════════════════════════
    DashboardView — Apple HIG × Obsidian Native
    零依赖 · 纯 DOM API · setIcon(Lucide)
+   所有统计均来自真实日记数据，控制项直接读写插件设置
    ════════════════════════════════════════════════════════ */
 
 interface SegmentTab { id: string; label: string; icon: string; }
 interface StatCard { icon: string; label: string; value: string; sublabel?: string; accent?: boolean; }
 interface ToggleConfig { icon: string; title: string; subtitle: string; enabled: boolean; onToggle: (v: boolean) => void; }
-interface SliderConfig { icon: string; title: string; subtitle: string; min: number; max: number; step: number; value: number; unit: string; onChange: (v: number) => void; }
 
 export class DashboardView extends ItemView {
   plugin: DaybookPlugin;
   private activeTab = "overview";
   private rootEl!: HTMLElement;
-  private dashState = { autoSave: true, syncMode: false, compactView: false, fontSize: 15, maxEntries: 50 };
+  private compactView = false;
+  private groups: DayGroup[] = [];
+  private checkinRows: CheckinRow[] = [];
+  private habitConfigs: HabitConfig[] = [];
+  private loaded = false;
+  private loading = false;
 
   constructor(leaf: WorkspaceLeaf, plugin: DaybookPlugin) { super(leaf); this.plugin = plugin; }
   getViewType(): string { return VIEW_TYPE_DASHBOARD; }
   getDisplayText(): string { return "Daybook Dashboard"; }
   getIcon(): string { return "layout-dashboard"; }
 
-  async onOpen() { this.render(); }
-  async onClose() { /* cleanup */ }
+  async onOpen() { await this.loadData(); this.render(); }
+  async onClose() { /* 无自定义清理 */ }
+
+  /* ── 数据加载 ── */
+  private async loadData() {
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      this.groups = await readAllJournalEntries(this.app, this.plugin.settings);
+      const habits = await loadHabits(this.app, this.plugin.settings);
+      this.habitConfigs = habits.map(h => h.config);
+      this.checkinRows = habits.flatMap(h => h.rows);
+      this.loaded = true;
+    } catch (error) {
+      console.error("[Daybook] Dashboard 数据加载失败：", error);
+    } finally {
+      this.loading = false;
+    }
+  }
 
   /* ── 主渲染 ── */
   render() {
     const root = this.containerEl.children[1] as HTMLElement;
-    root.empty(); root.setAttribute("class", "db-root"); this.rootEl = root;
+    root.empty(); root.setAttribute("class", "db-root" + (this.compactView ? " db-compact" : ""));
+    this.rootEl = root;
     this.buildHeader(root);
     this.buildSegmentedControl(root);
     const content = root.createDiv({ cls: "db-content" });
@@ -47,14 +73,21 @@ export class DashboardView extends ItemView {
     titleGroup.createDiv({ cls: "db-header-date", text: moment().format("YYYY年MM月DD日 · dddd") });
 
     const actions = header.createDiv({ cls: "db-header-actions" });
-    const refreshBtn = this.createIconButton(actions, "refresh-cw", "刷新");
-    refreshBtn.addEventListener("click", () => this.render());
-    this.createIconButton(actions, "settings-2", "设置");
+    const refreshBtn = this.createIconButton(actions, "refresh-cw", "刷新数据");
+    refreshBtn.addEventListener("click", async () => { this.loaded = false; await this.loadData(); this.render(); });
+    const settingsBtn = this.createIconButton(actions, "settings-2", "打开设置");
+    settingsBtn.addEventListener("click", () => {
+      const setting = (this.app as unknown as { setting?: { open(): void; openTabById(id: string): void } }).setting;
+      if (setting) { setting.open(); setting.openTabById(this.plugin.manifest.id); }
+    });
   }
 
   private createIconButton(parent: HTMLElement, icon: string, ariaLabel: string): HTMLElement {
     const btn = parent.createDiv({ cls: "db-icon-btn", attr: { "aria-label": ariaLabel, role: "button", tabindex: "0" } });
     setIcon(btn, icon);
+    btn.addEventListener("keydown", (e) => {
+      if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); btn.click(); }
+    });
     return btn;
   }
 
@@ -69,27 +102,35 @@ export class DashboardView extends ItemView {
     const control = container.createDiv({ cls: "db-segment-control" });
     const indicator = control.createDiv({ cls: "db-segment-indicator" });
 
+    const activate = (tab: SegmentTab, index: number) => {
+      if (this.activeTab === tab.id) return;
+      this.activeTab = tab.id;
+      indicator.style.transform = `translateX(${index * 100}%)`;
+      control.querySelectorAll(".db-segment").forEach((el, i) => el.toggleClass("active", i === index));
+      const content = this.rootEl.querySelector(".db-content") as HTMLElement;
+      if (content) { content.empty(); this.renderActiveTab(content); }
+    };
+
     tabs.forEach((tab, index) => {
       const seg = control.createDiv({ cls: `db-segment ${this.activeTab === tab.id ? "active" : ""}`, attr: { role: "button", tabindex: "0", "aria-label": tab.label } });
       const iconEl = seg.createDiv({ cls: "db-segment-icon" });
       setIcon(iconEl, tab.icon);
       seg.createSpan({ text: tab.label, cls: "db-segment-label" });
-
-      seg.addEventListener("click", () => {
-        if (this.activeTab === tab.id) return;
-        this.activeTab = tab.id;
-        indicator.style.transform = `translateX(${index * 100}%)`;
-        control.querySelectorAll(".db-segment").forEach((el, i) => el.toggleClass("active", i === index));
-        const content = this.rootEl.querySelector(".db-content") as HTMLElement;
-        if (content) { content.empty(); this.renderActiveTab(content); }
+      seg.addEventListener("click", () => activate(tab, index));
+      seg.addEventListener("keydown", (e) => {
+        if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); activate(tab, index); }
       });
     });
-    const activeIndex = tabs.findIndex(t => t.id === this.activeTab);
+    const activeIndex = Math.max(0, tabs.findIndex(t => t.id === this.activeTab));
     indicator.style.transform = `translateX(${activeIndex * 100}%)`;
   }
 
   /* ═══ Tab Router ═══ */
   private renderActiveTab(container: HTMLElement) {
+    if (!this.loaded) {
+      container.createDiv({ cls: "db-section-title", text: "正在加载数据…" });
+      return;
+    }
     if (this.activeTab === "overview") this.renderOverviewTab(container);
     else if (this.activeTab === "controls") this.renderControlsTab(container);
     else this.renderStatsTab(container);
@@ -98,52 +139,45 @@ export class DashboardView extends ItemView {
   /* ═══ Tab: Overview ═══ */
   private renderOverviewTab(container: HTMLElement) {
     this.buildStatGrid(container, this.computeStats());
-    const st = container.createDiv({ cls: "db-section-title" });
-    setIcon(st, "zap"); st.createSpan({ text: "快速开关" });
-    this.buildToggleCard(container, { icon: "cloud-upload", title: "自动保存", subtitle: "编辑后自动写入日记文件", enabled: this.dashState.autoSave, onToggle: v => { this.dashState.autoSave = v; } });
-    this.buildToggleCard(container, { icon: "smartphone", title: "紧凑视图", subtitle: "移动端减少间距，显示更多内容", enabled: this.dashState.compactView, onToggle: v => { this.dashState.compactView = v; this.rootEl.toggleClass("db-compact", v); } });
+    this.buildActivityFeed(container);
   }
 
-  /* ═══ Tab: Controls ═══ */
+  /* ═══ Tab: Controls（全部为真实设置） ═══ */
   private renderControlsTab(container: HTMLElement) {
     const tt = container.createDiv({ cls: "db-section-title" });
-    setIcon(tt, "toggle-left"); tt.createSpan({ text: "开关控制" });
-    this.buildToggleCard(container, { icon: "cloud-upload", title: "自动保存", subtitle: "编辑后自动写入日记文件", enabled: this.dashState.autoSave, onToggle: v => { this.dashState.autoSave = v; } });
-    this.buildToggleCard(container, { icon: "refresh-cw", title: "实时同步", subtitle: "多设备间自动同步日记数据", enabled: this.dashState.syncMode, onToggle: v => { this.dashState.syncMode = v; } });
-    this.buildToggleCard(container, { icon: "smartphone", title: "紧凑视图", subtitle: "移动端减少间距，显示更多内容", enabled: this.dashState.compactView, onToggle: v => { this.dashState.compactView = v; this.rootEl.toggleClass("db-compact", v); } });
-    const st = container.createDiv({ cls: "db-section-title" });
-    setIcon(st, "sliders-horizontal"); st.createSpan({ text: "参数调节" });
-    this.buildSliderCard(container, { icon: "type", title: "字体大小", subtitle: "调整日记正文字体大小", min: 12, max: 22, step: 1, value: this.dashState.fontSize, unit: "px", onChange: v => { this.dashState.fontSize = v; } });
-    this.buildSliderCard(container, { icon: "list-ordered", title: "最大条目数", subtitle: "阅读视图每页显示的最大条目数", min: 10, max: 200, step: 5, value: this.dashState.maxEntries, unit: "条", onChange: v => { this.dashState.maxEntries = v; } });
+    setIcon(tt, "toggle-left"); tt.createSpan({ text: "记录类型开关" });
+
+    const typeToggles: { key: SectionType; icon: string; title: string; subtitle: string }[] = [
+      { key: "memos", icon: "zap", title: "闪念", subtitle: "关闭后闪念章节不再显示" },
+      { key: "plans", icon: "calendar-check", title: "待办计划", subtitle: "关闭后计划章节不再显示" },
+      { key: "habits", icon: "droplet", title: "习惯打卡", subtitle: "关闭后习惯章节与习惯卡片不再显示" },
+    ];
+    typeToggles.forEach(({ key, icon, title, subtitle }) => {
+      this.buildToggleCard(container, {
+        icon, title, subtitle,
+        enabled: isTypeEnabled(this.plugin.settings, key),
+        onToggle: async v => {
+          this.plugin.settings.typeEnabled[key] = v;
+          await this.plugin.saveSettings();
+          this.plugin.getJournalView()?.buildUI();
+          this.render();
+        },
+      });
+    });
+
+    const dt = container.createDiv({ cls: "db-section-title" });
+    setIcon(dt, "smartphone"); dt.createSpan({ text: "界面" });
+    this.buildToggleCard(container, {
+      icon: "smartphone", title: "紧凑视图", subtitle: "本 Dashboard 减少间距，显示更多内容",
+      enabled: this.compactView,
+      onToggle: v => { this.compactView = v; this.render(); },
+    });
   }
 
   /* ═══ Tab: Stats ═══ */
   private renderStatsTab(container: HTMLElement) {
-    const extended: StatCard[] = [
-      ...this.computeStats(),
-      { icon: "flame", label: "连续记录", value: "7", sublabel: "天", accent: true },
-      { icon: "calendar-check", label: "本月完成率", value: "82%", sublabel: "高于上月 5%" },
-      { icon: "trending-up", label: "本周趋势", value: "↑ 12%", sublabel: "记录频率上升" },
-      { icon: "clock", label: "平均时长", value: "3.2", sublabel: "分钟/条" },
-      { icon: "hash", label: "标签使用", value: "24", sublabel: "个不同标签" },
-      { icon: "link", label: "双链引用", value: "18", sublabel: "条内部链接" },
-    ];
-    this.buildStatGrid(container, extended);
-    const st = container.createDiv({ cls: "db-section-title" });
-    setIcon(st, "activity"); st.createSpan({ text: "近期活动" });
-    const card = container.createDiv({ cls: "db-activity-card" });
-    const acts = [
-      { icon: "pen-line", text: "添加了 3 条闪念", time: "2 分钟前" },
-      { icon: "check-check", text: "完成了 2 项待办", time: "1 小时前" },
-      { icon: "file-text", text: "创建了今日日记", time: "今天 09:30" },
-      { icon: "star", text: "标记了 1 条重要记录", time: "昨天" },
-    ];
-    acts.forEach(a => {
-      const row = card.createDiv({ cls: "db-activity-row" });
-      const iw = row.createDiv({ cls: "db-activity-icon" }); setIcon(iw, a.icon);
-      row.createDiv({ cls: "db-activity-text", text: a.text });
-      row.createDiv({ cls: "db-activity-time", text: a.time });
-    });
+    this.buildStatGrid(container, this.computeExtendedStats());
+    this.buildActivityFeed(container, 10);
   }
 
   /* ═══ Component: Stat Cards Grid ═══ */
@@ -159,6 +193,38 @@ export class DashboardView extends ItemView {
     });
   }
 
+  /* ═══ Component: 近期活动（真实条目） ═══ */
+  private buildActivityFeed(container: HTMLElement, limit = 6) {
+    const recent: { entry: JournalEntry }[] = [];
+    for (const g of this.groups) {
+      for (const e of g.entries) {
+        recent.push({ entry: e });
+        if (recent.length >= limit) break;
+      }
+      if (recent.length >= limit) break;
+    }
+
+    const st = container.createDiv({ cls: "db-section-title" });
+    setIcon(st, "activity"); st.createSpan({ text: "近期记录" });
+
+    if (recent.length === 0) {
+      const card = container.createDiv({ cls: "db-activity-card" });
+      card.createDiv({ cls: "db-activity-text", text: "还没有记录，去 Daybook 写第一条吧" });
+      return;
+    }
+
+    const card = container.createDiv({ cls: "db-activity-card" });
+    recent.forEach(({ entry }) => {
+      const row = card.createDiv({ cls: "db-activity-row" });
+      const iw = row.createDiv({ cls: "db-activity-icon", text: entry.sectionEmoji || "📝" });
+      const preview = entry.renderType === "plans"
+        ? `${entry.text}（${entry.todos?.filter(t => t.done).length ?? 0}/${entry.todos?.length ?? 0} 已完成）`
+        : entry.text.replace(/\n+/g, " ");
+      row.createDiv({ cls: "db-activity-text", text: preview });
+      row.createDiv({ cls: "db-activity-time", text: `${formatDateLabel(entry.date)}${entry.time ? " " + entry.time : ""}` });
+    });
+  }
+
   /* ═══ Component: Toggle Switch Card (Apple HIG) ═══ */
   private buildToggleCard(parent: HTMLElement, config: ToggleConfig) {
     const card = parent.createDiv({ cls: "db-toggle-card" });
@@ -168,7 +234,7 @@ export class DashboardView extends ItemView {
     tw.createDiv({ cls: "db-toggle-title", text: config.title });
     tw.createDiv({ cls: "db-toggle-subtitle", text: config.subtitle });
     const sw = card.createDiv({ cls: "db-toggle-switch-wrap" });
-    const track = sw.createDiv({ cls: `db-toggle-track ${config.enabled ? "on" : "off"}`, attr: { role: "switch", "aria-checked": String(config.enabled), tabindex: "0" } });
+    const track = sw.createDiv({ cls: `db-toggle-track ${config.enabled ? "on" : "off"}`, attr: { role: "switch", "aria-checked": String(config.enabled), tabindex: "0", "aria-label": config.title } });
     track.createDiv({ cls: "db-toggle-thumb" });
 
     const toggle = () => {
@@ -182,59 +248,76 @@ export class DashboardView extends ItemView {
     card.addEventListener("click", () => toggle());
   }
 
-  /* ═══ Component: Sleek Slider Card (Apple HIG) ═══ */
-  private buildSliderCard(parent: HTMLElement, config: SliderConfig) {
-    const card = parent.createDiv({ cls: "db-slider-card" });
-    // Header row
-    const header = card.createDiv({ cls: "db-slider-header" });
-    const left = header.createDiv({ cls: "db-slider-left" });
-    const iw = left.createDiv({ cls: "db-slider-icon" }); setIcon(iw, config.icon);
-    const tw = left.createDiv({ cls: "db-slider-text" });
-    tw.createDiv({ cls: "db-slider-title", text: config.title });
-    tw.createDiv({ cls: "db-slider-subtitle", text: config.subtitle });
-    // Value badge
-    const badge = header.createDiv({ cls: "db-slider-badge" });
-    badge.createSpan({ cls: "db-slider-badge-value", text: String(config.value) });
-    badge.createSpan({ cls: "db-slider-badge-unit", text: config.unit });
-
-    // Slider track
-    const trackWrap = card.createDiv({ cls: "db-slider-track-wrap" });
-    const track = trackWrap.createDiv({ cls: "db-slider-rail" });
-    const fill = track.createDiv({ cls: "db-slider-fill" });
-    const thumb = track.createDiv({ cls: "db-slider-thumb" });
-
-    // Range input (invisible, for accessibility + native touch)
-    const range = trackWrap.createEl("input", {
-      cls: "db-slider-range",
-      attr: { type: "range", min: String(config.min), max: String(config.max), step: String(config.step), value: String(config.value), "aria-label": config.title },
-    });
-
-    const updateUI = (val: number) => {
-      const pct = ((val - config.min) / (config.max - config.min)) * 100;
-      fill.style.width = `${pct}%`;
-      thumb.style.left = `${pct}%`;
-      badge.querySelector(".db-slider-badge-value")!.textContent = String(val);
-    };
-
-    updateUI(config.value);
-
-    range.addEventListener("input", () => {
-      const val = parseFloat(range.value);
-      updateUI(val);
-      config.onChange(val);
-    });
-
-    // Prevent card click from interfering
-    card.addEventListener("click", (e) => e.stopPropagation());
+  /* ═══ Stats Computation（真实数据） ═══ */
+  private todayStr(): string {
+    return moment().format("YYYY-MM-DD");
   }
 
-  /* ═══ Stats Computation ═══ */
+  private todayGroups(): DayGroup[] {
+    const t = this.todayStr();
+    return this.groups.filter(g => g.date === t);
+  }
+
+  /** 连续记录天数：从今天（或昨天）向前连续有条目的天数 */
+  private computeStreak(): number {
+    const dates = new Set(this.groups.map(g => g.date));
+    const cursor = moment();
+    if (!dates.has(cursor.format("YYYY-MM-DD"))) cursor.subtract(1, "days");
+    let streak = 0;
+    while (dates.has(cursor.format("YYYY-MM-DD"))) {
+      streak++;
+      cursor.subtract(1, "days");
+    }
+    return streak;
+  }
+
   private computeStats(): StatCard[] {
+    const today = this.todayGroups();
+    const todayEntries = today.flatMap(g => g.entries);
+
+    const memosToday = todayEntries.filter(e => e.renderType === "memos").length;
+
+    const planTodos = todayEntries.filter(e => e.renderType === "plans")
+      .flatMap(e => e.todos ?? []);
+    const planDone = planTodos.filter(t => t.done).length;
+
+    const t = this.todayStr();
+    // 今日应打卡的习惯 = 未归档且今天是执行日（休息日不计入分母）
+    const activeHabits = this.habitConfigs.filter(h => !h.archived && isExecuteDay(h, t));
+    const habitsDone = activeHabits.filter(h => checkinState(this.checkinRows, h.id, t, h.executeDays) === "checked").length;
+
+    const totalEntries = this.groups.reduce((n, g) => n + g.entries.length, 0);
+
     return [
-      { icon: "pen-line", label: "今日闪念", value: "12", sublabel: "条", accent: true },
-      { icon: "check-square", label: "待办计划", value: "5", sublabel: "2 已完成" },
-      { icon: "notebook-pen", label: "总日记", value: "128", sublabel: "篇" },
-      { icon: "sparkles", label: "心情指数", value: "8.2", sublabel: "本周均值" },
+      { icon: "pen-line", label: "今日闪念", value: String(memosToday), sublabel: "条", accent: true },
+      { icon: "check-square", label: "今日计划", value: `${planDone}/${planTodos.length}`, sublabel: "已完成" },
+      { icon: "droplet", label: "今日习惯", value: `${habitsDone}/${activeHabits.length}`, sublabel: "已打卡" },
+      { icon: "flame", label: "连续记录", value: String(this.computeStreak()), sublabel: "天" },
+      { icon: "notebook-pen", label: "总条目", value: String(totalEntries), sublabel: `${this.groups.length} 天有记录` },
+    ];
+  }
+
+  private computeExtendedStats(): StatCard[] {
+    const weekStart = moment().subtract(6, "days").format("YYYY-MM-DD");
+    const t = this.todayStr();
+    const allEntries = this.groups.flatMap(g => g.entries);
+    const weekEntries = allEntries.filter(e => e.date >= weekStart && e.date <= t);
+
+    const allTodos = allEntries.filter(e => e.renderType === "plans").flatMap(e => e.todos ?? []);
+    const doneTodos = allTodos.filter(td => td.done).length;
+    const rate = allTodos.length > 0 ? Math.round((doneTodos / allTodos.length) * 100) : 0;
+
+    const tags = new Set<string>();
+    allEntries.forEach(e => e.tags?.forEach(tag => tags.add(tag)));
+
+    const weekCheckins = this.checkinRows.filter(r => !r.skipped && r.date >= weekStart && r.date <= t).length;
+
+    return [
+      ...this.computeStats(),
+      { icon: "calendar-days", label: "本周记录", value: String(weekEntries.length), sublabel: "条", accent: true },
+      { icon: "check-check", label: "计划完成率", value: `${rate}%`, sublabel: `${doneTodos}/${allTodos.length} 项` },
+      { icon: "hash", label: "标签使用", value: String(tags.size), sublabel: "个不同标签" },
+      { icon: "droplets", label: "本周打卡", value: String(weekCheckins), sublabel: "次" },
     ];
   }
 }

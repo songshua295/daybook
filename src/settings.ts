@@ -1,12 +1,14 @@
 import { App, PluginSettingTab, Setting, setIcon } from "obsidian";
 import type DaybookPlugin from "./main";
 import { VIEW_TYPE_JOURNAL } from "./JournalView";
+import type { LegacyHabitDef } from "./habitManager";
+import { DEFAULT_EXPENSE_CATEGORIES } from "./expenseManager";
 
 /** 视图默认打开位置：left=左侧边栏（默认）/ main=主窗口新标签页 / right=右侧边栏 */
 export type OpenLocation = "left" | "main" | "right";
 
-/** 章节渲染类型：memos=闪念（快速记录，支持 Markdown/双链/标签）, plans=待办计划 */
-export type SectionType = "memos" | "plans";
+/** 章节渲染类型：memos=闪念（快速记录，支持 Markdown/双链/标签）, plans=待办计划, habits=习惯打卡, expenses=记账 */
+export type SectionType = "memos" | "plans" | "habits" | "expenses";
 
 /** 动态章节配置 */
 export interface SectionConfig {
@@ -34,10 +36,12 @@ export interface MoodOption {
   label: string;
 }
 
-/** 章节类型开关：整体关闭某类型（闪念/待办计划），该类型的所有章节不渲染 */
+/** 章节类型开关：整体关闭某类型（闪念/待办计划/习惯打卡/记账），该类型的所有章节不渲染 */
 export interface TypeToggles {
   memos: boolean;
   plans: boolean;
+  habits: boolean;
+  expenses: boolean;
 }
 
 /** 类型是否启用（undefined 视为启用） */
@@ -82,8 +86,7 @@ export interface ReviewViewState {
 }
 
 export interface DaybookSettings {
-  openLocationDesktop: OpenLocation; // 桌面端打开位置
-  openLocationMobile: OpenLocation;  // 移动端打开位置
+  openLocationDesktop: OpenLocation; // 桌面端打开位置（移动端固定主区新标签页）
   panels: PanelConfig[];      // 版块列表（每个版块含若干章节）
   diaryFolder: string;
   dateFormat: string;
@@ -95,12 +98,19 @@ export interface DaybookSettings {
   todoCompletionDisplay: "duration" | "time" | "both"; // 已完成任务显示：耗时/完成时间/两者
   showMediumPriorityBadge: boolean;         // 是否显示普通等级（Ⅱ）徽标，默认隐藏
   reviewState: ReviewViewState;             // 阅读视图状态（分组/排序/筛选/搜索）
-  typeEnabled: TypeToggles;                 // 章节类型开关（闪念/待办计划）
+  typeEnabled: TypeToggles;                 // 章节类型开关（闪念/待办计划/习惯打卡）
+  habits?: LegacyHabitDef[];               // 仅作旧数据读取（v4.3 起习惯存 habits/*.md，迁移后清空）
+  habitsMigratedV2?: boolean;              // 旧习惯数据已迁移为"每习惯一个 md 文件"
+  // v4.4 新增：移动端完成反馈
+  completionHaptic: boolean;   // 勾选待办 / 打卡达标时轻微震动
+  completionSound: boolean;    // 同一时机播放完成音效
+  // v4.6 新增：记账
+  expenseCategories: string[];      // 记账分类（在记账页就地管理，不进设置页）
+  expensesAddedV1?: boolean;        // 已为老用户追加默认「记账」版块（一次性迁移）
 }
 
 export const DEFAULT_SETTINGS: DaybookSettings = {
   openLocationDesktop: "left",  // 桌面端默认左侧边栏
-  openLocationMobile: "main",   // 移动端默认新标签页
   panels: [
     {
       id: "record",
@@ -113,7 +123,21 @@ export const DEFAULT_SETTINGS: DaybookSettings = {
       id: "plans",
       name: "计划",
       sections: [
-        { id: "plans", emoji: "\u{1F4C5}", label: "\u8BA1\u5212", type: "plans", placeholder: "\u6DFB\u52A0\u5F85\u529E\uFF0C\u5982\uFF1A\u672C\u5468\u4E94\u5B8C\u6210\u62A5\u544A", enabled: true },
+        { id: "plans", emoji: "\u{1F4C5}", label: "计划", type: "plans", placeholder: "添加待办，如：本周五完成报告", enabled: true },
+      ],
+    },
+    {
+      id: "habits",
+      name: "习惯",
+      sections: [
+        { id: "habits", emoji: "\u{1F4A7}", label: "习惯打卡", type: "habits", placeholder: "", enabled: true },
+      ],
+    },
+    {
+      id: "expenses",
+      name: "记账",
+      sections: [
+        { id: "expenses", emoji: "\u{1F4B0}", label: "记账", type: "expenses", placeholder: "", enabled: true },
       ],
     },
   ],
@@ -152,7 +176,12 @@ export const DEFAULT_SETTINGS: DaybookSettings = {
   typeEnabled: {
     memos: true,
     plans: true,
+    habits: true,
+    expenses: true,
   },
+  completionHaptic: true,
+  completionSound: true,
+  expenseCategories: DEFAULT_EXPENSE_CATEGORIES,
 };
 
 /** 心情数量上限（一行 4 个，最多两行） */
@@ -164,7 +193,9 @@ export const MAX_SECTIONS = 8;
 /** 章节类型信息 */
 export const SECTION_TYPE_INFO: Record<SectionType, { label: string; emoji: string; desc: string }> = {
   memos: { label: "闪念", emoji: "⚡", desc: "快速记录，支持加粗/删除线/双链/图片/标签" },
-  plans: { label: "待办计划", emoji: "📅", desc: "待办输入 + 日期提取 + 优先级 + 子任务" },
+  plans: { label: "待办计划", emoji: "\u{1F4C5}", desc: "待办输入 + 日期提取 + 优先级 + 子任务" },
+  habits: { label: "习惯打卡", emoji: "\u{1F4A7}", desc: "每习惯一个 md（<日记目录>/habits/，可手动编辑）· 详情页含活跃度热力图 + 周/月/年趋势图" },
+  expenses: { label: "记账", emoji: "\u{1F4B0}", desc: "金额 + 分类 + 备注，写入当日日记的「记账」小节；今日记录含收支合计" },
 };
 
 
@@ -179,19 +210,19 @@ export class DaybookSettingTab extends PluginSettingTab {
 
   /** 创建 iOS 风格分组卡片（可折叠） */
   private createSettingsCard(parent: HTMLElement, title: string, icon: string): HTMLElement {
-    const card = parent.createDiv({ cls: "lj-settings-card" });
-    const header = card.createDiv({ cls: "lj-settings-card-header" });
-    const iconEl = header.createDiv({ cls: "lj-settings-card-icon" });
+    const card = parent.createDiv({ cls: "db-settings-card" });
+    const header = card.createDiv({ cls: "db-settings-card-header" });
+    const iconEl = header.createDiv({ cls: "db-settings-card-icon" });
     setIcon(iconEl, icon);
-    header.createEl("span", { text: title, cls: "lj-settings-card-title" });
-    const chevron = header.createDiv({ cls: "lj-settings-card-chevron" });
+    header.createEl("span", { text: title, cls: "db-settings-card-title" });
+    const chevron = header.createDiv({ cls: "db-settings-card-chevron" });
     setIcon(chevron, "chevron-down");
-    const body = card.createDiv({ cls: "lj-settings-card-body" });
+    const body = card.createDiv({ cls: "db-settings-card-body" });
     header.addEventListener("click", (e) => {
       // 不拦截卡片内部交互（输入、按钮等）
-      if ((e.target as HTMLElement).closest("input, button, select, textarea, .lj-section-toggle, .lj-section-move-btn, .lj-section-del-btn")) return;
-      card.toggleClass("lj-card-collapsed", !card.hasClass("lj-card-collapsed"));
-      setIcon(chevron, card.hasClass("lj-card-collapsed") ? "chevron-right" : "chevron-down");
+      if ((e.target as HTMLElement).closest("input, button, select, textarea, .db-section-toggle, .db-section-move-btn, .db-section-del-btn")) return;
+      card.toggleClass("db-card-collapsed", !card.hasClass("db-card-collapsed"));
+      setIcon(chevron, card.hasClass("db-card-collapsed") ? "chevron-right" : "chevron-down");
     });
     return body;
   }
@@ -199,7 +230,7 @@ export class DaybookSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.addClass("lj-settings-grouped");
+    containerEl.addClass("db-settings-grouped");
 
     // ══ 卡片 1: 通用 ════════════════════════════════
     const card1 = this.createSettingsCard(containerEl, "通用", "settings");
@@ -220,18 +251,6 @@ export class DaybookSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.openLocationDesktop)
         .onChange(async value => {
           this.plugin.settings.openLocationDesktop = value as OpenLocation;
-          await reopenView();
-        }));
-    new Setting(card1)
-      .setName("移动端打开位置")
-      .setDesc("手机/平板上默认打开位置")
-      .addDropdown(dropdown => dropdown
-        .addOption("main", "新标签页")
-        .addOption("left", "左侧边栏")
-        .addOption("right", "右侧边栏")
-        .setValue(this.plugin.settings.openLocationMobile)
-        .onChange(async value => {
-          this.plugin.settings.openLocationMobile = value as OpenLocation;
           await reopenView();
         }));
 
@@ -260,14 +279,16 @@ export class DaybookSettingTab extends PluginSettingTab {
     // ══ 卡片 2: 版块管理 ════════════════════════════
     const card2 = this.createSettingsCard(containerEl, "版块管理", "layers");
     card2.createEl("p", {
-      text: "版块用于阅读模式下的章节合并：同一版块的章节在阅读时合并显示，点击版块即查看其下所有章节的条目。编辑模式下所有章节统一在「编辑」入口下，以子标签切换，方便跨章节编辑与内容合并。",
-      cls: "lj-settings-hint"
+      text: "每个章节对应主页面左上角下拉列表中的一个记录入口；关闭类型或停用章节后，对应入口与其今日记录一并隐藏。",
+      cls: "db-settings-hint"
     });
 
     // 类型开关
     const TYPE_TOGGLES: { key: SectionType; label: string; desc: string }[] = [
       { key: "memos", label: "⚡ 闪念类型", desc: "关闭后所有闪念章节不显示" },
       { key: "plans", label: "📅 待办计划类型", desc: "关闭后所有计划章节不显示" },
+      { key: "habits", label: "💧 习惯打卡类型", desc: "关闭后所有习惯打卡章节不显示" },
+      { key: "expenses", label: "\u{1F4B0} 记账类型", desc: "关闭后所有记账章节不显示" },
     ];
     TYPE_TOGGLES.forEach(({ key, label, desc }) => {
       new Setting(card2)
@@ -282,7 +303,7 @@ export class DaybookSettingTab extends PluginSettingTab {
           }));
     });
 
-    const panelList = card2.createDiv({ cls: "lj-panel-editor" });
+    const panelList = card2.createDiv({ cls: "db-panel-editor" });
 
     const refreshView = () => {
       const view = this.plugin.getJournalView();
@@ -295,15 +316,15 @@ export class DaybookSettingTab extends PluginSettingTab {
       panelList.empty();
       this.plugin.settings.panels.forEach((panel, pi) => {
         // ── 版块卡片 ──
-        const panelCard = panelList.createDiv({ cls: "lj-panel-card" });
-        const panelHead = panelCard.createDiv({ cls: "lj-panel-card-head" });
+        const panelCard = panelList.createDiv({ cls: "db-panel-card" });
+        const panelHead = panelCard.createDiv({ cls: "db-panel-card-head" });
 
         // 序号
-        panelHead.createDiv({ cls: "lj-section-card-num", text: `${pi + 1}` });
+        panelHead.createDiv({ cls: "db-section-card-num", text: `${pi + 1}` });
 
         // 版块名（可编辑）
         const nameInput = panelHead.createEl("input", {
-          cls: "lj-panel-name-input",
+          cls: "db-panel-name-input",
           attr: { type: "text", "aria-label": `版块 ${pi + 1} 名称` },
         });
         nameInput.value = panel.name;
@@ -315,17 +336,17 @@ export class DaybookSettingTab extends PluginSettingTab {
         // 单/多章节提示
         const secCount = panel.sections.length;
         const hintEl = panelHead.createDiv({
-          cls: "lj-panel-section-hint",
-          text: secCount <= 1 ? "单章节" : `${secCount} 个章节 · 阅读时合并`,
+          cls: "db-panel-section-hint",
+          text: secCount <= 1 ? "单章节" : `${secCount} 个章节`,
         });
 
         // 折叠按钮
-        const panelChevron = panelHead.createDiv({ cls: "lj-panel-chevron" });
+        const panelChevron = panelHead.createDiv({ cls: "db-panel-chevron" });
         setIcon(panelChevron, "chevron-down");
 
         // 排序按钮
-        const moveGroup = panelHead.createDiv({ cls: "lj-section-move-group" });
-        const upBtn = moveGroup.createDiv({ cls: "lj-section-move-btn", text: "↑", attr: { "aria-label": "上移版块", role: "button", tabindex: "0" } });
+        const moveGroup = panelHead.createDiv({ cls: "db-section-move-group" });
+        const upBtn = moveGroup.createDiv({ cls: "db-section-move-btn", text: "↑", attr: { "aria-label": "上移版块", role: "button", tabindex: "0" } });
         upBtn.toggleClass("disabled", pi === 0);
         upBtn.addEventListener("click", async () => {
           if (pi === 0) return;
@@ -335,7 +356,7 @@ export class DaybookSettingTab extends PluginSettingTab {
           renderPanelEditor();
           refreshView();
         });
-        const downBtn = moveGroup.createDiv({ cls: "lj-section-move-btn", text: "↓", attr: { "aria-label": "下移版块", role: "button", tabindex: "0" } });
+        const downBtn = moveGroup.createDiv({ cls: "db-section-move-btn", text: "↓", attr: { "aria-label": "下移版块", role: "button", tabindex: "0" } });
         downBtn.toggleClass("disabled", pi === this.plugin.settings.panels.length - 1);
         downBtn.addEventListener("click", async () => {
           if (pi === this.plugin.settings.panels.length - 1) return;
@@ -348,7 +369,7 @@ export class DaybookSettingTab extends PluginSettingTab {
 
         // 删除版块
         const delPanelBtn = panelHead.createDiv({
-          cls: "lj-section-del-btn",
+          cls: "db-section-del-btn",
           text: "🗑️ 删除",
           attr: { role: "button", tabindex: "0", "aria-label": `删除版块 ${panel.name}` },
         });
@@ -360,24 +381,24 @@ export class DaybookSettingTab extends PluginSettingTab {
         });
 
         // ── 版块内：章节列表 ──
-        const secList = panelCard.createDiv({ cls: "lj-panel-sections" });
+        const secList = panelCard.createDiv({ cls: "db-panel-sections" });
 
         // 点击版块头折叠/展开章节列表
         panelHead.addEventListener("click", (e) => {
-          if ((e.target as HTMLElement).closest("input, button, select, textarea, .lj-section-toggle, .lj-section-move-btn, .lj-section-del-btn")) return;
-          panelCard.toggleClass("lj-panel-collapsed", !panelCard.hasClass("lj-panel-collapsed"));
-          setIcon(panelChevron, panelCard.hasClass("lj-panel-collapsed") ? "chevron-right" : "chevron-down");
+          if ((e.target as HTMLElement).closest("input, button, select, textarea, .db-section-toggle, .db-section-move-btn, .db-section-del-btn")) return;
+          panelCard.toggleClass("db-panel-collapsed", !panelCard.hasClass("db-panel-collapsed"));
+          setIcon(panelChevron, panelCard.hasClass("db-panel-collapsed") ? "chevron-right" : "chevron-down");
         });
         panel.sections.forEach((sec, si) => {
-          const secCard = secList.createDiv({ cls: "lj-section-card lj-section-card-nested" });
-          const secHead = secCard.createDiv({ cls: "lj-section-card-head" });
+          const secCard = secList.createDiv({ cls: "db-section-card db-section-card-nested" });
+          const secHead = secCard.createDiv({ cls: "db-section-card-head" });
 
           // 章节序号
-          secHead.createDiv({ cls: "lj-section-card-num", text: `${si + 1}` });
+          secHead.createDiv({ cls: "db-section-card-num", text: `${si + 1}` });
 
           // 显示/隐藏
           const toggleBtn = secHead.createDiv({
-            cls: `lj-section-toggle ${sec.enabled ? "enabled" : ""}`,
+            cls: `db-section-toggle ${sec.enabled ? "enabled" : ""}`,
             text: sec.enabled ? "👁️ 可见" : "🚫 隐藏",
             attr: { role: "button", tabindex: "0", "aria-label": sec.enabled ? "点击隐藏" : "点击显示" },
           });
@@ -389,8 +410,8 @@ export class DaybookSettingTab extends PluginSettingTab {
           });
 
           // 排序
-          const secMove = secHead.createDiv({ cls: "lj-section-move-group" });
-          const sUp = secMove.createDiv({ cls: "lj-section-move-btn", text: "↑", attr: { "aria-label": "上移章节", role: "button", tabindex: "0" } });
+          const secMove = secHead.createDiv({ cls: "db-section-move-group" });
+          const sUp = secMove.createDiv({ cls: "db-section-move-btn", text: "↑", attr: { "aria-label": "上移章节", role: "button", tabindex: "0" } });
           sUp.toggleClass("disabled", si === 0);
           sUp.addEventListener("click", async () => {
             if (si === 0) return;
@@ -400,7 +421,7 @@ export class DaybookSettingTab extends PluginSettingTab {
             renderPanelEditor();
             refreshView();
           });
-          const sDown = secMove.createDiv({ cls: "lj-section-move-btn", text: "↓", attr: { "aria-label": "下移章节", role: "button", tabindex: "0" } });
+          const sDown = secMove.createDiv({ cls: "db-section-move-btn", text: "↓", attr: { "aria-label": "下移章节", role: "button", tabindex: "0" } });
           sDown.toggleClass("disabled", si === panel.sections.length - 1);
           sDown.addEventListener("click", async () => {
             if (si === panel.sections.length - 1) return;
@@ -413,7 +434,7 @@ export class DaybookSettingTab extends PluginSettingTab {
 
           // 删除章节
           const delSecBtn = secHead.createDiv({
-            cls: "lj-section-del-btn",
+            cls: "db-section-del-btn",
             text: "🗑️ 删除",
             attr: { role: "button", tabindex: "0", "aria-label": `删除章节 ${sec.label}` },
           });
@@ -425,13 +446,13 @@ export class DaybookSettingTab extends PluginSettingTab {
           });
 
           // 章节内容
-          const secBody = secCard.createDiv({ cls: "lj-section-card-body" });
-          const row1 = secBody.createDiv({ cls: "lj-section-field-row" });
+          const secBody = secCard.createDiv({ cls: "db-section-card-body" });
+          const row1 = secBody.createDiv({ cls: "db-section-field-row" });
 
           // emoji
-          const emojiCell = row1.createDiv({ cls: "lj-section-field" });
-          emojiCell.createEl("label", { text: "图标", cls: "lj-section-field-label" });
-          const emojiInput = emojiCell.createEl("input", { cls: "lj-section-edit-emoji", attr: { type: "text", maxlength: "4", "aria-label": `章节 ${si + 1} 图标` } });
+          const emojiCell = row1.createDiv({ cls: "db-section-field" });
+          emojiCell.createEl("label", { text: "图标", cls: "db-section-field-label" });
+          const emojiInput = emojiCell.createEl("input", { cls: "db-section-edit-emoji", attr: { type: "text", maxlength: "4", "aria-label": `章节 ${si + 1} 图标` } });
           emojiInput.value = sec.emoji;
           emojiInput.addEventListener("change", async () => {
             const v = emojiInput.value.trim();
@@ -439,9 +460,9 @@ export class DaybookSettingTab extends PluginSettingTab {
           });
 
           // 名称
-          const labelCell = row1.createDiv({ cls: "lj-section-field" });
-          labelCell.createEl("label", { text: "名称", cls: "lj-section-field-label" });
-          const labelInput = labelCell.createEl("input", { cls: "lj-section-edit-label", attr: { type: "text", "aria-label": `章节 ${si + 1} 名称` } });
+          const labelCell = row1.createDiv({ cls: "db-section-field" });
+          labelCell.createEl("label", { text: "名称", cls: "db-section-field-label" });
+          const labelInput = labelCell.createEl("input", { cls: "db-section-edit-label", attr: { type: "text", "aria-label": `章节 ${si + 1} 名称` } });
           labelInput.value = sec.label;
           labelInput.addEventListener("change", async () => {
             const v = labelInput.value.trim();
@@ -449,9 +470,9 @@ export class DaybookSettingTab extends PluginSettingTab {
           });
 
           // 类型
-          const typeCell = row1.createDiv({ cls: "lj-section-field" });
-          typeCell.createEl("label", { text: "类型", cls: "lj-section-field-label" });
-          const typeSelect = typeCell.createEl("select", { cls: "lj-section-edit-type", attr: { "aria-label": `章节 ${si + 1} 类型` } });
+          const typeCell = row1.createDiv({ cls: "db-section-field" });
+          typeCell.createEl("label", { text: "类型", cls: "db-section-field-label" });
+          const typeSelect = typeCell.createEl("select", { cls: "db-section-edit-type", attr: { "aria-label": `章节 ${si + 1} 类型` } });
           (Object.entries(SECTION_TYPE_INFO) as [SectionType, typeof SECTION_TYPE_INFO[SectionType]][]).forEach(([key, info]) => {
             const opt = typeSelect.createEl("option", { value: key, text: `${info.emoji} ${info.label}` });
             if (sec.type === key) opt.setAttribute("selected", "selected");
@@ -463,10 +484,10 @@ export class DaybookSettingTab extends PluginSettingTab {
           });
 
           // 占位符
-          const row2 = secBody.createDiv({ cls: "lj-section-field-row" });
-          const phCell = row2.createDiv({ cls: "lj-section-field lj-section-field-wide" });
-          phCell.createEl("label", { text: "输入框提示文字", cls: "lj-section-field-label" });
-          const phInput = phCell.createEl("input", { cls: "lj-section-edit-placeholder", attr: { type: "text", "aria-label": `章节 ${si + 1} 提示文字` } });
+          const row2 = secBody.createDiv({ cls: "db-section-field-row" });
+          const phCell = row2.createDiv({ cls: "db-section-field db-section-field-wide" });
+          phCell.createEl("label", { text: "输入框提示文字", cls: "db-section-field-label" });
+          const phInput = phCell.createEl("input", { cls: "db-section-edit-placeholder", attr: { type: "text", "aria-label": `章节 ${si + 1} 提示文字` } });
           phInput.value = sec.placeholder;
           phInput.addEventListener("change", async () => {
             this.plugin.settings.panels[pi].sections[si].placeholder = phInput.value.trim() || "输入内容…";
@@ -475,11 +496,11 @@ export class DaybookSettingTab extends PluginSettingTab {
           });
 
           // 文件路径（自定义）
-          const rowFp = secBody.createDiv({ cls: "lj-section-field-row" });
-          const fpCell = rowFp.createDiv({ cls: "lj-section-field lj-section-field-wide" });
-          fpCell.createEl("label", { text: "文件路径", cls: "lj-section-field-label" });
+          const rowFp = secBody.createDiv({ cls: "db-section-field-row" });
+          const fpCell = rowFp.createDiv({ cls: "db-section-field db-section-field-wide" });
+          fpCell.createEl("label", { text: "文件路径", cls: "db-section-field-label" });
           const fpInput = fpCell.createEl("input", {
-            cls: "lj-section-edit-filepath",
+            cls: "db-section-edit-filepath",
             attr: { type: "text", placeholder: "如 Work/Notes/{{YYYY-MM-DD}}.md，留空则用默认", "aria-label": `章节 ${si + 1} 文件路径` },
           });
           fpInput.value = sec.filePath ?? "";
@@ -489,17 +510,17 @@ export class DaybookSettingTab extends PluginSettingTab {
             refreshView();
           });
           fpCell.createEl("div", {
-            cls: "lj-section-field-hint",
+            cls: "db-section-field-hint",
             text: "{{YYYY-MM-DD}} 为日期变量，支持 moment 格式如 {{YYYY/MM}}、{{HH:mm}} 等",
           });
 
           // 心情选择器（仅闪念）
           if (sec.type === "memos") {
-            const row3 = secBody.createDiv({ cls: "lj-section-field-row" });
-            const moodCell = row3.createDiv({ cls: "lj-section-field" });
-            moodCell.createEl("label", { text: "心情选择器", cls: "lj-section-field-label" });
+            const row3 = secBody.createDiv({ cls: "db-section-field-row" });
+            const moodCell = row3.createDiv({ cls: "db-section-field" });
+            moodCell.createEl("label", { text: "心情选择器", cls: "db-section-field-label" });
             const moodToggle = moodCell.createDiv({
-              cls: `lj-section-toggle ${sec.showMoodPicker !== false ? "enabled" : ""}`,
+              cls: `db-section-toggle ${sec.showMoodPicker !== false ? "enabled" : ""}`,
               text: sec.showMoodPicker !== false ? "😊 显示" : "🚫 隐藏",
               attr: { role: "button", tabindex: "0", "aria-label": "切换心情选择器" },
             });
@@ -513,7 +534,7 @@ export class DaybookSettingTab extends PluginSettingTab {
         });
 
         // 添加章节按钮（版块内）
-        const addSecBtn = secList.createEl("button", { cls: "lj-section-add-btn lj-section-add-btn-sm", text: "+ 添加章节", attr: { "aria-label": `在版块 ${panel.name} 中添加章节` } });
+        const addSecBtn = secList.createEl("button", { cls: "db-section-add-btn db-section-add-btn-sm", text: "+ 添加章节", attr: { "aria-label": `在版块 ${panel.name} 中添加章节` } });
         addSecBtn.toggleClass("is-disabled", totalSections() >= MAX_SECTIONS);
         addSecBtn.addEventListener("click", async () => {
           if (totalSections() >= MAX_SECTIONS) return;
@@ -529,7 +550,7 @@ export class DaybookSettingTab extends PluginSettingTab {
     renderPanelEditor();
 
     // 添加版块按钮
-    const addPanelBtn = card2.createEl("button", { cls: "lj-section-add-btn", text: "+ 添加版块", attr: { "aria-label": "添加版块" } });
+    const addPanelBtn = card2.createEl("button", { cls: "db-section-add-btn", text: "+ 添加版块", attr: { "aria-label": "添加版块" } });
     addPanelBtn.addEventListener("click", async () => {
       this.plugin.settings.panels.push({
         id: `panel-${Date.now()}`,
@@ -545,23 +566,23 @@ export class DaybookSettingTab extends PluginSettingTab {
     const card3 = this.createSettingsCard(containerEl, "记录偏好", "sparkles");
 
     // — 心情管理 —
-    card3.createEl("p", { text: `自定义心情表情与含义，最多 ${MAX_CUSTOM_MOODS} 个；长按心情可直接编辑`, cls: "lj-settings-hint" });
-    const moodList = card3.createDiv({ cls: "lj-mood-editor" });
-    const addMoodBtn = card3.createEl("button", { cls: "lj-mood-add-btn", attr: { "aria-label": "添加心情" } });
+    card3.createEl("p", { text: `自定义心情表情与含义，最多 ${MAX_CUSTOM_MOODS} 个；长按心情可直接编辑`, cls: "db-settings-hint" });
+    const moodList = card3.createDiv({ cls: "db-mood-editor" });
+    const addMoodBtn = card3.createEl("button", { cls: "db-mood-add-btn", attr: { "aria-label": "添加心情" } });
 
     const refreshJournalView = () => { const view = this.plugin.getJournalView(); if (view) view.buildUI(); };
 
     const renderMoodEditor = () => {
       moodList.empty();
       this.plugin.settings.customMoods.forEach((mood, idx) => {
-        const row = moodList.createDiv({ cls: "lj-mood-edit-row" });
-        const emojiInput = row.createEl("input", { cls: "lj-mood-edit-emoji", attr: { type: "text", maxlength: "4", "aria-label": `心情 ${idx + 1} 表情` } });
+        const row = moodList.createDiv({ cls: "db-mood-edit-row" });
+        const emojiInput = row.createEl("input", { cls: "db-mood-edit-emoji", attr: { type: "text", maxlength: "4", "aria-label": `心情 ${idx + 1} 表情` } });
         emojiInput.value = mood.emoji;
-        const labelInput = row.createEl("input", { cls: "lj-mood-edit-label", attr: { type: "text", "aria-label": `心情 ${idx + 1} 含义` } });
+        const labelInput = row.createEl("input", { cls: "db-mood-edit-label", attr: { type: "text", "aria-label": `心情 ${idx + 1} 含义` } });
         labelInput.value = mood.label;
         emojiInput.addEventListener("change", async () => { const v = emojiInput.value.trim(); if (v) { this.plugin.settings.customMoods[idx].emoji = v; await this.plugin.saveSettings(); refreshJournalView(); } });
         labelInput.addEventListener("change", async () => { const v = labelInput.value.trim(); if (v) { this.plugin.settings.customMoods[idx].label = v; await this.plugin.saveSettings(); refreshJournalView(); } });
-        const del = row.createDiv({ cls: "lj-mood-edit-del", text: "×", attr: { role: "button", "aria-label": `删除心情 ${mood.label}`, tabindex: "0" } });
+        const del = row.createDiv({ cls: "db-mood-edit-del", text: "×", attr: { role: "button", "aria-label": `删除心情 ${mood.label}`, tabindex: "0" } });
         const remove = async () => { this.plugin.settings.customMoods.splice(idx, 1); await this.plugin.saveSettings(); renderMoodEditor(); refreshJournalView(); };
         del.addEventListener("click", remove);
         del.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void remove(); } });
@@ -608,7 +629,7 @@ export class DaybookSettingTab extends PluginSettingTab {
     const card4 = this.createSettingsCard(containerEl, "计划完成时间", "check-circle");
     card4.createEl("p", {
       text: "勾选完成计划时自动写入完成时间行内字段；取消完成时自动移除。",
-      cls: "lj-settings-hint"
+      cls: "db-settings-hint"
     });
 
     new Setting(card4)
@@ -635,6 +656,33 @@ export class DaybookSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
           const view = this.plugin.getJournalView();
           if (view) view.buildUI();
+        }));
+
+    // ══ 卡片 5: 完成反馈（手机端） ══════════════════
+    const card5 = this.createSettingsCard(containerEl, "完成反馈", "bell-ring");
+    card5.createEl("p", {
+      text: "仅手机端生效：勾选待办完成、或习惯打卡达到当日目标次数时给出反馈（每日 1 次的习惯每次打卡都反馈）。",
+      cls: "db-settings-hint"
+    });
+
+    new Setting(card5)
+      .setName("完成时震动")
+      .setDesc("点击完成的瞬间轻微震动")
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.completionHaptic)
+        .onChange(async value => {
+          this.plugin.settings.completionHaptic = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(card5)
+      .setName("完成时播放音效")
+      .setDesc("与震动同时播放「完成音效」，音量固定为 60%")
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.completionSound)
+        .onChange(async value => {
+          this.plugin.settings.completionSound = value;
+          await this.plugin.saveSettings();
         }));
   }
 }

@@ -64,8 +64,8 @@ export async function renderMarkdown(
 
   if (useLazy) {
     // 懒渲染：显示按钮 + 只读 textarea
-    const btn = el.createEl("button", { cls: "lj-render-content-btn", text: lazyButtonText });
-    const raw = el.createEl("textarea", { cls: "lj-raw-content" });
+    const btn = el.createEl("button", { cls: "db-render-content-btn", text: lazyButtonText });
+    const raw = el.createEl("textarea", { cls: "db-raw-content" });
     raw.value = content;
     raw.disabled = true;
 

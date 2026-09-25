@@ -9,7 +9,7 @@
  * 内部 API 不稳定时自动降级为普通 <textarea>（对外接口完全一致）。
  */
 
-import { App, Scope, TFile } from "obsidian";
+import { App, Platform, Scope, TFile } from "obsidian";
 import { EditorView, keymap, placeholder } from "@codemirror/view";
 import { Prec, type Extension } from "@codemirror/state";
 
@@ -65,7 +65,7 @@ function resolveEditorCtor(app: App): any {
   }
 
   const fakeWidget = embedRegistry.embedByExtension.md(
-    { app, containerEl: document.createElement("div") },
+    { app, containerEl: activeDocument.createElement("div") },
     // 仅用于取原型，无需真实文件
     null as unknown as TFile,
     ""
@@ -91,7 +91,7 @@ function createCmLiveEditor(
   extraCls: string,
   sourceFile: TFile | null
 ): LiveEditor {
-  const el = parent.createDiv({ cls: `lj-live-editor cm-s-embedded ${extraCls}` });
+  const el = parent.createDiv({ cls: `db-live-editor cm-s-embedded ${extraCls}` });
   // 内部编辑器类（构造签名为 (app, containerEl, MarkdownFileInfo)）
   const MarkdownEditor = resolveEditorCtor(app) as (
     new (app: App, containerEl: HTMLElement, info: unknown) => any
@@ -270,9 +270,9 @@ function createTextareaEditor(
   opts: LiveEditorOptions,
   extraCls: string
 ): LiveEditor {
-  const el = parent.createDiv({ cls: `lj-live-editor lj-live-editor-fallback ${extraCls}` });
+  const el = parent.createDiv({ cls: `db-live-editor db-live-editor-fallback ${extraCls}` });
   const ta = el.createEl("textarea", {
-    cls: "lj-textarea lj-live-textarea",
+    cls: "db-textarea db-live-textarea",
     attr: { placeholder: opts.placeholder ?? "", rows: "3" },
   });
   ta.value = opts.value ?? "";
@@ -352,7 +352,7 @@ function createTextareaEditor(
  *
  * @param parent     挂载容器
  * @param opts       编辑器选项
- * @param extraCls   追加到根元素的样式类（如 lj-live-editor-plan）
+ * @param extraCls   追加到根元素的样式类（如 db-live-editor-plan）
  * @param sourceFile 文件上下文（用于双链/附件路径解析，可为 null）
  */
 export function createLiveEditor(
@@ -363,6 +363,12 @@ export function createLiveEditor(
   sourceFile: TFile | null = null
 ): LiveEditor {
   let editor: LiveEditor;
+  // 内部 embed 编辑器依赖未公开 API，移动端 Obsidian 版本常滞后于桌面端，
+  // 结构不匹配会导致编辑器空白甚至运行时报错——移动端统一走 textarea 方案。
+  if (Platform.isMobile) {
+    editor = createTextareaEditor(app, parent, opts, extraCls);
+    return editor;
+  }
   try {
     editor = createCmLiveEditor(app, parent, opts, extraCls, sourceFile);
   } catch (error) {
@@ -370,17 +376,20 @@ export function createLiveEditor(
     editor = createTextareaEditor(app, parent, opts, extraCls);
   }
 
-  // 安全网：宿主 DOM 被整体移除（页面重建/视图关闭且未显式 destroy）时自动清理
-  const observer = new MutationObserver(() => {
-    if (!editor.el.isConnected) editor.destroy();
-  });
-  observer.observe(document.body, { childList: true, subtree: true });
+  if (editor.isLive) {
+    // 安全网：宿主 DOM 被整体移除（页面重建/视图关闭且未显式 destroy）时自动清理
+    const hostDoc = editor.el.ownerDocument;
+    const observer = new MutationObserver(() => {
+      if (!editor.el.isConnected) editor.destroy();
+    });
+    observer.observe(hostDoc.body, { childList: true, subtree: true });
 
-  const rawDestroy = editor.destroy.bind(editor);
-  editor.destroy = () => {
-    observer.disconnect();
-    rawDestroy();
-  };
+    const rawDestroy = editor.destroy.bind(editor);
+    editor.destroy = () => {
+      observer.disconnect();
+      rawDestroy();
+    };
+  }
 
   return editor;
 }

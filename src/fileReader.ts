@@ -290,10 +290,10 @@ async function parseJournalFile(
   });
   flushSection();
 
-  // 置顶优先，其余按时间倒序排
+  // 置顶优先，其余按时间倒序排（最新在前）
   entries.sort((a, b) => {
     if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
-    return (b.time ?? "00:00").localeCompare(a.time ?? "00:00");
+    return (a.time ?? "00:00").localeCompare(b.time ?? "00:00") * -1;
   });
 
   parseCache.set(cacheKey, entries);
@@ -468,10 +468,9 @@ function isImageLink(link: string): boolean {
  * 仅修复内存数据，不修改原文件
  */
 export function fixImageLinks(text: string): string {
-  // 匹配 [[xxx.ext]] 但不匹配 ![[xxx.ext]]（已有感叹号的不修）
-  // 使用负向后瞻 (?<!!) 确保 [[ 前面没有感叹号
-  return text.replace(/(?<!!)\[\[([^\[\]]+\.([a-zA-Z]{2,4}))\]\]/g, (match, linkContent, ext) => {
-    if (IMAGE_EXTS.includes(ext.toLowerCase())) {
+  // 捕获可选的 '!' 前缀（不使用 lookbehind，兼容 iOS < 16.4 的 Safari）
+  return text.replace(/(!?)\[\[([^\[\]]+\.([a-zA-Z]{2,4}))\]\]/g, (match, bang, linkContent, ext) => {
+    if (!bang && IMAGE_EXTS.includes(ext.toLowerCase())) {
       return `![[${linkContent}]]`;
     }
     return match;
@@ -602,13 +601,13 @@ export function buildTodoCascade(
   return updates;
 }
 
-/** 构造圆形罗马数字优先级 SVG 徽标（undefined = 2 级默认） */
-export function createPriorityBadge(priority: PriorityLevel | null | undefined): HTMLElement {
+/** 构造圆形罗马数字优先级 SVG 徽标并挂到父元素（undefined = 2 级默认） */
+export function createPriorityBadge(parent: HTMLElement, priority: PriorityLevel | null | undefined): HTMLElement {
   const meta = PRIORITY_META[effectivePriority(priority)];
-  const span = document.createElement("span");
-  span.className = "lj-priority-badge-svg";
-  span.setAttribute("aria-label", `${meta.numeral} ${meta.label}`);
-  span.setAttribute("role", "img");
+  const span = parent.createSpan({
+    cls: "db-priority-badge-svg",
+    attr: { "aria-label": `${meta.numeral} ${meta.label}`, role: "img" },
+  });
   span.innerHTML =
     `<svg width="16" height="16" viewBox="0 0 16 16">` +
     `<circle cx="8" cy="8" r="8" fill="${meta.color}"/>` +
@@ -669,7 +668,7 @@ export function appendTodoCompletionInfo(
   settings: DaybookSettings,
   review: boolean
 ): void {
-  const cls = review ? "lj-review-todo-completed" : "lj-todo-completed";
+  const cls = review ? "db-review-todo-completed" : "db-todo-completed";
   textEl.querySelectorAll("." + cls).forEach(el => el.remove());
   if (!todo.done) return;
   const info = formatTodoCompletion(todo, settings);

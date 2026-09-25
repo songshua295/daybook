@@ -13,3 +13,8 @@ obsidian-thino-3.0.23/
 # AI 工具本地数据
 .opencode/
 .zcode/
+
+# 本地测试脚手架（jsdom / 垫片，不随插件发布）
+.daybook-tests/
+.sync/
+文档/

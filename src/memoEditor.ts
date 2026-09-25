@@ -52,7 +52,7 @@ export function attachMemoEditor(
   if (opts.toolbar) {
     const tb = opts.toolbarSlot ?? wrap.createDiv();
     tb.empty();
-    tb.addClass("lj-memo-toolbar");
+    tb.addClass("db-memo-toolbar");
 
     const insertAtCaret = (t: string) => {
       const p = textarea.selectionStart;
@@ -75,7 +75,7 @@ export function attachMemoEditor(
 
     const mkBtn = (label: string, title: string, fn: () => void) => {
       const b = tb.createDiv({
-        cls: "lj-memo-tb-btn",
+        cls: "db-memo-tb-btn",
         attr: { role: "button", "aria-label": title },
         text: label,
       });
@@ -98,7 +98,7 @@ export function attachMemoEditor(
     });
     if (opts.imageInput) {
       const photoBtn = tb.createDiv({
-        cls: "lj-memo-tb-btn lj-memo-tb-icon",
+        cls: "db-memo-tb-btn db-memo-tb-icon",
         attr: { role: "button", "aria-label": "上传照片" },
       });
       setIcon(photoBtn, "image");
@@ -107,7 +107,7 @@ export function attachMemoEditor(
     }
     if (opts.onAudioToggle) {
       const audioBtn = tb.createDiv({
-        cls: "lj-memo-tb-btn lj-memo-tb-icon lj-memo-tb-audio",
+        cls: "db-memo-tb-btn db-memo-tb-icon db-memo-tb-audio",
         attr: { role: "button", "aria-label": "录音" },
       });
       setIcon(audioBtn, "mic");
@@ -117,7 +117,7 @@ export function attachMemoEditor(
   }
 
   // ── 自动补全 ──────────────────────────────────
-  const pop = wrap.createDiv({ cls: "lj-memo-ac" });
+  const pop = wrap.createDiv({ cls: "db-memo-ac" });
   pop.style.display = "none";
   let items: MemoSuggestion[] = [];
   let activeIdx = -1;
@@ -169,16 +169,16 @@ export function attachMemoEditor(
   const renderAc = () => {
     pop.empty();
     items.forEach((item, i) => {
-      const el = pop.createDiv({ cls: `lj-memo-ac-item ${i === activeIdx ? "active" : ""}` });
-      el.createSpan({ cls: "lj-memo-ac-label", text: item.label });
-      if (item.detail) el.createSpan({ cls: "lj-memo-ac-detail", text: item.detail });
+      const el = pop.createDiv({ cls: `db-memo-ac-item ${i === activeIdx ? "active" : ""}` });
+      el.createSpan({ cls: "db-memo-ac-label", text: item.label });
+      if (item.detail) el.createSpan({ cls: "db-memo-ac-detail", text: item.detail });
       // mousedown 防止 textarea 失焦
       el.addEventListener("mousedown", (e) => { e.preventDefault(); applyItem(item); });
     });
     pop.style.display = "block";
     pop.style.left = "12px";
     pop.style.top = `${textarea.offsetTop + textarea.offsetHeight + 4}px`;
-    pop.querySelector(".lj-memo-ac-item.active")?.scrollIntoView({ block: "nearest" });
+    pop.querySelector(".db-memo-ac-item.active")?.scrollIntoView({ block: "nearest" });
   };
 
   const openAc = (kind: "link" | "tag", query: string) => {
