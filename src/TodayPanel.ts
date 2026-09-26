@@ -84,6 +84,7 @@ interface PlanTodoRow {
   createdAt?: string;
   completedAt?: string;
   indent?: number;
+  note?: string;
 }
 
 /** 计划块编辑弹窗：逐条编辑任务文字/完成/优先级/截止日期，支持增删任务 */
@@ -109,6 +110,7 @@ class PlanEditModal extends Modal {
       createdAt: t.createdAt,
       completedAt: t.completedAt,
       indent: t.indent,
+      note: t.note,
     }));
   }
 
@@ -257,6 +259,151 @@ class PlanEditModal extends Modal {
   }
 }
 
+/** 计划详情弹窗：点击顶级任务进入 — 写备注、添加/勾选/删除子计划；保存才整块回写 */
+class PlanDetailModal extends Modal {
+  private todos: TodoItem[];
+  private parentIdx: number;
+
+  constructor(
+    app: App,
+    private plugin: DaybookPlugin,
+    private entry: JournalEntry,
+    parent: TodoItem,
+    private persist: (todos: TodoItem[]) => Promise<void>
+  ) {
+    super(app);
+    // 浅拷贝：取消即丢弃全部改动，只有「保存」才落盘
+    this.todos = (entry.todos ?? []).map(t => ({ ...t }));
+    this.parentIdx = Math.max(0, this.todos.findIndex(t => t.lineIndex === parent.lineIndex));
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("db-plan-detail-modal");
+    contentEl.createEl("h3", { text: "计划详情" });
+
+    const parent = this.todos[this.parentIdx];
+
+    // 任务本体（只读；修改文字仍走「编辑计划」弹窗）
+    const head = contentEl.createDiv({ cls: "db-plan-detail-task" });
+    if (shouldShowPriorityBadge(parent.priority, this.plugin.settings)) {
+      createPriorityBadge(head, parent.priority);
+    }
+    head.createSpan({ cls: "db-plan-detail-task-text", text: parent.text });
+    if (parent.dueDate) {
+      const overdue = isTodoOverdue(parent.dueDate);
+      head.createSpan({
+        cls: `db-plan-detail-due ${overdue ? "overdue" : ""}`,
+        text: overdue ? "⚠️过期" : `📅 ${formatTodoDue(parent.dueDate)}`,
+      });
+    }
+
+    // 备注
+    contentEl.createDiv({ cls: "db-plan-detail-label", text: "备注" });
+    const noteInput = contentEl.createEl("textarea", {
+      cls: "db-plan-detail-note",
+      attr: { placeholder: "写点背景、思路、要点…（保存后随任务存储）", "aria-label": "任务备注", rows: "4" },
+    });
+    noteInput.value = parent.note ?? "";
+
+    // 子计划
+    contentEl.createDiv({ cls: "db-plan-detail-label", text: "子计划" });
+    const subList = contentEl.createDiv({ cls: "db-plan-detail-subs" });
+
+    /** 顶级任务的连续子任务区间 [start, end) */
+    const childRange = () => {
+      const start = this.parentIdx + 1;
+      let end = start;
+      while (end < this.todos.length && this.todos[end].indent) end++;
+      return { start, end };
+    };
+
+    const renderSubs = () => {
+      subList.empty();
+      const { start, end } = childRange();
+      if (start === end) {
+        subList.createDiv({ cls: "db-plan-detail-subs-empty", text: "还没有子计划，在下方输入添加～" });
+        return;
+      }
+      for (let i = start; i < end; i++) {
+        const sub = this.todos[i];
+        const row = subList.createDiv({ cls: `db-plan-detail-sub ${sub.done ? "done" : ""}` });
+        const cb = row.createDiv({
+          cls: `db-plan-detail-sub-check ${sub.done ? "checked" : ""}`,
+          attr: { role: "checkbox", tabindex: "0", "aria-checked": String(sub.done), "aria-label": sub.done ? "取消完成" : "标记完成" },
+        });
+        const toggleSub = () => {
+          const done = !sub.done;
+          if (done) this.plugin.feedback.notify();
+          const stamp = moment().format("YYYY-MM-DD HH:mm");
+          sub.done = done;
+          sub.completedAt = done ? stamp : undefined;
+          // 子计划全部完成 → 顶级任务自动完成；有未完成 → 顶级恢复未完成
+          const rng = childRange();
+          const kids = this.todos.slice(rng.start, rng.end);
+          if (kids.length > 0) {
+            const all = kids.every(k => k.done);
+            parent.done = all;
+            parent.completedAt = all ? (parent.completedAt ?? stamp) : undefined;
+          }
+          renderSubs();
+        };
+        cb.addEventListener("click", toggleSub);
+        cb.addEventListener("keydown", (e) => {
+          if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); toggleSub(); }
+        });
+        row.createSpan({ cls: "db-plan-detail-sub-text", text: sub.text });
+        const del = row.createDiv({ cls: "db-plan-detail-sub-del", text: "×", attr: { role: "button", tabindex: "0", "aria-label": "删除子计划" } });
+        del.addEventListener("click", () => { this.todos.splice(i, 1); renderSubs(); });
+      }
+    };
+    renderSubs();
+
+    // 添加子计划
+    const addRow = contentEl.createDiv({ cls: "db-plan-detail-add-row" });
+    const addInput = addRow.createEl("input", {
+      cls: "db-plan-detail-add-input",
+      attr: { type: "text", placeholder: "输入子计划，回车添加", "aria-label": "添加子计划" },
+    });
+    const addBtn = addRow.createEl("button", { text: "添加", cls: "db-plan-detail-add-btn" });
+    const addSub = () => {
+      const t = addInput.value.trim();
+      if (!t) return;
+      this.todos.splice(childRange().end, 0, {
+        text: t,
+        done: false,
+        lineIndex: -1,
+        indent: 1,
+        createdAt: moment().format("YYYY-MM-DD HH:mm"),
+      });
+      addInput.value = "";
+      renderSubs();
+      addInput.focus();
+    };
+    addBtn.addEventListener("click", addSub);
+    addInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.repeat) { e.preventDefault(); addSub(); }
+    });
+
+    // 底部按钮
+    const btns = contentEl.createDiv({ cls: "db-mood-modal-btns" });
+    const cancel = btns.createEl("button", { text: "取消" });
+    cancel.addEventListener("click", () => this.close());
+    const save = btns.createEl("button", { text: "保存", cls: "mod-cta" });
+    save.addEventListener("click", () => {
+      const note = noteInput.value.replace(/[\r\n\]]+/g, " ").trim();
+      parent.note = note || undefined;
+      save.disabled = true;
+      this.persist(this.todos).then(() => this.close()).catch(() => { save.disabled = false; });
+    });
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
 /** 计划块标题行（entry.text 含时间前缀时剥离，避免重复） */
 function planHeaderLine(entry: JournalEntry): string {
   if (entry.time) {
@@ -275,6 +422,7 @@ function planTaskLine(t: TodoItem, completedField: string): string {
   if (t.dueDate) line += ` \u{1F4C5} ${t.dueDate}`;
   if (t.createdAt) line += ` [createdAt::${t.createdAt}]`;
   if (t.done && t.completedAt) line += ` [${completedField}::${t.completedAt}]`;
+  if (t.note) line += ` [note::${t.note.replace(/[\r\n\]]+/g, " ")}]`;
   return line;
 }
 
@@ -346,7 +494,7 @@ export class TodayPanel {
       groups.forEach(g => labels.set(g.date, g.dateLabel));
       entries = filtering && filter
         ? groups.flatMap(g => g.entries).filter(e => matchEntry(e, filter, today))
-        : groups.find(g => g.date === today)?.entries ?? [];
+        : (groups.find(g => g.date === today)?.entries ?? []).filter(e => !e.archived);
     } catch {
       /* 读取失败时保持空列表 */
     }
@@ -615,6 +763,23 @@ export class TodayPanel {
     }).open();
   }
 
+  /** 打开计划详情（备注 + 子计划）；保存时按当前任务数组整块回写 */
+  private openPlanDetail(entry: JournalEntry, todo: TodoItem) {
+    new PlanDetailModal(this.plugin.app, this.plugin, entry, todo, async (todos) => {
+      this.busy = true;
+      try {
+        await this.rewritePlanBlock(entry, todos);
+        new Notice("✎ 详情已保存");
+        void this.refresh(entry.type);
+      } catch (e) {
+        new Notice("保存失败，请检查日记文件");
+        throw e;
+      } finally {
+        this.busy = false;
+      }
+    }).open();
+  }
+
   /** 编辑：记录块切换为内联编辑态 */
   private enterEditMode(card: HTMLElement, entry: JournalEntry) {
     if (card.querySelector(".db-entry-edit")) return;
@@ -745,6 +910,14 @@ export class TodayPanel {
         });
       }
       appendTodoCompletionInfo(textEl, todo, this.plugin.settings, true);
+      // 备注徽标：有备注时给个小标记，悬停可见内容
+      if (todo.note) {
+        textEl.createSpan({
+          cls: "db-entry-note-flag",
+          text: "\u{1F4DD}",
+          attr: { "aria-label": `备注：${todo.note}`, "data-tooltip-text": todo.note, "data-tooltip-position": "top" },
+        });
+      }
 
       refs.set(todo.lineIndex, { todo, checkbox, textEl, itemEl: item });
 
@@ -824,7 +997,19 @@ export class TodayPanel {
       checkbox.addEventListener("keydown", (e) => {
         if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); void toggle(); }
       });
-      textEl.addEventListener("click", toggle);
+      // 点击文字：顶级任务 → 计划详情（备注/子计划）；子任务 → 直接勾选
+      if (isSub) {
+        textEl.addEventListener("click", () => { void toggle(); });
+      } else {
+        textEl.addClass("clickable");
+        textEl.setAttribute("role", "button");
+        textEl.setAttribute("tabindex", "0");
+        textEl.setAttribute("aria-label", "打开计划详情：备注与子计划");
+        textEl.addEventListener("click", () => this.openPlanDetail(entry, todo));
+        textEl.addEventListener("keydown", (e) => {
+          if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); this.openPlanDetail(entry, todo); }
+        });
+      }
     };
 
     todos.forEach(t => renderItem(t, !!t.indent));

@@ -44,6 +44,7 @@ export interface TodoItem {
   completedAt?: string; // 完成时间 YYYY-MM-DD HH:mm（勾选完成时自动写入）
   priority?: PriorityLevel; // 优先级 1-4，undefined = 2（重要不紧急，默认）
   indent?: number;      // 层级：0/undefined=顶级任务，1=子任务
+  note?: string;        // 备注（计划详情里写，行内字段 [note::…]，单行）
 }
 
 /** 优先级：1 重要且紧急 / 2 重要不紧急（默认）/ 3 不重要但紧急 / 4 不重要不紧急 */
@@ -427,6 +428,14 @@ function parsePlanSection(
         todoText = todoText.replace(createdMatch[0], "");
       }
 
+      // 解析备注行内字段（[note::…]，计划详情写入）
+      let note: string | undefined;
+      const noteMatch = todoText.match(/\[note::([^\]]*)\]/);
+      if (noteMatch) {
+        note = noteMatch[1].trim() || undefined;
+        todoText = todoText.replace(noteMatch[0], "");
+      }
+
       // 子任务层级：块内任务基础缩进为 4 空格（顶级），8 空格为子任务
       const leadingWs = text.match(/^[ \t]*/)?.[0] ?? "";
       const level = Math.round(leadingWs.replace(/\t/g, "    ").length / 4) - 1;
@@ -440,6 +449,7 @@ function parsePlanSection(
         completedAt,
         createdAt: createdAtVal ?? date,
         indent: level >= 1 ? 1 : undefined,
+        note,
       });
       lastLineIndex = lineIndex;
       return;

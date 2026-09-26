@@ -18,7 +18,7 @@ export interface SectionConfig {
   type: SectionType;    // 渲染类型
   placeholder: string;  // 输入框提示文字
   enabled: boolean;     // 是否在 Tab 栏显示
-  showMoodPicker?: boolean; // 仅闪念：是否显示心情选择器（undefined = 显示）
+  showMoodPicker?: boolean; // 仅闪念：心情选择条是否默认展开（undefined = 展开；页面上可随时收起）
   filePath?: string;         // 自定义文件路径（如 Work/Notes/{{YYYY-MM-DD}}.md），留空则用默认
 }
 
@@ -144,14 +144,14 @@ export const DEFAULT_SETTINGS: DaybookSettings = {
   diaryFolder: "Daily",
   dateFormat: "YYYY-MM-DD",
   customMoods: [
-    { emoji: "\u{1F604}", label: "\u5F00\u5FC3" },
-    { emoji: "\u{1F610}", label: "\u5E73\u9759" },
-    { emoji: "\u{1F62B}", label: "\u75B2\u60EB" },
-    { emoji: "\u{1F630}", label: "\u7126\u8651" },
-    { emoji: "\u{1F61E}", label: "\u96BE\u8FC7" },
-    { emoji: "\u{1F62E}", label: "\u5403\u60CA" },
-    { emoji: "\u{1F929}", label: "\u5174\u594B" },
-    { emoji: "\u{1F970}", label: "\u611F\u6069" },
+    { emoji: "💭", label: "思考" },
+    { emoji: "😊", label: "开心" },
+    { emoji: "😢", label: "伤心" },
+    { emoji: "😰", label: "焦虑" },
+    { emoji: "😤", label: "生气" },
+    { emoji: "😌", label: "平静" },
+    { emoji: "✨", label: "期待" },
+    { emoji: "😫", label: "疲惫" },
   ],
   quickTags: ["\u5546\u4E1A"],
   todoCompletedField: "completedAt",
@@ -514,15 +514,15 @@ export class DaybookSettingTab extends PluginSettingTab {
             text: "{{YYYY-MM-DD}} 为日期变量，支持 moment 格式如 {{YYYY/MM}}、{{HH:mm}} 等",
           });
 
-          // 心情选择器（仅闪念）
+          // 心情选择条默认展开状态（仅闪念）
           if (sec.type === "memos") {
             const row3 = secBody.createDiv({ cls: "db-section-field-row" });
             const moodCell = row3.createDiv({ cls: "db-section-field" });
-            moodCell.createEl("label", { text: "心情选择器", cls: "db-section-field-label" });
+            moodCell.createEl("label", { text: "是否展开", cls: "db-section-field-label" });
             const moodToggle = moodCell.createDiv({
               cls: `db-section-toggle ${sec.showMoodPicker !== false ? "enabled" : ""}`,
-              text: sec.showMoodPicker !== false ? "😊 显示" : "🚫 隐藏",
-              attr: { role: "button", tabindex: "0", "aria-label": "切换心情选择器" },
+              text: sec.showMoodPicker !== false ? "😊 展开" : "🙈 收起",
+              attr: { role: "button", tabindex: "0", "aria-label": "切换心情选择条默认展开状态" },
             });
             moodToggle.addEventListener("click", async () => {
               this.plugin.settings.panels[pi].sections[si].showMoodPicker = sec.showMoodPicker === false;

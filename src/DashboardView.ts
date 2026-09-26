@@ -32,7 +32,12 @@ export class DashboardView extends ItemView {
   getDisplayText(): string { return "Daybook Dashboard"; }
   getIcon(): string { return "layout-dashboard"; }
 
-  async onOpen() { await this.loadData(); this.render(); }
+  async onOpen() {
+    await this.loadData();
+    this.render();
+    // 原生标题栏显隐/尺寸变化会改变与内容的重叠量（与闪念主页同方案）
+    this.registerEvent(this.app.workspace.on("resize", () => this.applyHeaderInset()));
+  }
   async onClose() { /* 无自定义清理 */ }
 
   /* ── 数据加载 ── */
@@ -61,6 +66,25 @@ export class DashboardView extends ItemView {
     this.buildSegmentedControl(root);
     const content = root.createDiv({ cls: "db-content" });
     this.renderActiveTab(content);
+    this.applyHeaderInset();
+    activeWindow.requestAnimationFrame(() => this.applyHeaderInset());
+  }
+
+  /** 安卓端原生 .view-header 悬浮在内容之上：量出重叠高度，让 sticky 头部下移避让（不遮盖原生按钮） */
+  private applyHeaderInset(): void {
+    const header = this.rootEl?.querySelector(".db-header") as HTMLElement | null;
+    if (!header) return;
+    const native = this.containerEl.querySelector(".view-header") as HTMLElement | null;
+    let inset = 0;
+    if (native && native.offsetHeight > 0) {
+      const nBottom = native.getBoundingClientRect().bottom;
+      const rTop = this.rootEl.getBoundingClientRect().top;
+      inset = Math.max(0, Math.ceil(nBottom - rTop));
+    }
+    const on = inset > 0;
+    header.toggleClass("is-inset", on);
+    header.style.top = on ? `${inset}px` : "";
+    header.style.marginTop = on ? `${inset}px` : "";
   }
 
   /* ═══ 1. Header Bar ═══ */

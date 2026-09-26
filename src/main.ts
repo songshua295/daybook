@@ -57,6 +57,14 @@ export default class DaybookPlugin extends Plugin {
       loaded.openLocationDesktop = loaded.openLocation;
     }
     this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
+    // 迁移：未定制过的旧默认心情列表 → 新默认八项（用户改过则保持不动）
+    const LEGACY_MOODS = "😄|开心,😐|平静,😫|疲惫,😰|焦虑,😞|难过,😮|吃惊,🤩|兴奋,🥰|感恩";
+    const currentMoods = (this.settings.customMoods ?? [])
+      .map(m => `${m.emoji}|${m.label}`).join(",");
+    if (currentMoods === LEGACY_MOODS) {
+      this.settings.customMoods = DEFAULT_SETTINGS.customMoods.map(m => ({ ...m }));
+      await this.saveSettings();
+    }
     this.settings.typeEnabled = Object.assign({}, DEFAULT_SETTINGS.typeEnabled, loaded?.typeEnabled ?? {});
     // 旧 habits（data.json 定义）仅作迁移读取；形状异常直接丢弃
     if (this.settings.habits && !Array.isArray(this.settings.habits)) {

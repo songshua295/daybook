@@ -1,7 +1,7 @@
 import { ItemView, WorkspaceLeaf, Notice, moment, TFile, Modal, Menu, setIcon, debounce } from "obsidian";
 import type DaybookPlugin from "./main";
 import { appendToSection, resolveSectionPath } from "./fileManager";
-import { appendTodoCompletionInfo, createPriorityBadge, effectivePriority, getCompletedFieldName, moveTodoSubtree, PRIORITY_EMOJI, PRIORITY_META, readAllJournalEntries, shouldShowPriorityBadge, type PriorityLevel } from "./fileReader";
+import { createPriorityBadge, effectivePriority, PRIORITY_EMOJI, PRIORITY_META, readAllJournalEntries, type PriorityLevel } from "./fileReader";
 import { getVisibleSections, type SectionConfig, type MoodOption } from "./settings";
 import { ConfirmModal, TodayPanel } from "./TodayPanel";
 import { FilterPanel } from "./FilterPanel";
@@ -15,7 +15,6 @@ import {
   type SectionFilter,
   type StatusFilter,
 } from "./filters";
-import type { TodoItem } from "./fileReader";
 import { attachMemoEditor } from "./memoEditor";
 import { createLiveEditor, type LiveEditor, type LiveEditorOptions } from "./liveEditor";
 import {
@@ -806,8 +805,9 @@ class MoodEditModal extends Modal {
 export class DaybookView extends ItemView {
   plugin: DaybookPlugin;
   private selectedMood: string | null = null; // emoji 作为选中标识
+  // 心情选择条展开状态（按章节记忆，视图会话内有效；初始值取章节设置“是否展开”）
+  private moodOpenMap: Record<string, boolean> = {};
   private activeSectionId: string = "memos";
-  private todoItems: TodoItem[] = [];
   // 合一视图：顶栏（左上角章节下拉）+ 单列页面（输入区 → 今日记录流）
   private todayPanel: TodayPanel | null = null;
   private todayHostEl: HTMLElement | null = null;
@@ -819,8 +819,6 @@ export class DaybookView extends ItemView {
   private isRecording = false;
   // 计划优先级
   private currentPriority: PriorityLevel | null = null;
-  // 子任务添加目标（编辑视图，index 指向顶级任务）
-  private subtaskTarget: number | null = null;
   // 当前页面上的内嵌实时渲染编辑器（buildUI 重建/onClose 时统一销毁）
   private liveEditors = new Set<LiveEditor>();
   // 内容筛选：每个章节各自保留一份条件（视图会话内有效，不持久化）
@@ -1012,10 +1010,8 @@ export class DaybookView extends ItemView {
           if (active && sec.id === active.id) item.setIcon("check");
           item.onClick(() => {
             if (this.activeSectionId === sec.id) return;
-            // 离开计划章节时清空未保存草稿
+            // 离开计划章节时重置未提交的优先级选择
             if (this._currentSection?.type === "plans") {
-              this.todoItems = [];
-              this.subtaskTarget = null;
               this.currentPriority = null;
             }
             this.activeSectionId = sec.id;
@@ -1099,6 +1095,16 @@ export class DaybookView extends ItemView {
     bar.toggleClass("is-inset", on);
     bar.style.top = on ? `${inset}px` : "";
     bar.style.marginTop = on ? `${inset}px` : "";
+    this.syncFilterStickyTop();
+  }
+
+  /** 筛选托盘悬浮位置：吸附在顶栏下缘（顶栏高度/避让量变化后需重设） */
+  private syncFilterStickyTop(): void {
+    const host = this.filterHostEl;
+    const bar = this.topbarEl;
+    if (!host || !bar) return;
+    const inset = bar.hasClass("is-inset") ? (parseFloat(bar.style.top) || 0) : 0;
+    host.style.top = `${Math.round(inset + bar.offsetHeight)}px`;
   }
 
   /**
@@ -1190,6 +1196,7 @@ export class DaybookView extends ItemView {
       onRequestClose: () => this.closeFilterPanel(),
     });
     this.updateFilterBadge();
+    this.syncFilterStickyTop();
     // 习惯章节重渲染列表以回填结果数；其余章节重跑记录流刷新计数
     if (section.type === "habits") this.habitsRerender?.();
     else void this.todayPanel?.refresh(section.id);
@@ -1308,8 +1315,8 @@ export class DaybookView extends ItemView {
       }).open();
     });
 
-    // 默认只列进行中的习惯；筛选面板里可切到「已归档 / 全部」
-    const status: StatusFilter = f.status === "all" && !isFilterActive(f) ? "active" : f.status;
+    // 默认只列未归档的习惯；筛选面板里可切到「已归档」
+    const status: StatusFilter = f.status === "archived" ? "archived" : "active";
     const rowsOf = (id: string) => data.find(d => d.config.id === id)?.rows ?? [];
     const habits = data
       .map(d => d.config)
@@ -1802,11 +1809,13 @@ export class DaybookView extends ItemView {
   private renderMemosTab(container: HTMLElement, section: SectionConfig) {
     const mobile = isMobile();
     const moods = this.plugin.settings.customMoods;
-    const showMood = section.showMoodPicker !== false;
+    // 章节设置“是否展开”只决定初始状态；随时可用录音按钮左侧的 emoji 按钮收起/展开
+    const moodOpen = this.moodOpenMap[section.id] ?? section.showMoodPicker !== false;
+    const moodToggleRef: { el: HTMLElement | null } = { el: null };
 
-    // 心情选择器（可在章节设置中隐藏）
-    if (showMood) {
-      const moodGrid = container.createDiv({ cls: "db-mood-grid db-mood-grid-4col" });
+    // 心情选择条（可收起；收起时整行隐藏，节约竖屏空间）
+    if (moods.length) {
+      const moodGrid = container.createDiv({ cls: `db-mood-grid db-mood-grid-4col${moodOpen ? "" : " is-collapsed"}` });
       moods.forEach((mood, idx) => {
         const pill = moodGrid.createDiv({
           cls: `db-mood-pill ${this.selectedMood === mood.emoji ? "selected" : ""}`,
@@ -1867,7 +1876,15 @@ export class DaybookView extends ItemView {
           if (isLongPress) return; // 长按触发后不触发点击
           this.selectedMood = this.selectedMood === mood.emoji ? null : mood.emoji;
           moodGrid.querySelectorAll(".db-mood-pill").forEach(p => p.removeClass("selected"));
-          if (this.selectedMood) pill.addClass("selected");
+          if (this.selectedMood) {
+            pill.addClass("selected");
+            // 选中后自动收起心情条，省出输入空间；再点 🙂 可展开换选
+            this.moodOpenMap[section.id] = false;
+            moodGrid.toggleClass("is-collapsed", true);
+            moodToggleRef.el?.toggleClass("is-active", false);
+          }
+          // 收起状态下也能从按钮上看到当前选中的心情
+          moodToggleRef.el?.setText(this.selectedMood ?? "\u{1F642}");
         });
       });
     }
@@ -1880,9 +1897,14 @@ export class DaybookView extends ItemView {
     // 内嵌 Live Preview 编辑器：输入即渲染（Obsidian 原生 Markdown 效果）
     // tagPreview 在下方声明，onChange 回调触发时它必然已存在
     const tagPreviewRef: { el: HTMLElement | null } = { el: null };
+    // 字数统计刷新函数在 renderCharCount 里回填（onChange 触发时必然已就位）
+    const charCountRef: { update: ((v: string) => void) | null } = { update: null };
     const editor = this.makeEditor(wrap, {
       placeholder: section.placeholder,
-      onChange: (value) => { if (tagPreviewRef.el) this.refreshTagPreview(value, tagPreviewRef.el); },
+      onChange: (value) => {
+        if (tagPreviewRef.el) this.refreshTagPreview(value, tagPreviewRef.el);
+        charCountRef.update?.(value);
+      },
       onPasteFiles: (files) => {
         files.forEach(f => this.saveImageToVault(f, editor));
       },
@@ -1890,6 +1912,8 @@ export class DaybookView extends ItemView {
 
     // 快捷标签 chips（紧跟输入框）
     this.renderQuickTags(wrap, editor);
+    // 字数统计（快捷标签同一行最右）
+    this.mountCharCount(wrap, editor, charCountRef);
     // 标签识别预览
     const tagPreview = wrap.createDiv({ cls: "db-tag-preview" });
     tagPreviewRef.el = tagPreview;
@@ -1897,6 +1921,22 @@ export class DaybookView extends ItemView {
 
     // 媒体：图片选择/粘贴 + 录音（精简工具栏渲染到 toolbarSlot）
     this.setupMediaSupport(editor, wrap, section, toolbarSlot);
+
+    // 心情展开按钮（emoji）：放在录音按钮右侧，收起/展开上方选择条
+    if (moods.length) {
+      const toggle = makeActivatable(toolbarSlot.createDiv({
+        cls: `db-memo-tb-btn db-mood-toggle${moodOpen ? " is-active" : ""}`,
+        text: this.selectedMood ?? "\u{1F642}",
+        attr: { role: "button", "aria-label": "展开/收起心情选择", title: "心情选择" },
+      }));
+      toggle.addEventListener("click", () => {
+        const now = !(this.moodOpenMap[section.id] ?? section.showMoodPicker !== false);
+        this.moodOpenMap[section.id] = now;
+        container.querySelectorAll(".db-mood-grid").forEach(g => g.toggleClass("is-collapsed", !now));
+        toggle.toggleClass("is-active", now);
+      });
+      moodToggleRef.el = toggle;
+    }
     // textarea 降级模式：保留旧的双链/标签自动补全（实时渲染模式使用原生补全）
     if (!editor.isLive && editor.nativeInput) {
       attachMemoEditor(this.app, this.plugin, editor.nativeInput, wrap, { toolbar: false });
@@ -1922,6 +1962,7 @@ export class DaybookView extends ItemView {
         new Notice("\u2726 \u95EA\u5FF5\u5DF2\u8BB0\u5F55");
         editor.setValue("");
         this.selectedMood = null;
+        moodToggleRef.el?.setText("\u{1F642}");
         container.querySelectorAll(".db-mood-pill.selected").forEach(p => p.removeClass("selected"));
         this.refreshToday();
         editor.focus();
@@ -1954,12 +1995,29 @@ export class DaybookView extends ItemView {
     });
   }
 
+  /** 字数统计：显示在快捷标签同一行最右（无快捷标签时独占一行）；超过 350 字颜色变深 */
+  private mountCharCount(
+    wrap: HTMLElement,
+    editor: LiveEditor,
+    ref: { update: ((v: string) => void) | null }
+  ): void {
+    let row = wrap.querySelector(":scope > .db-quick-tags") as HTMLElement | null;
+    if (!row) row = wrap.createDiv({ cls: "db-quick-tags" });
+    const count = row.createSpan({ cls: "db-char-count", text: "0" });
+    const update = (value: string) => {
+      const n = [...value.trim()].length;   // 按码点计数，emoji/生僻字不翻倍
+      count.setText(String(n));
+      count.toggleClass("is-over", n > 350);
+    };
+    ref.update = update;
+    update(editor.getValue());
+  }
+
   private renderPlansTab(container: HTMLElement, section: SectionConfig) {
     const wrap = container.createDiv({ cls: "db-input-wrap db-plans-input-wrap" });
 
-    // 输入行：左侧 + 按钮，右侧内嵌 Live Preview 编辑器
+    // 输入行：整幅内嵌实时编辑器（加号按钮已移除，「添加todo」按钮直接入库）
     const addRow = wrap.createDiv({ cls: "db-todo-add-row db-todo-add-row-textarea" });
-    const addBtn = makeActivatable(addRow.createDiv({ cls: "db-todo-add-btn db-todo-add-btn-left", text: "+", attr: { "aria-label": "添加待办" } }));
 
     this._currentSection = section;
 
@@ -1991,7 +2049,7 @@ export class DaybookView extends ItemView {
       },
       onEnter: (_mod, shift) => {
         if (!shift) {
-          addItem();
+          void addItem();
           return true; // 吞掉 Enter，不插入换行
         }
         return false; // Shift+Enter 换行
@@ -2009,23 +2067,10 @@ export class DaybookView extends ItemView {
     // 自动识别日期的提示区
     const dateHint = wrap.createDiv({ cls: "db-date-hint" });
     hintRefs.date = dateHint;
-    // 子任务添加提示区
-    const subHint = wrap.createDiv({ cls: "db-date-hint db-subtask-hint" });
     // 标签识别预览
     const tagPreview = wrap.createDiv({ cls: "db-tag-preview db-tag-preview-plans" });
     hintRefs.tags = tagPreview;
     this.refreshTagPreview(editor.getValue(), tagPreview);
-
-    const updateSubHint = () => {
-      const target = this.subtaskTarget !== null ? this.todoItems[this.subtaskTarget] : null;
-      if (target) {
-        subHint.setText(`\u21B3 \u6B63\u5728\u4E3A\u300C${target.text}\u300D\u6DFB\u52A0\u5B50\u4EFB\u52A1`);
-        subHint.addClass("visible");
-      } else {
-        subHint.setText("");
-        subHint.removeClass("visible");
-      }
-    };
 
     // 媒体支持（图片粘贴/选择；计划页不放录音工具栏）
     this.setupMediaSupport(editor, wrap, section);
@@ -2097,234 +2142,42 @@ export class DaybookView extends ItemView {
     });
 
     // 保存按钮紧贴输入区，本次编辑的任务列表显示在其下方
-    const saveBtn = makeActivatable(container.createDiv({ cls: "db-save-btn db-save-btn-sticky" }), `保存${section.label}`);
+    // 「添加todo」按钮紧贴输入区：一次点击直接入库一条（替代旧的暂存＋保存两步）
+    const saveBtn = makeActivatable(container.createDiv({ cls: "db-save-btn db-save-btn-sticky" }), "添加todo");
     saveBtn.createDiv({ cls: "db-btn-icon", text: section.emoji });
-    saveBtn.createDiv({ cls: "db-btn-text", text: `\u4FDD\u5B58${section.label}` });
+    saveBtn.createDiv({ cls: "db-btn-text", text: "添加todo" });
     editor.el.addEventListener("focusin", () => {
       activeWindow.setTimeout(() => saveBtn.scrollIntoView({ block: "nearest", behavior: "smooth" }), 350);
     });
 
-    const todoList = container.createDiv({ cls: "db-todo-list" });
-    this.renderTodoItems(todoList, { onAddSubtask: (idx) => {
-      this.subtaskTarget = this.subtaskTarget === idx ? null : idx;
-      updateSubHint();
-      editor.focus();
-    } });
-
-    const addItem = () => {
+    const addItem = async () => {
       const rawText = editor.getValue().trim();
-      if (!rawText) return;
+      if (!rawText) { new Notice("\u8BF7\u5148\u8F93\u5165\u5185\u5BB9\uFF5E"); return; }
       const { date, text } = extractDateFromText(rawText);
-      const item: TodoItem = {
-        text: text || rawText,
-        done: false,
-        lineIndex: -1,
-        dueDate: date,
-        createdAt: moment().format("YYYY-MM-DD HH:mm"),
-        priority: this.currentPriority ?? undefined,
-      };
-      if (this.subtaskTarget !== null && this.todoItems[this.subtaskTarget]) {
-        // 子任务：插入到目标任务的子树末尾
-        item.indent = 1;
-        let e = this.subtaskTarget + 1;
-        while (e < this.todoItems.length && this.todoItems[e].indent) e++;
-        this.todoItems.splice(e, 0, item);
-      } else {
-        // 最后添加的在最上面
-        this.todoItems.unshift(item);
-      }
-      this.subtaskTarget = null;
-      editor.setValue("");
-      dateHint.setText("");
-      dateHint.removeClass("visible");
-      updateSubHint();
-      this.renderTodoItems(todoList, { onAddSubtask: (idx) => {
-        this.subtaskTarget = this.subtaskTarget === idx ? null : idx;
-        updateSubHint();
-        editor.focus();
-      } });
-      editor.focus();
-    };
-
-    addBtn.addEventListener("click", addItem);
-    // Enter 添加 / Shift+Enter 换行已由编辑器 onEnter 统一处理
-
-    const clearRow = container.createDiv({ cls: "db-todo-clear-row" });
-    const clearBtn = clearRow.createDiv({ cls: "db-todo-clear-btn", text: "\u6E05\u9664\u5DF2\u5B8C\u6210" });
-    const rerender = () => this.renderTodoItems(todoList, { onAddSubtask: (idx) => {
-      this.subtaskTarget = this.subtaskTarget === idx ? null : idx;
-      updateSubHint();
-      editor.focus();
-    } });
-    clearBtn.addEventListener("click", () => { this.todoItems = this.todoItems.filter(t => !t.done); rerender(); });
-
-    saveBtn.addEventListener("click", async () => {
-      if (this.todoItems.length === 0) { new Notice("\u8BF7\u5148\u6DFB\u52A0\u5F85\u529E\u4E8B\u9879\uFF5E"); return; }
-      // 保持父子层级排序：先分组（顶级+子任务），组间按优先级/日期排序
-      const groups: { head: TodoItem; children: TodoItem[] }[] = [];
-      this.todoItems.forEach(t => {
-        if (t.indent && groups.length > 0) groups[groups.length - 1].children.push(t);
-        else groups.push({ head: t, children: [] });
-      });
-      groups.sort((a, b) => {
-        if (a.head.done !== b.head.done) return a.head.done ? 1 : -1;
-        const pa = parseInt(effectivePriority(a.head.priority));
-        const pb = parseInt(effectivePriority(b.head.priority));
-        if (pa !== pb) return pa - pb;
-        if (a.head.dueDate && b.head.dueDate) return a.head.dueDate.localeCompare(b.head.dueDate);
-        if (a.head.dueDate) return -1;
-        if (b.head.dueDate) return 1;
-        return 0;
-      });
-      const sorted = groups.flatMap(g => [g.head, ...g.children]);
       const now = new Date();
       const timeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-      const completedField = getCompletedFieldName(this.plugin.settings);
-      // 与其他章节统一的 "- HH:mm" 列表格式（章节标题已表明是计划，不再重复写"计划"字样）
-      const lines = [
-        `- ${timeStr}`,
-        ...sorted.map(t => {
-          const indent = t.indent ? "        " : "    ";
-          let line = `${indent}- [${t.done ? "x" : " "}] ${t.text}`;
-          // 优先级标记放在文本后面（默认 2 级不写标记）
-          const eff = effectivePriority(t.priority);
-          if (eff !== "2") line += ` ${PRIORITY_EMOJI[eff]}`;
-          if (t.dueDate) line += ` \u{1F4C5} ${t.dueDate}`;
-          // 创建时间行内字段（用于计算完成耗时）
-          if (t.createdAt) line += ` [createdAt::${t.createdAt}]`;
-          // 完成时间行内字段（仅已完成的任务）
-          if (t.done && t.completedAt) line += ` [${completedField}::${t.completedAt}]`;
-          return line;
-        }),
-      ];
+      // 单条计划块，格式与旧批量保存一致：顶级任务缩进 4 空格 + 行内字段
+      let taskLine = `    - [ ] ${text || rawText}`;
+      const eff = effectivePriority(this.currentPriority);
+      if (eff !== "2") taskLine += ` ${PRIORITY_EMOJI[eff]}`;
+      if (date) taskLine += ` \u{1F4C5} ${date}`;
+      taskLine += ` [createdAt::${moment().format("YYYY-MM-DD HH:mm")}]`;
       saveBtn.addClass("loading");
       try {
-        await appendToSection(this.app, this.plugin.settings, section.label, section.type, lines.join("\n"), section);
-        new Notice("\u2726 \u8BA1\u5212\u5DF2\u8BB0\u5F55");
-        this.todoItems = [];
+        await appendToSection(this.app, this.plugin.settings, section.label, section.type,
+          [`- ${timeStr}`, taskLine].join("\n"), section);
+        new Notice("\u2726 \u5DF2\u6DFB\u52A0\u5F85\u529E");
+        editor.setValue("");
+        dateHint.setText("");
+        dateHint.removeClass("visible");
         this.currentPriority = null;
-        this.subtaskTarget = null;
-        this.buildUI();
-      } catch (e) { new Notice("\u8BB0\u5F55\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u65E5\u8BB0\u76EE\u5F55\u8BBE\u7F6E"); }
+        void this.refreshToday();
+        editor.focus();
+      } catch { new Notice("\u6DFB\u52A0\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u65E5\u8BB0\u76EE\u5F55\u8BBE\u7F6E"); }
       finally { saveBtn.removeClass("loading"); }
-    });
-  }
+    };
 
-  private renderTodoItems(
-    container: HTMLElement,
-    opts?: { onAddSubtask?: (idx: number) => void }
-  ) {
-    let dragFrom: number | null = null;
-    container.empty();
-    if (this.todoItems.length === 0) {
-      container.createDiv({ cls: "db-todo-empty", text: "\u6682\u65E0\u5F85\u529E\uFF0C\u5728\u4E0A\u65B9\u8F93\u5165\u540E\u6309\u56DE\u8F66\u6DFB\u52A0\uFF5E" });
-      return;
-    }
-    this.todoItems.forEach((todo, i) => {
-      const item = container.createDiv({ cls: `db-todo-item ${todo.done ? "done" : ""} ${todo.indent ? "sub" : ""}` });
-      // 拖拽调整顺序与层级：拖到目标任务上半 = 插到其前；下半 = 顶级任务变为其子任务 / 子任务插到其后
-      item.draggable = true;
-      item.addEventListener("dragstart", (e) => {
-        dragFrom = i;
-        item.addClass("dragging");
-        if (e.dataTransfer) {
-          e.dataTransfer.effectAllowed = "move";
-          e.dataTransfer.setData("text/plain", String(i));
-        }
-      });
-      item.addEventListener("dragend", () => {
-        dragFrom = null;
-        container.querySelectorAll(".db-todo-item").forEach(el => el.removeClass("drop-before", "drop-after", "dragging"));
-      });
-      item.addEventListener("dragover", (e) => {
-        if (dragFrom === null || dragFrom === i) return;
-        e.preventDefault();
-        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-        const rect = item.getBoundingClientRect();
-        const lower = e.clientY > rect.top + rect.height / 2;
-        item.toggleClass("drop-before", !lower);
-        item.toggleClass("drop-after", lower);
-      });
-      item.addEventListener("dragleave", () => item.removeClass("drop-before", "drop-after"));
-      item.addEventListener("drop", (e) => {
-        e.preventDefault();
-        const from = dragFrom;
-        dragFrom = null;
-        item.removeClass("drop-before", "drop-after");
-        if (from === null || from === i) return;
-        const rect = item.getBoundingClientRect();
-        const lower = e.clientY > rect.top + rect.height / 2;
-        const asChild = !this.todoItems[i].indent && lower;
-        moveTodoSubtree(this.todoItems, from, i, asChild, lower && !asChild);
-        this.renderTodoItems(container, opts);
-      });
-      const cb = item.createEl("input", { cls: "db-todo-checkbox", attr: { type: "checkbox" } });
-      cb.checked = todo.done;
-      cb.addEventListener("change", () => {
-        // 父子级联：勾父全勾子，子全勾自动勾父（含完成时间）
-        if (cb.checked) this.plugin.feedback.notify();
-        this.setEditTodoCascade(i, cb.checked, moment().format("YYYY-MM-DD HH:mm"));
-        this.renderTodoItems(container, opts);
-      });
-      const textEl = item.createDiv({ cls: `db-todo-text ${todo.done ? "strikethrough" : ""}` });
-      // 优先级徽标（圆形罗马数字 SVG；2 级默认隐藏，可在设置开启）
-      if (shouldShowPriorityBadge(todo.priority, this.plugin.settings)) {
-        createPriorityBadge(textEl, todo.priority);
-      }
-      textEl.createSpan({ text: todo.text });
-      if (todo.dueDate) {
-        textEl.createSpan({ cls: `db-todo-due ${moment(todo.dueDate).isBefore(moment(), "day") ? "overdue" : ""}`, text: `\u{1F4C5} ${formatDueDate(todo.dueDate)}` });
-      }
-      // 已完成任务的耗时 / 完成时间徽标
-      appendTodoCompletionInfo(textEl, todo, this.plugin.settings, false);
-      const actionRow = item.createDiv({ cls: "db-todo-actions" });
-      // 添加子任务按钮（仅顶级任务）
-      if (!todo.indent && opts?.onAddSubtask) {
-        makeActivatable(actionRow.createDiv({
-          cls: `db-todo-add-sub ${this.subtaskTarget === i ? "active" : ""}`,
-          text: "\u21B3",
-          attr: { role: "button", "aria-label": "添加子任务" },
-        })).addEventListener("click", () => opts.onAddSubtask!(i));
-      }
-      makeActivatable(actionRow.createDiv({ cls: "db-todo-del", text: "\xD7", attr: { "aria-label": "删除待办" } })).addEventListener("click", () => {
-        this.todoItems.splice(i, 1);
-        if (this.subtaskTarget === i) this.subtaskTarget = null;
-        this.renderTodoItems(container, opts);
-      });
-    });
-  }
-
-  /** 编辑视图（内存中）父子任务级联勾选 */
-  private setEditTodoCascade(index: number, done: boolean, stamp: string) {
-    const items = this.todoItems;
-    const t = items[index];
-    if (!t) return;
-    t.done = done;
-    t.completedAt = done ? stamp : undefined;
-    if (t.indent) {
-      // 子任务 → 同步父任务：全部完成自动完成，任一未完成自动取消
-      let p = index - 1;
-      while (p >= 0 && items[p].indent) p--;
-      if (p >= 0) {
-        let e = p + 1;
-        let allDone = true;
-        while (e < items.length && items[e].indent) {
-          if (!items[e].done) allDone = false;
-          e++;
-        }
-        if (e > p + 1) {
-          items[p].done = allDone;
-          items[p].completedAt = allDone ? (items[p].completedAt ?? stamp) : undefined;
-        }
-      }
-    } else {
-      // 父任务 → 同步所有子任务
-      let e = index + 1;
-      while (e < items.length && items[e].indent) {
-        items[e].done = done;
-        items[e].completedAt = done ? stamp : undefined;
-        e++;
-      }
-    }
+    saveBtn.addEventListener("click", () => { void addItem(); });
+    // Enter 添加 / Shift+Enter 换行已由编辑器 onEnter 统一处理
   }
 }

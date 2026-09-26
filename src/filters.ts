@@ -12,7 +12,7 @@ import type { JournalEntry, TodoItem } from "./fileReader";
 
 /** 有无类筛选：不限 / 有 / 无 */
 export type Presence = "any" | "with" | "without";
-/** 归档态：进行中（未归档）/ 已归档 / 全部 */
+/** 归档态：未归档（默认）/ 已归档；"all" 仅作历史兼容值（等同未归档展示） */
 export type StatusFilter = "all" | "active" | "archived";
 /** 完成态 */
 export type CompletionFilter = "all" | "done" | "undone";
@@ -71,7 +71,7 @@ export interface CheckinRowLike {
 export function emptyFilter(): SectionFilter {
   return {
     q: "", tags: [], datePreset: "", dateFrom: "", dateTo: "",
-    status: "all", pinnedOnly: false, links: "any", attachments: "any",
+    status: "active", pinnedOnly: false, links: "any", attachments: "any",
     moods: [], completion: "all", priorities: [], overdueOnly: false, dueOnly: false,
     kinds: "all", categories: [], minAmount: "", maxAmount: "",
     checkins: "all", shouldToday: false,
@@ -89,7 +89,7 @@ export function activeDimensions(f: SectionFilter): string[] {
   if (f.q.trim()) out.push("关键词");
   if (f.tags.length) out.push("标签");
   if (f.datePreset) out.push("日期");
-  if (f.status !== "all") out.push("归档");
+  if (f.status === "archived") out.push("归档");   // active 是默认展示，不算生效维度
   if (f.pinnedOnly) out.push("置顶");
   if (f.links !== "any") out.push("链接");
   if (f.attachments !== "any") out.push("附件");

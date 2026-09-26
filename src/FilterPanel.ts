@@ -255,7 +255,22 @@ export class FilterPanel {
     else if (this.type === "expenses") this.renderExpenses();
     else if (this.type === "habits") this.renderHabits();
 
-    /* 标签（记录类章节；习惯章节的对象不是日记条目） */
+    /* 链接 / 附件（记录类章节；习惯章节的对象不是日记条目） */
+    if (this.type !== "habits") {
+      this.presence("链接", this.f.links, v => { this.f.links = v; this.changed(); }, "链接（双链 / 外链）");
+      this.presence("附件", this.f.attachments, v => { this.f.attachments = v; this.changed(); }, "图片 / 音视频附件");
+    }
+
+    /* 状态：默认只展示未归档；仅提供「已归档」切换，再点回到未归档（无“进行中”空按钮） */
+    this.toggle("状态", { value: "archived", label: "已归档", tip: "只看已归档的记录" },
+      this.f.status === "archived",
+      v => { this.f.status = v ? "archived" : "active"; this.changed(); });
+    if (this.type !== "habits") {   // 习惯本身没有置顶概念
+      this.toggle("置顶", { value: "pin", label: "只看", tip: "只看置顶记录" },
+        this.f.pinnedOnly, v => { this.f.pinnedOnly = v; this.changed(); });
+    }
+
+    /* 标签：数量不定、可能很长，放最后，避免把常用维度顶出可视区 */
     if (this.type !== "habits") {
       this.multi("标签", this.opts.tags.map(t => ({
         value: t.tag, label: `#${t.tag}`, count: t.count, tip: `标签 ${t.tag}`,
@@ -263,19 +278,6 @@ export class FilterPanel {
         this.f.tags = this.f.tags.includes(v) ? this.f.tags.filter(x => x !== v) : [...this.f.tags, v];
         this.changed();
       }, this.opts.tags.length === 0 ? "这个章节还没出现过 #标签" : undefined);
-
-      this.presence("链接", this.f.links, v => { this.f.links = v; this.changed(); }, "链接（双链 / 外链）");
-      this.presence("附件", this.f.attachments, v => { this.f.attachments = v; this.changed(); }, "图片 / 音视频附件");
-    }
-
-    /* 归档态 + 置顶（四类章节的记录都可归档/置顶） */
-    this.single("状态", [
-      { value: "active", label: "进行中", tip: "只看未归档" },
-      { value: "archived", label: "已归档", tip: "只看已归档" },
-    ], this.f.status, "all", v => { this.f.status = v as SectionFilter["status"]; this.changed(); });
-    if (this.type !== "habits") {   // 习惯本身没有置顶概念
-      this.toggle("置顶", { value: "pin", label: "只看", tip: "只看置顶记录" },
-        this.f.pinnedOnly, v => { this.f.pinnedOnly = v; this.changed(); });
     }
   }
 

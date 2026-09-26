@@ -744,6 +744,142 @@ body,
   color: var(--interactive-accent);
 }
 
+/* ── 计划详情弹窗（备注 + 子计划） ── */
+.db-plan-detail-modal h3 {
+  margin: 0 0 10px;
+}
+.db-plan-detail-task {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 4px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+.db-plan-detail-due {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.db-plan-detail-due.overdue { color: var(--color-red, #e74c3c); }
+.db-plan-detail-label {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.db-plan-detail-note {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 84px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.db-plan-detail-note:focus-visible,
+.db-plan-detail-add-input:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+.db-plan-detail-subs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.db-plan-detail-subs-empty {
+  font-size: 13px;
+  color: var(--text-faint);
+  padding: 2px 0;
+}
+.db-plan-detail-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--background-secondary);
+}
+.db-plan-detail-sub.done { opacity: 0.6; }
+.db-plan-detail-sub.done .db-plan-detail-sub-text { text-decoration: line-through; }
+.db-plan-detail-sub-check {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--interactive-accent) 55%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.db-plan-detail-sub-check.checked {
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+}
+.db-plan-detail-sub-check.checked::after {
+  content: "✓";
+  color: var(--text-on-accent);
+  font-size: 11px;
+  font-weight: 800;
+}
+.db-plan-detail-sub-check:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+.db-plan-detail-sub-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14px;
+  color: var(--text-normal);
+}
+.db-plan-detail-sub-del {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 18px;
+  color: var(--text-faint);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.db-plan-detail-sub-del:hover {
+  color: var(--color-red, #e74c3c);
+  background: color-mix(in srgb, var(--color-red, #e74c3c) 12%, transparent);
+}
+.db-plan-detail-add-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.db-plan-detail-add-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 14px;
+}
+.db-plan-detail-add-btn {
+  flex-shrink: 0;
+}
+.is-phone .db-plan-detail-sub { padding: 10px 8px; }
+.is-phone .db-plan-detail-sub-del { width: 44px; height: 44px; }
+.is-phone .db-plan-detail-sub-check { width: 24px; height: 24px; }
+.is-phone .db-plan-detail-add-btn { min-height: 44px; }
+
 /* ── 闪念编辑器：格式化工具栏 ── */
 .db-memo-toolbar-slot:empty {
   display: none;
@@ -794,6 +930,23 @@ body,
   color: #ef4444 !important;
   background: color-mix(in srgb, #ef4444 12%, transparent);
   animation: db-pulse 1.2s ease-in-out infinite;
+}
+
+/* 心情展开按钮（录音按钮左侧的 emoji）：展开时点亮 */
+.db-mood-toggle {
+  font-size: 15px;
+  line-height: 1;
+}
+.db-memo-tb-btn.db-mood-toggle.is-active {
+  background: color-mix(in srgb, var(--interactive-accent) 14%, transparent);
+  color: var(--interactive-accent);
+}
+/* 心情条收起：整行隐藏，节约竖屏空间。
+   必须用三类选择器：后面的 .db-mood-grid.db-mood-grid-4col{display:grid}
+   与本规则同权重且书写在后，两类选择器会被它覆盖导致收起失效 */
+.db-mood-grid.db-mood-grid-4col.is-collapsed,
+.db-mood-grid.is-collapsed {
+  display: none;
 }
 
 /* ── 闪念编辑器：双链/标签自动补全弹层 ── */
@@ -882,6 +1035,24 @@ body,
 
 .db-mood-grid.db-mood-grid-4col .db-mood-pill:active {
   transform: scale(0.95);
+}
+
+/* 手机端：心情条整体缩小（表情 16px、去掉多余留白），降低占屏高度 */
+.is-phone .db-mood-grid.db-mood-grid-4col {
+  gap: 3px;
+  padding: 4px 10px 2px;
+}
+.is-phone .db-mood-grid.db-mood-grid-4col .db-mood-pill {
+  padding: 2px 1px;
+  gap: 0;
+  border-radius: 8px;
+}
+.is-phone .db-mood-grid.db-mood-grid-4col .db-mood-pill .db-mood-emoji {
+  font-size: 16px;
+  line-height: 1.15;
+}
+.is-phone .db-mood-grid.db-mood-grid-4col .db-mood-pill .db-mood-label {
+  font-size: 9px;
 }
 
 /* ── 心情编辑 Modal ── */
@@ -979,6 +1150,21 @@ body,
 .db-quick-tags-label {
   color: var(--text-faint);
   font-size: 11px;
+}
+
+/* 字数统计：快捷标签同一行最右 */
+.db-char-count {
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.db-char-count.is-over {
+  color: var(--text-normal);
+  font-weight: 600;
 }
 
 .db-quick-tag-chip {
@@ -1525,8 +1711,17 @@ body,
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px 12px;
+  /* 无原生标题栏遮挡时由安全区内边距兜底；被遮挡时 JS 量出 inset 走 is-inset */
+  padding: calc(16px + var(--safe-area-inset-top, env(safe-area-inset-top, 0px))) 20px 12px;
   flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--db-bg);
+}
+/* 原生标题栏悬浮遮挡时：顶部安全区 padding 不再需要（避让由 JS 设置的 top/marginTop 完成） */
+.db-header.is-inset {
+  padding-top: 16px;
 }
 
 .db-header-title-group {
@@ -1890,16 +2085,19 @@ body,
 /* ── 手机端状态栏安全区 ──
    Obsidian 在移动端 body 上提供 .is-phone / .is-android 类，
    并由原生层注入 --safe-area-inset-* 变量（安卓端比裸用 env() 可靠，
-   三星等机型实测 env() 为 0）。参考：Obsidian 1.6 changelog。 */
+   三星等机型实测 env() 为 0）。参考：Obsidian 1.6 changelog。
+   安全区不再放在滚动容器上（下滑后会被原生标题栏盖住），
+   改由 sticky 的 .db-header 自带 padding 承担，与闪念主页顶栏同款。 */
 .is-phone .db-root {
-  padding-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  padding-top: 0;
 }
 
 /* ════════════════════════════════════════════════════════
    8. Responsive — Mobile (Android/iOS)
    ════════════════════════════════════════════════════════ */
 @container (max-width: 480px) {
-  .db-header { padding: 12px 16px 8px; }
+  .db-header { padding: calc(12px + var(--safe-area-inset-top, env(safe-area-inset-top, 0px))) 16px 8px; }
+  .db-header.is-inset { padding-top: 12px; }
   .db-header-title { font-size: 18px; }
   .db-segment-container { padding: 0 16px 10px; }
   .db-content { padding: 4px 16px 20px; gap: 10px; }
@@ -2584,8 +2782,17 @@ body,
 }
 
 /* ── 页面骨架：筛选宿主 / 滚动列 / 单页 / 今日记录标题 ── */
+/* 筛选托盘：随页面上滑时悬浮吸附在顶栏下缘（top 由 JS 按顶栏高度同步），
+   超高时面板内部滚动，需主动关闭托盘（筛选条件保留） */
 .db-filter-host {
   flex-shrink: 0;
+  position: sticky;
+  top: 0;                 /* 由 JournalView.syncFilterStickyTop() 内联覆盖 */
+  z-index: 19;            /* 低于顶栏(20)，滚动叠放时顶栏压托盘 */
+  max-height: 62vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--db-bg);
 }
 
 .db-scroll {
@@ -2841,6 +3048,14 @@ body,
 .db-entry-todo-item.dragging { opacity: 0.35; }
 .db-entry-todo-item.drop-before { box-shadow: inset 0 2px 0 var(--db-accent); }
 .db-entry-todo-item.drop-after { box-shadow: inset 0 -2px 0 var(--db-accent); }
+/* 一级未完成＝轻微半透明红底，表达紧急（已完成/子任务不标） */
+.db-entry-todo-item:not(.done):not(.sub) {
+  background: color-mix(in srgb, var(--color-red, #e74c3c) 7%, transparent);
+  border-radius: 8px;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.is-phone .db-entry-todo-item { padding-top: 9px; padding-bottom: 9px; }
 
 .db-entry-checkbox {
   flex-shrink: 0;
@@ -2875,6 +3090,18 @@ body,
 .db-entry-todo-text.done {
   color: var(--db-text-sub);
   text-decoration: line-through;
+}
+/* 顶级任务文字可点击进入详情 */
+.db-entry-todo-text.clickable { cursor: pointer; }
+.db-entry-todo-text.clickable:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.db-entry-note-flag {
+  font-size: 11px;
+  margin-left: 6px;
+  opacity: 0.6;
 }
 .db-entry-due {
   font-size: 11px;
