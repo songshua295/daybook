@@ -2,13 +2,12 @@ import { App, PluginSettingTab, Setting, setIcon } from "obsidian";
 import type DaybookPlugin from "./main";
 import { VIEW_TYPE_JOURNAL } from "./JournalView";
 import type { LegacyHabitDef } from "./habitManager";
-import { DEFAULT_EXPENSE_CATEGORIES } from "./expenseManager";
 
 /** 视图默认打开位置：left=左侧边栏（默认）/ main=主窗口新标签页 / right=右侧边栏 */
 export type OpenLocation = "left" | "main" | "right";
 
-/** 章节渲染类型：memos=闪念（快速记录，支持 Markdown/双链/标签）, plans=待办计划, habits=习惯打卡, expenses=记账 */
-export type SectionType = "memos" | "plans" | "habits" | "expenses";
+/** 章节渲染类型：memos=闪念（快速记录，支持 Markdown/双链/标签）, plans=待办计划, habits=习惯打卡 */
+export type SectionType = "memos" | "plans" | "habits";
 
 /** 动态章节配置 */
 export interface SectionConfig {
@@ -36,12 +35,11 @@ export interface MoodOption {
   label: string;
 }
 
-/** 章节类型开关：整体关闭某类型（闪念/待办计划/习惯打卡/记账），该类型的所有章节不渲染 */
+/** 章节类型开关：整体关闭某类型（闪念/待办计划/习惯打卡），该类型的所有章节不渲染 */
 export interface TypeToggles {
   memos: boolean;
   plans: boolean;
   habits: boolean;
-  expenses: boolean;
 }
 
 /** 类型是否启用（undefined 视为启用） */
@@ -71,7 +69,8 @@ export function getVisiblePanels(settings: DaybookSettings): PanelConfig[] {
 export interface ReviewViewState {
   groupVisible: boolean;                     // 分组面板是否展开（计划）
   sortVisible: boolean;                      // 排序面板是否展开
-  planGroupBy: "none" | "priority" | "date"; // 分组方式
+  planGroupBy: "none" | "priority" | "date"; // 任务总览分组方式（priority/date；none 仅为兼容旧数据）
+  planGroupByDefaulted?: boolean;            // 遗留默认值已迁移为 priority（一次性）
   planDateGranularity: "day" | "week" | "month"; // 日期分组粒度
   planSortBy: "time" | "title" | "tag" | "priority"; // 排序方式：时间/标题/标签/优先级
   planSortAsc: boolean;                      // 排序方向
@@ -93,6 +92,7 @@ export interface DaybookSettings {
   // v3.2 新增：记录体验升级
   customMoods: MoodOption[];    // 可长按编辑的心情列表（最多 8 个）
   quickTags: string[];          // 快捷标签（如 商业），点击追加 #标签
+  memoSortOrder?: "newest" | "oldest"; // 闪念记录流排序（新→旧 / 旧→新）
   // v3.3 新增：计划完成时间
   todoCompletedField: string;               // 勾选完成时写入任务末尾的行内字段名（如 completedAt）
   todoCompletionDisplay: "duration" | "time" | "both"; // 已完成任务显示：耗时/完成时间/两者
@@ -104,9 +104,8 @@ export interface DaybookSettings {
   // v4.4 新增：移动端完成反馈
   completionHaptic: boolean;   // 勾选待办 / 打卡达标时轻微震动
   completionSound: boolean;    // 同一时机播放完成音效
-  // v4.6 新增：记账
-  expenseCategories: string[];      // 记账分类（在记账页就地管理，不进设置页）
-  expensesAddedV1?: boolean;        // 已为老用户追加默认「记账」版块（一次性迁移）
+  // v4.7 界面状态
+  lastSectionId?: string;           // 最近使用的章节（打开视图时恢复；章节失效时回退首个）
 }
 
 export const DEFAULT_SETTINGS: DaybookSettings = {
@@ -133,13 +132,6 @@ export const DEFAULT_SETTINGS: DaybookSettings = {
         { id: "habits", emoji: "\u{1F4A7}", label: "习惯打卡", type: "habits", placeholder: "", enabled: true },
       ],
     },
-    {
-      id: "expenses",
-      name: "记账",
-      sections: [
-        { id: "expenses", emoji: "\u{1F4B0}", label: "记账", type: "expenses", placeholder: "", enabled: true },
-      ],
-    },
   ],
   diaryFolder: "Daily",
   dateFormat: "YYYY-MM-DD",
@@ -160,7 +152,7 @@ export const DEFAULT_SETTINGS: DaybookSettings = {
   reviewState: {
     groupVisible: false,
     sortVisible: false,
-    planGroupBy: "none",
+    planGroupBy: "priority",
     planDateGranularity: "day",
     planSortBy: "time",
     planSortAsc: false,
@@ -177,11 +169,9 @@ export const DEFAULT_SETTINGS: DaybookSettings = {
     memos: true,
     plans: true,
     habits: true,
-    expenses: true,
   },
   completionHaptic: true,
   completionSound: true,
-  expenseCategories: DEFAULT_EXPENSE_CATEGORIES,
 };
 
 /** 心情数量上限（一行 4 个，最多两行） */
@@ -195,7 +185,6 @@ export const SECTION_TYPE_INFO: Record<SectionType, { label: string; emoji: stri
   memos: { label: "闪念", emoji: "⚡", desc: "快速记录，支持加粗/删除线/双链/图片/标签" },
   plans: { label: "待办计划", emoji: "\u{1F4C5}", desc: "待办输入 + 日期提取 + 优先级 + 子任务" },
   habits: { label: "习惯打卡", emoji: "\u{1F4A7}", desc: "每习惯一个 md（<日记目录>/habits/，可手动编辑）· 详情页含活跃度热力图 + 周/月/年趋势图" },
-  expenses: { label: "记账", emoji: "\u{1F4B0}", desc: "金额 + 分类 + 备注，写入当日日记的「记账」小节；今日记录含收支合计" },
 };
 
 
@@ -288,7 +277,6 @@ export class DaybookSettingTab extends PluginSettingTab {
       { key: "memos", label: "⚡ 闪念类型", desc: "关闭后所有闪念章节不显示" },
       { key: "plans", label: "📅 待办计划类型", desc: "关闭后所有计划章节不显示" },
       { key: "habits", label: "💧 习惯打卡类型", desc: "关闭后所有习惯打卡章节不显示" },
-      { key: "expenses", label: "\u{1F4B0} 记账类型", desc: "关闭后所有记账章节不显示" },
     ];
     TYPE_TOGGLES.forEach(({ key, label, desc }) => {
       new Setting(card2)

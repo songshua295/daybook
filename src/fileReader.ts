@@ -77,6 +77,34 @@ export function shouldShowPriorityBadge(p: PriorityLevel | undefined, settings: 
 }
 
 /**
+ * 计划进度统计：有子计划的一级任务按子计划数量计数。
+ * 子计划全部完成即父计划完成（勾选级联已保证），父行不再重复计 1，
+ * 否则一个带 3 个子计划的组会被算成 4 条，进度比例失真。
+ */
+export function planTodoProgress(todos: TodoItem[]): { done: number; total: number } {
+  let done = 0;
+  let total = 0;
+  for (let i = 0; i < todos.length; i++) {
+    const t = todos[i];
+    if (t.indent) continue; // 子计划随父组一起统计，不单独计数
+    let childTotal = 0;
+    let childDone = 0;
+    for (let j = i + 1; j < todos.length && todos[j].indent; j++) {
+      childTotal++;
+      if (todos[j].done) childDone++;
+    }
+    if (childTotal > 0) {
+      done += childDone;
+      total += childTotal;
+    } else {
+      done += t.done ? 1 : 0;
+      total += 1;
+    }
+  }
+  return { done, total };
+}
+
+/**
  * 拖拽移动任务（含其子树）到目标位置，原地修改数组。
  * - asChild=true：作为目标任务的子任务插入（追加到目标任务子树末尾，层级置 1）
  * - after=true：插入到目标位置之后（否则之前），拖动项保持自身层级
@@ -356,9 +384,12 @@ function parsePlanSection(
     const trimmed = text.trim();
     if (!trimmed) return;
 
-    // 块尾行内字段行（[pinned::true] / [archived::时间]），附加到上一个计划块
+    // 块尾行内字段行（[pinned::true] / [archived::时间]）
     const fieldMatch = trimmed.match(/^\[(pinned|archived)::(.+)\]$/);
     if (fieldMatch) {
+      // 字段行总是写在所属块尾之后，遇到时该块还没结算——先 flush 再挂字段，
+      // 否则会错挂到上一个块（首个块的字段则直接丢失），表现为置顶/归档失效或错位
+      flush();
       if (lastFlushedEntry) {
         if (fieldMatch[1] === "pinned") lastFlushedEntry.pinned = fieldMatch[2].trim() === "true";
         else lastFlushedEntry.archived = fieldMatch[2].trim();

@@ -14,7 +14,9 @@ import {
   moment,
   TFile,
   type App,
+  setIcon,
 } from "obsidian";
+import { makeActivatable } from "./JournalView";
 import type DaybookPlugin from "./main";
 import { renderMarkdown } from "./renderMarkdown";
 import { createLiveEditor, type LiveEditor } from "./liveEditor";
@@ -34,15 +36,17 @@ import {
   getCompletedFieldName,
   effectivePriority,
   shouldShowPriorityBadge,
+  planTodoProgress,
   PRIORITY_META,
   PRIORITY_EMOJI,
   type PriorityLevel,
   type JournalEntry,
   type TodoItem,
+  formatDateLabel,
 } from "./fileReader";
-import { getAllSections } from "./settings";
-import { parseExpenseText, formatMoney } from "./expenseManager";
+import { getAllSections, type SectionConfig } from "./settings";
 import { isFilterActive, matchEntry, type SectionFilter } from "./filters";
+import { collectPlanTasks, groupPlanTasks, type PlanGroupMode } from "./planOverview";
 
 /** 删除等危险操作确认弹窗 */
 export class ConfirmModal extends Modal {
@@ -454,6 +458,22 @@ export class TodayPanel {
   filter: SectionFilter | null = null;
   /** 结果条数回调（供筛选面板显示） */
   onResult: ((count: number, days: number, filtering: boolean) => void) | null = null;
+  /** 点击记录上的标签 → 切换该标签到章节筛选（由视图注入；再点一次取消，可叠加多个） */
+  onToggleTag: ((tag: string) => void) | null = null;
+  /** 计划分组方式（由视图注入，读 reviewState.planGroupBy；"none" = 按计划块原样展示） */
+  planGroupBy: (() => PlanGroupMode | "none") | null = null;
+  /** 用户切换分组方式 → 视图持久化 */
+  onPlanGroupByChange: ((mode: PlanGroupMode | "none") => void) | null = null;
+  /** 刷新序号：连续触发刷新（如勾选后多处联动）时，只有最后一次允许落笔，避免重复渲染 */
+  private refreshSeq = 0;
+  /** 筛选结果分页状态（跨日期筛选模式专用） */
+  private pager: {
+    dates: string[];        // 全部命中日期（新→旧）
+    rendered: number;       // 已渲染日期数
+    byDate: Map<string, JournalEntry[]>;
+    labels: Map<string, string>;
+    observer: IntersectionObserver | null;
+  } | null = null;
 
   constructor(container: HTMLElement, plugin: DaybookPlugin, headEl: HTMLElement | null = null) {
     this.plugin = plugin;
@@ -480,25 +500,57 @@ export class TodayPanel {
     this.liveEditors.clear();
   }
 
-  /** 重新加载并渲染指定章节的记录（无筛选=今天；有筛选=按条件跨日期查询） */
+  /** 重新加载并渲染指定章节的记录（无筛选=今天；有筛选=按条件跨日期查询；计划章节可按优先级/日期分组） */
   async refresh(sectionId: string): Promise<void> {
     this.destroyEditors();
+    const seq = ++this.refreshSeq;
     const app = this.plugin.app;
     const today = moment().format("YYYY-MM-DD");
     const filter = this.filter;
     const filtering = !!filter && isFilterActive(filter);
+    const section = getAllSections(this.plugin.settings).find(s => s.id === sectionId);
+    const groupMode = !filtering && section?.type === "plans" ? (this.planGroupBy?.() ?? "none") : "none";
     let entries: JournalEntry[] = [];
     const labels = new Map<string, string>();
+    let allPlanEntries: JournalEntry[] = [];
     try {
       const groups = await readAllJournalEntries(app, this.plugin.settings, new Set([sectionId]));
+      if (seq !== this.refreshSeq) return;   // 已有更新的刷新接管渲染，避免重复落笔
       groups.forEach(g => labels.set(g.date, g.dateLabel));
       entries = filtering && filter
         ? groups.flatMap(g => g.entries).filter(e => matchEntry(e, filter, today))
-        : (groups.find(g => g.date === today)?.entries ?? []).filter(e => !e.archived);
+        : (() => {
+            const todayEntries = groups.find(g => g.date === today)?.entries ?? [];
+            // 默认内容为未归档的；已归档的追加到底部弱化展示，不与正常记录混排
+            return [...todayEntries.filter(e => !e.archived), ...todayEntries.filter(e => e.archived)];
+          })();
+      // 计划分组：跨日期聚合全部计划条目（分组视图只列未完成任务）
+      if (groupMode !== "none") {
+        allPlanEntries = groups.flatMap(g => g.entries)
+          .filter(e => e.renderType === "plans" && !e.archived && (e.todos?.length ?? 0) > 0);
+      }
     } catch {
       /* 读取失败时保持空列表 */
     }
-    if (!this.listEl.isConnected) return;
+    if (seq !== this.refreshSeq || !this.listEl.isConnected) return;
+
+    // 异步读取前先铺骨架屏（仅列表为空的首屏，避免刷新已有内容时闪烁）
+    if (this.listEl.children.length === 0) {
+      this.listEl.empty();
+      const sk = this.listEl.createDiv({ cls: "db-stream-skeleton" });
+      for (let i = 0; i < 3; i++) {
+        const c = sk.createDiv({ cls: "db-skeleton-card" });
+        c.createDiv({ cls: "db-skeleton-bar w40" });
+        c.createDiv({ cls: "db-skeleton-bar w85" });
+        c.createDiv({ cls: "db-skeleton-bar w60" });
+      }
+    }
+
+    // ── 计划分组视图：滴答清单式，同组任务合并进一张原样卡片 ──
+    if (groupMode !== "none" && section) {
+      this.renderGroupedPlans(section, allPlanEntries, groupMode as PlanGroupMode, today);
+      return;
+    }
 
     this.listEl.empty();
     this.container.toggleClass("is-empty", entries.length === 0);
@@ -519,47 +571,247 @@ export class TodayPanel {
       });
       return;
     }
-    const section = getAllSections(this.plugin.settings).find(s => s.id === sectionId);
-    if (section?.type === "expenses") this.renderExpenseSummary(entries, filtering);
-    let lastDate = "";
+    if (!filtering) {
+      // 默认视图：一次渲染全部（今日范围小）。
+      // 置顶恒在最上、已归档恒垫底，与「新→旧 / 旧→新」设置无关；
+      // 各组内部保持 parse 给出的时间序（旧→新时整组反转）
+      const ascending = this.plugin.settings.memoSortOrder === "oldest";
+      const pinned = entries.filter(e => e.pinned && !e.archived);
+      const normal = entries.filter(e => !e.pinned && !e.archived);
+      const archived = entries.filter(e => e.archived);
+      if (ascending) { pinned.reverse(); normal.reverse(); }
+      const ordered = [...pinned, ...normal, ...archived];
+
+      let archivedDividerShown = false;
+      ordered.forEach(entry => {
+        if (entry.archived && !archivedDividerShown) {
+          archivedDividerShown = true;
+          this.listEl.createDiv({ cls: "db-entry-day db-entry-day-archived", text: "📦 已归档" });
+        }
+        this.renderEntry(entry);
+      });
+      return;
+    }
+
+    // 筛选视图：按日期分桶分页加载（每页 5 组，滚动到底自动加载下一页）
+    const dates: string[] = [];
+    const byDate = new Map<string, JournalEntry[]>();
     entries.forEach(entry => {
-      if (filtering && entry.date !== lastDate) {
-        lastDate = entry.date;
-        this.listEl.createDiv({ cls: "db-entry-day", text: labels.get(entry.date) ?? entry.date });
-      }
-      this.renderEntry(entry);
+      if (!byDate.has(entry.date)) { byDate.set(entry.date, []); dates.push(entry.date); }
+      byDate.get(entry.date)!.push(entry);
     });
+    this.disconnectPagerObserver();
+    this.pager = { dates, rendered: 0, byDate, labels, observer: null };
+    this.appendNextPage();
   }
 
-  /** 记账章节顶部：支出/收入合计（筛选态为结果区间合计） */
-  private renderExpenseSummary(entries: JournalEntry[], filtering: boolean) {
-    let expense = 0;
-    let income = 0;
-    entries.forEach(e => {
-      const p = parseExpenseText(e.text);
-      if (!p) return;
-      if (p.amount < 0) expense += -p.amount;
-      else income += p.amount;
+  /** 追加下一页（每页 5 个日期组）；由哨兵观察器或测试直接调用 */
+  private appendNextPage() {
+    const pager = this.pager;
+    if (!pager || pager.rendered >= pager.dates.length) return;
+    const byDate = pager.byDate;
+    const labels = pager.labels;
+    const PAGE = 5;
+    const slice = pager.dates.slice(pager.rendered, pager.rendered + PAGE);
+    pager.rendered += slice.length;
+
+    slice.forEach(date => {
+      this.listEl.createDiv({ cls: "db-entry-day", text: labels.get(date) ?? date });
+      byDate.get(date)?.forEach(entry => this.renderEntry(entry));
     });
-    const bar = this.listEl.createDiv({ cls: "db-expense-summary" });
-    const item = (label: string, value: number, cls: string) => {
-      const cell = bar.createDiv({ cls: `db-expense-summary-item ${cls}` });
-      cell.createSpan({ cls: "db-expense-summary-label", text: label });
-      cell.createSpan({ cls: "db-expense-summary-value", text: value > 0 ? `¥${formatMoney(value)}` : "—" });
+
+    // 移除旧尾标（哨兵/完结提示），重建
+    this.listEl.querySelector(".db-stream-tail")?.remove();
+    if (pager.rendered < pager.dates.length) {
+      const tail = this.listEl.createDiv({ cls: "db-stream-tail" });
+      const sentinel = tail.createDiv({ cls: "db-stream-sentinel", text: "加载中…" });
+      this.observeSentinel(sentinel, () => {
+        tail.remove();
+        this.appendNextPage();
+      });
+    } else {
+      this.listEl.createDiv({ cls: "db-stream-tail" })
+        .createDiv({ cls: "db-stream-end", text: `共 ${pager.dates.length} 天` });
+    }
+  }
+
+  /** 哨兵进入视口 → 加载下一页；优先 IntersectionObserver，环境不支持时回退滚动监听 */
+  private observeSentinel(sentinel: HTMLElement, onLoad: () => void) {
+    const root = this.listEl.closest(".db-journal-root") as HTMLElement | null;
+    if (!root) return;
+    if (typeof IntersectionObserver !== "undefined") {
+      const io = new IntersectionObserver((obs) => {
+        if (obs.some(o => o.isIntersecting)) {
+          io.disconnect();
+          onLoad();
+        }
+      }, { root, rootMargin: "120px" });
+      io.observe(sentinel);
+      if (this.pager) this.pager.observer = io;
+    } else {
+      const onScroll = () => {
+        const nearBottom = root.scrollHeight - root.scrollTop - root.clientHeight < 200;
+        if (nearBottom) {
+          root.removeEventListener("scroll", onScroll);
+          onLoad();
+        }
+      };
+      root.addEventListener("scroll", onScroll, { passive: true });
+      if (this.pager) {
+        // 借用 observer 字段做清理句柄
+        (this.pager as unknown as { observer: unknown }).observer = { disconnect: () => root.removeEventListener("scroll", onScroll) } as unknown as IntersectionObserver;
+      }
+    }
+  }
+
+  private disconnectPagerObserver() {
+    try { this.pager?.observer?.disconnect(); } catch { /* ignore */ }
+    this.pager = null;
+  }
+
+  /**
+   * 计划分组视图：按优先级或截止日期把全部未完成任务合并进"原样"的计划卡片。
+   * 每组一张卡（组标题 + 计数 + 任务行，行样式与计划卡片内的任务一致）；
+   * 勾选走级联写回原文件，完成后从分组中消失。
+   */
+  private renderGroupedPlans(
+    section: SectionConfig,
+    allEntries: JournalEntry[],
+    mode: PlanGroupMode,
+    today: string
+  ) {
+    const tasks = collectPlanTasks(allEntries);
+    const groups = groupPlanTasks(tasks, mode, today);
+
+    this.listEl.empty();
+    this.container.toggleClass("is-empty", tasks.length === 0);
+    this.setHead("未完成任务", tasks.length);
+    if (this.headEl) {
+      this.headEl.toggleClass("is-hidden", false);
+      // 分组切换（先移除旧 seg，避免重复渲染）
+      this.headEl.querySelector(".db-plan-seg")?.remove();
+      const seg = this.headEl.createDiv({ cls: "db-plan-seg" });
+      ([["priority", "优先级"], ["date", "日期"], ["none", "计划块"]] as [PlanGroupMode | "none", string][])
+        .forEach(([m, label]) => {
+          const tab = seg.createDiv({
+            cls: `db-plan-seg-btn${mode === m ? " active" : ""}`,
+            text: label,
+            attr: { role: "button", "aria-pressed": String(mode === m) },
+          });
+          tab.addEventListener("click", () => {
+            if (mode === m) return;
+            this.onPlanGroupByChange?.(m);
+            void this.refresh(section.id);
+          });
+        });
+    }
+    this.onResult?.(tasks.length, 0, false);
+
+    if (tasks.length === 0) {
+      this.listEl.createDiv({ cls: "db-today-empty", text: "没有未完成的任务，在上方添加一条吧～" });
+      return;
+    }
+
+    for (const g of groups) {
+      if (g.tasks.length === 0) continue;
+      const card = this.listEl.createDiv({ cls: "db-entry db-plan-group-card" });
+      const head = card.createDiv({ cls: "db-plan-group-head" });
+      head.createSpan({ cls: "db-plan-group-label", text: g.label });
+      head.createSpan({ cls: "db-plan-group-count", text: String(g.tasks.length) });
+      const list = card.createDiv({ cls: "db-entry-todo-list" });
+      g.tasks.forEach(({ entry, todo }) => this.renderGroupTodoRow(list, entry, todo, section.id));
+    }
+  }
+
+  /** 分组卡片内的任务行：样式与计划卡片中的任务一致（勾选级联写回原文件） */
+  private renderGroupTodoRow(
+    list: HTMLElement,
+    entry: JournalEntry,
+    todo: TodoItem,
+    sectionId: string
+  ) {
+    const item = list.createDiv({ cls: "db-plan-group-row" });
+    const checkbox = item.createDiv({
+      cls: "db-entry-checkbox",
+      attr: { role: "checkbox", "aria-checked": "false", "aria-label": `完成：${todo.text}` },
+    });
+    const textEl = item.createDiv({ cls: "db-entry-todo-text" });
+    if (shouldShowPriorityBadge(todo.priority, this.plugin.settings)) {
+      createPriorityBadge(textEl, todo.priority);
+    }
+    textEl.createSpan({ text: todo.text });
+    if (todo.dueDate) {
+      const overdue = isTodoOverdue(todo.dueDate);
+      textEl.createSpan({
+        cls: `db-entry-due ${overdue ? "overdue" : ""}`,
+        text: overdue ? "⚠️过期" : `📅 ${formatTodoDue(todo.dueDate)}`,
+      });
+    }
+    if (todo.note) {
+      textEl.createSpan({
+        cls: "db-entry-note-flag",
+        text: "📝",
+        attr: { "aria-label": `备注：${todo.note}` },
+      });
+    }
+
+    const toggle = async () => {
+      try {
+        const stamp = moment().format("YYYY-MM-DD HH:mm");
+        const updates = buildTodoCascade(entry.todos ?? [todo], todo, true, stamp);
+        await setTodoStatesInFile(this.plugin.app, entry.filePath, updates, this.plugin.settings);
+        this.plugin.feedback.notify();
+        void this.refresh(sectionId);
+      } catch (e) {
+        new Notice("更新失败，请检查日记文件");
+      }
     };
-    item(filtering ? "筛选支出" : "今日支出", expense, "expense");
-    item(filtering ? "筛选收入" : "今日收入", income, "income");
+    checkbox.addEventListener("click", () => void toggle());
+    textEl.addEventListener("click", () => {
+      if (todo.indent) void toggle();
+      else this.openPlanDetail(entry, todo);
+    });
   }
 
   /** 单条记录块 */
   private renderEntry(entry: JournalEntry) {
     const card = this.listEl.createDiv({ cls: `db-entry ${entry.pinned ? "pinned" : ""} ${entry.archived ? "archived" : ""}` });
 
-    // 元信息行：时间 + 置顶/归档标记
-    const meta = card.createDiv({ cls: "db-entry-meta" });
-    if (entry.time) meta.createSpan({ cls: "db-entry-time", text: entry.time });
-    if (entry.pinned) meta.createSpan({ cls: "db-entry-flag", text: "📌", attr: { "aria-label": "已置顶" } });
-    if (entry.archived) meta.createSpan({ cls: "db-entry-flag archived", text: "📦 已归档", attr: { "aria-label": `归档于 ${entry.archived}` } });
+    // 卡片头部：左=置顶标识+日期时间灰字（跨日期筛选时含日期），右=归档标记 + ⋯ 操作
+    const head = card.createDiv({ cls: "db-entry-head" });
+
+    // 置顶标识（左上角）：点击直接取消置顶
+    if (entry.pinned) {
+      const pin = makeActivatable(head.createDiv({
+        cls: "db-entry-pin",
+        attr: { role: "button", tabindex: "0", "aria-label": "取消置顶", title: "取消置顶" },
+      }), "取消置顶");
+      setIcon(pin, "pin");
+      pin.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void this.togglePinEntry(entry);
+      });
+      pin.addEventListener("keydown", (e: KeyboardEvent) => {
+        if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); void this.togglePinEntry(entry); }
+      });
+    }
+
+    const timeText = entry.date === moment().format("YYYY-MM-DD")
+      ? (entry.time ?? "")
+      : `${formatDateLabel(entry.date)}${entry.time ? " " + entry.time : ""}`;
+    if (timeText) head.createSpan({ cls: "db-entry-head-time", text: timeText });
+
+    // 归档标记（弱化展示，⋯ 旁）
+    if (entry.archived) {
+      head.createSpan({ cls: "db-entry-flag archived", text: "📦 已归档", attr: { "aria-label": `归档于 ${entry.archived}` } });
+    }
+
+    // 悬浮「⋯」操作按钮（头部右侧）
+    const moreBtn = head.createDiv({
+      cls: "db-entry-more",
+      attr: { role: "button", tabindex: "0", "aria-label": "更多操作" },
+    });
+    moreBtn.setText("⋯");
 
     if (entry.renderType === "plans" && entry.todos && entry.todos.length > 0) {
       const title = entry.text.replace(/^\d{2}:\d{2}(?::\d{2})?\s*/, "");
@@ -567,8 +819,6 @@ export class TodayPanel {
         card.createDiv({ cls: "db-entry-title", text: title });
       }
       this.renderTodoCard(card, entry);
-    } else if (entry.renderType === "expenses" && parseExpenseText(entry.text)) {
-      this.renderExpenseEntry(card, parseExpenseText(entry.text)!);
     } else {
       const body = card.createDiv({ cls: "db-entry-body" });
       if (entry.text.includes("\n")) body.style.whiteSpace = "pre-wrap";
@@ -576,20 +826,32 @@ export class TodayPanel {
         sourcePath: entry.filePath,
         component: this.plugin,
         lazyThreshold: 10,
-      });
+      }).then(() => this.bindImageViewer(body));
     }
 
     if (entry.tags && entry.tags.length > 0) {
       const row = card.createDiv({ cls: "db-entry-tags" });
-      entry.tags.forEach(tag => row.createSpan({ cls: "db-entry-tag", text: `#${tag}` }));
+      entry.tags.forEach(tag => {
+        // 点击标签 = 叠加到当前筛选（再点一次取消）；选中的标签高亮
+        const active = this.filter?.tags?.includes(tag) ?? false;
+        const chip = row.createSpan({
+          cls: `db-entry-tag${active ? " is-active" : ""}`,
+          text: `#${tag}`,
+          attr: {
+            role: "button", tabindex: "0",
+            "aria-label": active ? `取消筛选标签 ${tag}` : `筛选标签 ${tag}`,
+            "aria-pressed": String(active),
+          },
+        });
+        const toggle = () => this.onToggleTag?.(tag);
+        chip.addEventListener("click", toggle);
+        chip.addEventListener("keydown", (e: KeyboardEvent) => {
+          if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); toggle(); }
+        });
+      });
     }
 
-    // 悬浮「⋯」操作按钮
-    const moreBtn = card.createDiv({
-      cls: "db-entry-more",
-      text: "⋯",
-      attr: { role: "button", tabindex: "0", "aria-label": "更多操作" },
-    });
+    // ⋯ 操作按钮：键盘可访问 + 弹出菜单
     moreBtn.addEventListener("keydown", (e) => {
       if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); moreBtn.click(); }
     });
@@ -599,16 +861,29 @@ export class TodayPanel {
     });
   }
 
-  /** 记账记录行：金额（支出红/收入绿） + 分类徽标 + 备注 */
-  private renderExpenseEntry(card: HTMLElement, p: { amount: number; category?: string; note: string }) {
-    const body = card.createDiv({ cls: "db-entry-body db-expense-entry" });
-    const isExpense = p.amount < 0;
-    body.createSpan({
-      cls: `db-expense-amount ${isExpense ? "expense" : "income"}`,
-      text: `${isExpense ? "−" : "+"}¥${formatMoney(p.amount)}`,
+  /** 卡片内图片点击放大：渲染完成后绑定（编辑区不绑定） */
+  private bindImageViewer(body: HTMLElement) {
+    if (!body.isConnected) return;
+    body.querySelectorAll("img").forEach(img => {
+      img.addClass("db-entry-img");
+      img.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.openImageViewer((img as HTMLImageElement).currentSrc || (img as HTMLImageElement).src);
+      });
     });
-    if (p.category) body.createSpan({ cls: "db-expense-cat-chip", text: p.category });
-    if (p.note) body.createSpan({ cls: "db-expense-entry-note", text: p.note });
+  }
+
+  /** 全屏图片查看器：遮罩 + 居中大图，点击任意处关闭 */
+  private openImageViewer(src: string) {
+    if (!src) return;
+    const root = this.container.closest(".db-journal-root") as HTMLElement | null;
+    if (!root) return;
+    const overlay = root.createDiv({ cls: "db-img-viewer" });
+    const img = overlay.createEl("img", { attr: { src } });
+    overlay.addEventListener("click", () => overlay.remove());
+    // 阻止图片自身拖拽
+    img.addEventListener("dragstart", (e) => e.preventDefault());
   }
 
   /** 单条记录操作菜单：置顶 / 编辑 / 原文 / 归档 / 删除 */
@@ -626,8 +901,7 @@ export class TodayPanel {
       menu.addItem(item =>
         item.setTitle("编辑").setIcon("pencil").onClick(() => this.openPlanEditModal(entry))
       );
-    } else if (entry.renderType !== "expenses") {
-      // 记账条目含行内字段（[amt::]/[cat::]），不提供内联编辑，改金额可删除后重记
+    } else {
       menu.addItem(item =>
         item.setTitle("编辑").setIcon("pencil").onClick(() => this.enterEditMode(card, entry))
       );
@@ -786,7 +1060,7 @@ export class TodayPanel {
 
     Array.from(card.children).forEach(el => {
       const child = el as HTMLElement;
-      if (child.hasClass("db-entry-meta") || child.hasClass("db-entry-more")) return;
+      if (child.hasClass("db-entry-head") || child.hasClass("db-entry-more")) return;
       child.addClass("db-hidden-for-edit");
     });
 
@@ -860,12 +1134,11 @@ export class TodayPanel {
     await replaceLineRange(this.plugin.app, entry.filePath, start, end, [...lines, ...fieldLines]);
   }
 
-  /** 计划任务列表：勾选父子级联 + 拖拽排序 + 进度条 */
+  /** 计划任务列表：勾选父子级联 + 拖拽排序 + 进度条（有子计划按子计划计数） */
   private renderTodoCard(card: HTMLElement, entry: JournalEntry) {
     const todos = entry.todos!;
-    const total = todos.length;
     let dragFrom: number | null = null;
-    let doneCount = todos.filter(t => t.done).length;
+    let { done: doneCount, total } = planTodoProgress(todos);
 
     const refs = new Map<number, { todo: TodoItem; checkbox: HTMLElement; textEl: HTMLElement; itemEl: HTMLElement }>();
 
@@ -873,7 +1146,9 @@ export class TodayPanel {
     let progressFill: HTMLElement | null = null;
 
     const refreshProgress = () => {
-      doneCount = todos.filter(t => t.done).length;
+      const p = planTodoProgress(todos);
+      doneCount = p.done;
+      total = p.total;
       if (progressText) progressText.setText(`${doneCount}/${total}`);
       if (progressFill) progressFill.style.width = `${Math.round((doneCount / total) * 100)}%`;
     };

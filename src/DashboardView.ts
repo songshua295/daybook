@@ -1,6 +1,6 @@
 import { ItemView, WorkspaceLeaf, setIcon, moment } from "obsidian";
 import type DaybookPlugin from "./main";
-import { readAllJournalEntries, formatDateLabel, type DayGroup, type JournalEntry } from "./fileReader";
+import { readAllJournalEntries, formatDateLabel, planTodoProgress, type DayGroup, type JournalEntry } from "./fileReader";
 import { checkinState, isExecuteDay, loadHabits, type CheckinRow, type HabitConfig } from "./habitManager";
 import { isTypeEnabled, type SectionType } from "./settings";
 
@@ -241,9 +241,11 @@ export class DashboardView extends ItemView {
     recent.forEach(({ entry }) => {
       const row = card.createDiv({ cls: "db-activity-row" });
       const iw = row.createDiv({ cls: "db-activity-icon", text: entry.sectionEmoji || "📝" });
-      const preview = entry.renderType === "plans"
-        ? `${entry.text}（${entry.todos?.filter(t => t.done).length ?? 0}/${entry.todos?.length ?? 0} 已完成）`
-        : entry.text.replace(/\n+/g, " ");
+      let preview = entry.text.replace(/\n+/g, " ");
+      if (entry.renderType === "plans") {
+        const p = planTodoProgress(entry.todos ?? []);
+        preview = `${entry.text}（${p.done}/${p.total} 已完成）`;
+      }
       row.createDiv({ cls: "db-activity-text", text: preview });
       row.createDiv({ cls: "db-activity-time", text: `${formatDateLabel(entry.date)}${entry.time ? " " + entry.time : ""}` });
     });
@@ -301,9 +303,14 @@ export class DashboardView extends ItemView {
 
     const memosToday = todayEntries.filter(e => e.renderType === "memos").length;
 
-    const planTodos = todayEntries.filter(e => e.renderType === "plans")
-      .flatMap(e => e.todos ?? []);
-    const planDone = planTodos.filter(t => t.done).length;
+    // 计划进度：有子计划的组按子计划数量计数（与今日面板进度条口径一致）
+    let planDone = 0;
+    let planTotal = 0;
+    todayEntries.filter(e => e.renderType === "plans").forEach(e => {
+      const p = planTodoProgress(e.todos ?? []);
+      planDone += p.done;
+      planTotal += p.total;
+    });
 
     const t = this.todayStr();
     // 今日应打卡的习惯 = 未归档且今天是执行日（休息日不计入分母）
@@ -314,7 +321,7 @@ export class DashboardView extends ItemView {
 
     return [
       { icon: "pen-line", label: "今日闪念", value: String(memosToday), sublabel: "条", accent: true },
-      { icon: "check-square", label: "今日计划", value: `${planDone}/${planTodos.length}`, sublabel: "已完成" },
+      { icon: "check-square", label: "今日计划", value: `${planDone}/${planTotal}`, sublabel: "已完成" },
       { icon: "droplet", label: "今日习惯", value: `${habitsDone}/${activeHabits.length}`, sublabel: "已打卡" },
       { icon: "flame", label: "连续记录", value: String(this.computeStreak()), sublabel: "天" },
       { icon: "notebook-pen", label: "总条目", value: String(totalEntries), sublabel: `${this.groups.length} 天有记录` },
@@ -327,9 +334,14 @@ export class DashboardView extends ItemView {
     const allEntries = this.groups.flatMap(g => g.entries);
     const weekEntries = allEntries.filter(e => e.date >= weekStart && e.date <= t);
 
-    const allTodos = allEntries.filter(e => e.renderType === "plans").flatMap(e => e.todos ?? []);
-    const doneTodos = allTodos.filter(td => td.done).length;
-    const rate = allTodos.length > 0 ? Math.round((doneTodos / allTodos.length) * 100) : 0;
+    let doneTodos = 0;
+    let allTodoCount = 0;
+    allEntries.filter(e => e.renderType === "plans").forEach(e => {
+      const p = planTodoProgress(e.todos ?? []);
+      doneTodos += p.done;
+      allTodoCount += p.total;
+    });
+    const rate = allTodoCount > 0 ? Math.round((doneTodos / allTodoCount) * 100) : 0;
 
     const tags = new Set<string>();
     allEntries.forEach(e => e.tags?.forEach(tag => tags.add(tag)));
@@ -339,7 +351,7 @@ export class DashboardView extends ItemView {
     return [
       ...this.computeStats(),
       { icon: "calendar-days", label: "本周记录", value: String(weekEntries.length), sublabel: "条", accent: true },
-      { icon: "check-check", label: "计划完成率", value: `${rate}%`, sublabel: `${doneTodos}/${allTodos.length} 项` },
+      { icon: "check-check", label: "计划完成率", value: `${rate}%`, sublabel: `${doneTodos}/${allTodoCount} 项` },
       { icon: "hash", label: "标签使用", value: String(tags.size), sublabel: "个不同标签" },
       { icon: "droplets", label: "本周打卡", value: String(weekCheckins), sublabel: "次" },
     ];

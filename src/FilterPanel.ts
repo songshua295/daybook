@@ -2,7 +2,7 @@
  * FilterPanel.ts — 章节内容筛选面板（顶栏「筛选」按钮下方挂出的托盘）
  *
  * 只渲染当前章节类型相关的维度：闪念=心情/标签/链接/附件，计划=完成度/优先级/逾期，
- * 记账=收支/分类/金额，习惯=今日打卡态/应打卡/期间有打卡。条件改动即时回调视图重跑筛选。
+ * 习惯=今日打卡态/应打卡/期间有打卡。条件改动即时回调视图重跑筛选。
  *
  * 交互约定（全面板统一，别破例）：
  * - 一行＝一个维度，左侧导栏是维度名，右侧是可选值；导栏在生效时加 is-set（字色变实）。
@@ -40,8 +40,6 @@ export interface FilterPanelOptions {
   filter: SectionFilter;
   /** 该章节已出现过的标签（含使用次数） */
   tags: { tag: string; count: number }[];
-  /** 记账分类候选（设置项 + 历史出现过的） */
-  categories: string[];
   /** 条件变化 → 视图重跑筛选 */
   onChange: () => void;
   /** 收起面板 */
@@ -252,7 +250,6 @@ export class FilterPanel {
     /* 类型专属维度 */
     if (this.type === "memos") this.renderMemos();
     else if (this.type === "plans") this.renderPlans();
-    else if (this.type === "expenses") this.renderExpenses();
     else if (this.type === "habits") this.renderHabits();
 
     /* 链接 / 附件（记录类章节；习惯章节的对象不是日记条目） */
@@ -284,7 +281,6 @@ export class FilterPanel {
   private qPlaceholder(): string {
     switch (this.type) {
       case "plans": return "搜索任务，空格分隔多关键词（如：报告 周五）";
-      case "expenses": return "搜索备注内容";
       case "habits": return "搜索习惯名或打卡备注";
       default: return `搜索${this.opts.section.label}，空格分隔多关键词`;
     }
@@ -322,37 +318,6 @@ export class FilterPanel {
       this.f.overdueOnly, () => { this.f.overdueOnly = !this.f.overdueOnly; this.changed(); });
     this.chip(values, { value: "due", label: "设了截止日", tip: "只看设置了截止日期的任务" },
       this.f.dueOnly, () => { this.f.dueOnly = !this.f.dueOnly; this.changed(); });
-  }
-
-  private renderExpenses(): void {
-    this.single("收支", [
-      { value: "expense", label: "支出", tip: "只看支出" },
-      { value: "income", label: "收入", tip: "只看收入" },
-    ], this.f.kinds, "all", v => { this.f.kinds = v as SectionFilter["kinds"]; this.changed(); });
-
-    const cats = [...new Set([...this.opts.plugin.settings.expenseCategories, ...this.opts.categories])];
-    this.multi("分类", cats.map(c => ({ value: c, label: c, tip: `分类 ${c}` })), this.f.categories, v => {
-      this.f.categories = this.f.categories.includes(v) ? this.f.categories.filter(x => x !== v) : [...this.f.categories, v];
-      this.changed();
-    });
-
-    const { main, values } = this.row("金额", !!(this.f.minAmount || this.f.maxAmount));
-    const min = values.createEl("input", {
-      cls: "db-filter-num", type: "text", placeholder: "最低",
-      attr: { "aria-label": "金额下限", inputmode: "decimal" },
-    });
-    min.value = this.f.minAmount;
-    min.addEventListener("input", () => { this.f.minAmount = min.value; this.opts.onChange(); });
-    values.createSpan({ cls: "db-filter-dash", text: "–" });
-    const max = values.createEl("input", {
-      cls: "db-filter-num", type: "text", placeholder: "最高",
-      attr: { "aria-label": "金额上限", inputmode: "decimal" },
-    });
-    max.value = this.f.maxAmount;
-    max.addEventListener("input", () => { this.f.maxAmount = max.value; this.opts.onChange(); });
-    if (this.f.minAmount || this.f.maxAmount) {
-      main.createDiv({ cls: "db-filter-hint", text: "收支两边按绝对值比较" });
-    }
   }
 
   private renderHabits(): void {

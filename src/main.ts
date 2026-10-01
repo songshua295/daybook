@@ -103,18 +103,36 @@ export default class DaybookPlugin extends Plugin {
       this.settings.panels = this.settings.panels.filter(p => p.sections.length > 0);
       if (this.settings.panels.length === 0) this.settings.panels = cloneDefaults();
     }
-    if (!Array.isArray(this.settings.expenseCategories)) {
-      this.settings.expenseCategories = [...DEFAULT_SETTINGS.expenseCategories];
+    // 清理：记账类型已移除，剥掉历史数据里的记账章节/空版块与相关字段
+    // （字段已从类型定义删除，这里用宽松类型访问旧数据.json 里的残留键）
+    const legacy = this.settings as unknown as Record<string, unknown>;
+    let dirty = false;
+    if (Array.isArray(this.settings.panels)) {
+      const before = this.settings.panels.length;
+      this.settings.panels.forEach(p => {
+        const n = p.sections.length;
+        p.sections = p.sections.filter(sc => String(sc.type) !== "expenses");
+        if (p.sections.length !== n) dirty = true;
+      });
+      this.settings.panels = this.settings.panels.filter(p => p.sections.length > 0);
+      if (this.settings.panels.length !== before) dirty = true;
+      if (this.settings.panels.length === 0) { this.settings.panels = cloneDefaults(); dirty = true; }
     }
-    // 迁移：老用户一次性追加默认「记账」版块（之后用户删掉不会再出现）
-    if (!loaded?.expensesAddedV1) {
-      const hasExpenses = this.settings.panels.some(p => p.sections.some(s => s.type === "expenses"));
-      if (!hasExpenses) {
-        const defaults = cloneDefaults();
-        const expensePanel = defaults.find(p => p.id === "expenses");
-        if (expensePanel) this.settings.panels.push(expensePanel);
-      }
-      this.settings.expensesAddedV1 = true;
+    if ("expenseCategories" in legacy) { delete legacy.expenseCategories; dirty = true; }
+    if ("expensesAddedV1" in legacy) { delete legacy.expensesAddedV1; dirty = true; }
+    const typeEnabled = this.settings.typeEnabled as unknown as Record<string, unknown> | undefined;
+    if (typeEnabled && "expenses" in typeEnabled) {
+      delete typeEnabled.expenses;
+      dirty = true;
+    }
+    if (dirty) await this.saveSettings();
+
+    // 迁移：任务总览分组方式是从未接线的遗留默认值（"none"），一次性切到"按优先级"；
+    // 之后用户在面板里切换会正常持久化，不再被覆盖
+    const rs = this.settings.reviewState;
+    if (!rs.planGroupByDefaulted) {
+      if (rs.planGroupBy === "none") rs.planGroupBy = "priority";
+      rs.planGroupByDefaulted = true;
       await this.saveSettings();
     }
   }

@@ -2,10 +2,10 @@
  * filters.ts — 章节内容筛选（纯逻辑层，无 Obsidian 运行时依赖，可单测）
  *
  * 设计：一个 SectionFilter 结构承载全部维度，各章节类型只渲染并应用自己相关的维度。
- * 记录流（闪念/计划/记账）走 matchEntry；习惯章节的对象是习惯本身，走 matchHabit。
+ * 记录流（闪念/计划）走 matchEntry；习惯章节的对象是习惯本身，走 matchHabit。
  */
 
-import { parseExpenseText } from "./expenseManager";
+import { planTodoProgress } from "./fileReader";
 import type { JournalEntry, TodoItem } from "./fileReader";
 
 /* ── 取值类型 ── */
@@ -18,15 +18,13 @@ export type StatusFilter = "all" | "active" | "archived";
 export type CompletionFilter = "all" | "done" | "undone";
 /** 日期快捷范围 */
 export type DatePreset = "" | "today" | "7d" | "30d" | "month" | "lastmonth" | "custom";
-/** 收支方向 */
-export type ExpenseKindFilter = "all" | "expense" | "income";
 /** 习惯某天状态 */
 export type CheckinFilter = "all" | "checked" | "skipped" | "rest" | "none";
 
 /** 一条完整的筛选条件（含各类型专属维度） */
 export interface SectionFilter {
   q: string;                    // 关键词：空格分隔多关键字，全部命中（模糊、忽略大小写）
-  tags: string[];               // 标签：命中任一
+  tags: string[];               // 标签：需命中全部（可叠加多个）
   datePreset: DatePreset;       // 日期范围
   dateFrom: string;             // 自定义起止 YYYY-MM-DD
   dateTo: string;
@@ -39,12 +37,9 @@ export interface SectionFilter {
   priorities: string[];         // 计划：优先级 "1".."4"
   overdueOnly: boolean;         // 计划：只看已过期未完成
   dueOnly: boolean;             // 计划：只看设了截止日的
-  kinds: ExpenseKindFilter;     // 记账：收支方向
-  categories: string[];         // 记账：分类
-  minAmount: string;            // 记账：金额区间（绝对值，"" = 不限）
-  maxAmount: string;
   checkins: CheckinFilter;      // 习惯：今日打卡状态
   shouldToday: boolean;         // 习惯：只看今天该执行的
+  quick: string[];              // 快捷筛选（搜索面板 pills）：noneTag / hasAudio / onThisDay，多选 AND
 }
 
 /** 习惯的最小结构（避免引入 habitManager 运行时依赖） */
@@ -73,8 +68,7 @@ export function emptyFilter(): SectionFilter {
     q: "", tags: [], datePreset: "", dateFrom: "", dateTo: "",
     status: "active", pinnedOnly: false, links: "any", attachments: "any",
     moods: [], completion: "all", priorities: [], overdueOnly: false, dueOnly: false,
-    kinds: "all", categories: [], minAmount: "", maxAmount: "",
-    checkins: "all", shouldToday: false,
+    checkins: "all", shouldToday: false, quick: [],
   };
 }
 
@@ -98,11 +92,9 @@ export function activeDimensions(f: SectionFilter): string[] {
   if (f.priorities.length) out.push("优先级");
   if (f.overdueOnly) out.push("逾期");
   if (f.dueOnly) out.push("截止日");
-  if (f.kinds !== "all") out.push("收支");
-  if (f.categories.length) out.push("分类");
-  if (f.minAmount.trim() || f.maxAmount.trim()) out.push("金额");
   if (f.checkins !== "all") out.push("打卡");
   if (f.shouldToday) out.push("今日应打卡");
+  if (f.quick.length) out.push("快捷");
   return out;
 }
 
@@ -229,9 +221,14 @@ function prioOf(t: TodoItem | { priority?: string | null }): string {
   return t.priority ?? "2";
 }
 
-/** 计划块是否已完成：有任务且全部勾选 */
+/**
+ * 计划块是否已完成：口径与进度条/Dashboard 的 planTodoProgress 统一——
+ * 有任务且进度满格（done === total，带子任务的组按子任务计）。
+ * 空计划块（没有任何任务）视为已完成：没承诺即没欠账。
+ */
 export function planDone(todos: TodoItem[] | undefined): boolean {
-  return !!todos && todos.length > 0 && todos.every(t => t.done);
+  const { done, total } = planTodoProgress(todos ?? []);
+  return total === 0 || done === total;
 }
 
 /** 计划块是否存在未完成 / 过期 / 设了截止日的任务 */
@@ -245,7 +242,7 @@ export function planFlags(todos: TodoItem[] | undefined, today: string) {
   };
 }
 
-/* ── 记录流筛选（闪念 / 计划 / 记账） ── */
+/* ── 记录流筛选（闪念 / 计划） ── */
 
 /** 一条记录是否命中全部筛选条件 */
 export function matchEntry(entry: JournalEntry, f: SectionFilter, today: string): boolean {
@@ -261,7 +258,26 @@ export function matchEntry(entry: JournalEntry, f: SectionFilter, today: string)
 
   if (f.tags.length) {
     const own = entry.tags ?? [];
-    if (!f.tags.some(t => own.includes(t))) return false;
+    // 多标签 = 必须全部包含（点击标签叠加筛选时按 AND 组合）
+    if (!f.tags.every(t => own.includes(t))) return false;
+  }
+
+  if (f.quick.length) {
+    const own = entry.tags ?? [];
+    const scan = scanLinks(entry.text);
+    const hasLink = scan.links + scan.embeds > 0;
+    const hasImage = scan.embeds + scan.attachments > 0 || /!\[[^\]]*\]\(|![^[]*\[[^\]]*\]\([^)]*\)/.test(entry.text);
+    const hasAudio = /\.(mp3|m4a|wav|ogg|flac|webm)\b/i.test(entry.text);
+    const isToday = entry.date === today;
+    const isOnThisDay = entry.date.slice(5) === today.slice(5) && entry.date.slice(0, 4) !== today.slice(0, 4);
+    for (const qf of f.quick) {
+      if (qf === "noneTag" && own.length > 0) return false;
+      if (qf === "hasLink" && !hasLink) return false;
+      if (qf === "hasImage" && !hasImage) return false;
+      if (qf === "hasAudio" && !hasAudio) return false;
+      if (qf === "onThisDay" && !isOnThisDay) return false;
+      if (qf === "today" && !isToday) return false;
+    }
   }
 
   if (f.links !== "any" || f.attachments !== "any") {
@@ -294,22 +310,6 @@ export function matchEntry(entry: JournalEntry, f: SectionFilter, today: string)
         const hit = f.moods.some(m => head === m || head.startsWith(`${m} `) || head.includes(`[mood::${m}]`));
         if (!hit) return false;
       }
-      break;
-    }
-    case "expenses": {
-      const usesExpenseDims = f.kinds !== "all" || f.categories.length > 0
-        || !!f.minAmount.trim() || !!f.maxAmount.trim();
-      if (!usesExpenseDims) break;
-      const p = parseExpenseText(entry.text);
-      if (!p) return false;                      // 记不了账的普通文本行不参与金额/分类筛选
-      if (f.kinds === "expense" && p.amount >= 0) return false;
-      if (f.kinds === "income" && p.amount <= 0) return false;
-      if (f.categories.length && !f.categories.includes(p.category ?? "")) return false;
-      const abs = Math.abs(p.amount);
-      const min = f.minAmount.trim() ? parseFloat(f.minAmount) : NaN;
-      const max = f.maxAmount.trim() ? parseFloat(f.maxAmount) : NaN;
-      if (Number.isFinite(min) && abs < min) return false;
-      if (Number.isFinite(max) && abs > max) return false;
       break;
     }
     default:
@@ -374,13 +374,3 @@ export function collectTags(entries: JournalEntry[]): { tag: string; count: numb
     .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, "zh"));
 }
 
-/** 从记账记录里收集出现过的分类（含设置分类之外的历史值） */
-export function collectExpenseCategories(entries: JournalEntry[]): string[] {
-  const set = new Set<string>();
-  entries.forEach(e => {
-    if (e.renderType !== "expenses") return;
-    const c = parseExpenseText(e.text)?.category;
-    if (c) set.add(c);
-  });
-  return [...set];
-}

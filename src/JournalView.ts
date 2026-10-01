@@ -5,9 +5,10 @@ import { createPriorityBadge, effectivePriority, PRIORITY_EMOJI, PRIORITY_META, 
 import { getVisibleSections, type SectionConfig, type MoodOption } from "./settings";
 import { ConfirmModal, TodayPanel } from "./TodayPanel";
 import { FilterPanel } from "./FilterPanel";
+import { MemoSearchModal } from "./memoSearch";
+import { MemoSidebar } from "./memoSidebar";
 import {
   activeDimensions,
-  collectExpenseCategories,
   collectTags,
   emptyFilter,
   isFilterActive,
@@ -17,12 +18,6 @@ import {
 } from "./filters";
 import { attachMemoEditor } from "./memoEditor";
 import { createLiveEditor, type LiveEditor, type LiveEditorOptions } from "./liveEditor";
-import {
-  buildExpenseContent,
-  parseAmountInput,
-  formatMoney,
-  type ExpenseKind,
-} from "./expenseManager";
 import {
   loadHabits,
   readHabitFile,
@@ -46,7 +41,9 @@ import {
   type HeatCell,
   type HabitConfig,
   type HabitData,
+  type TrendBucket,
   type TrendDimension,
+  type TrendResult,
 } from "./habitManager";
 
 export const VIEW_TYPE_JOURNAL = "daybook-view";
@@ -318,7 +315,7 @@ export class HabitEditModal extends Modal {
   }
 }
 
-/** 单日打卡明细弹窗：逐条撤销 / 取消跳过（入口 = 热力图格子点击） */
+/** 单日打卡明细弹窗：补打卡 / 逐条撤销 / 取消跳过（入口 = 热力图格子点击） */
 export class HabitDayDetailModal extends Modal {
   constructor(
     app: any,
@@ -335,6 +332,33 @@ export class HabitDayDetailModal extends Modal {
     contentEl.addClass("db-habit-day-modal");
     contentEl.createEl("h3", { text: `${this.habit.icon} ${this.date} · 打卡明细` });
     const list = contentEl.createDiv({ cls: "db-habit-day-list" });
+    // 补打卡入口（过去忘记打卡时用；未来日期不提供）
+    const todayStr = moment().format("YYYY-MM-DD");
+    let addBtn: HTMLElement | null = null;
+    if (this.date <= todayStr) {
+      const addRow = makeActivatable(contentEl.createDiv({
+        cls: "db-habit-day-add",
+        attr: { "aria-label": `补打卡 ${this.date}` },
+      }), `补打卡 ${this.date}`);
+      setIcon(addRow.createDiv({ cls: "db-habit-day-add-icon" }), "plus");
+      addRow.createSpan({ text: "补打卡（记录当前时间）" });
+      addBtn = addRow;
+      const doAdd = async () => {
+        if (addRow.classList.contains("busy")) return;
+        addRow.classList.add("busy");
+        try {
+          await checkinHabit(this.app, this.habit, this.date);
+          new Notice(`✅ 已补打卡 ${this.date}`);
+          this.onChanged?.();
+          render();
+        } catch (e) {
+          new Notice("补打卡失败：" + (e instanceof Error ? e.message : String(e)));
+        } finally {
+          addRow.classList.remove("busy");
+        }
+      };
+      addRow.addEventListener("click", doAdd);
+    }
     const render = () => {
       void (async () => {
         list.empty();
@@ -403,6 +427,24 @@ export class HabitDetailModal extends Modal {
   private heatEnd = moment().format("YYYY-MM-DD");   // 热力图窗口右端（默认今天）
   private trendDim: TrendDimension = "week";
   private trendAnchor = moment().format("YYYY-MM-DD");
+  /** 趋势图视图：柱状图 / 折线图（记忆上次选择） */
+  private trendChart: "bar" | "line" = HabitDetailModal.loadChartPref();
+
+  private static loadChartPref(): "bar" | "line" {
+    try {
+      return window.localStorage.getItem("daybook-trend-chart") === "line" ? "line" : "bar";
+    } catch {
+      return "bar";
+    }
+  }
+
+  private saveChartPref() {
+    try {
+      window.localStorage.setItem("daybook-trend-chart", this.trendChart);
+    } catch {
+      // localStorage 不可用（隐私模式等）时只在本次会话内生效
+    }
+  }
 
   constructor(
     app: any,
@@ -538,7 +580,7 @@ export class HabitDetailModal extends Modal {
         if (cell.rest && cell.count === 0 && !cell.skipped) cls.push("rest");
         if (cell.date === todayStr) cls.push("today");
         const el = makeActivatable(row.createDiv({ cls: cls.join(" ") }), `${cell.date} 打卡明细`);
-        // 悬浮提示：打卡时间明细
+        // 悬浮提示：打卡时间明细（Obsidian 原生 aria-label tooltip）
         let tip: string;
         const dayTimes = dayCheckins(rows, this.habit.id, cell.date);
         if (dayTimes.length > 0) {
@@ -548,8 +590,7 @@ export class HabitDetailModal extends Modal {
         } else if (cell.skipped) tip = `${cell.date} · 已跳过`;
         else if (cell.rest) tip = `${cell.date} · 休息日`;
         else tip = `${cell.date} · 未打卡`;
-        el.setAttribute("data-tooltip", tip);
-        el.setAttribute("data-tooltip-position", "top");
+        el.setAttribute("aria-label", tip);
         el.addEventListener("click", () => {
           new HabitDayDetailModal(this.app, this.habit, cell.date, () => {
             void this.reload();
@@ -578,19 +619,22 @@ export class HabitDetailModal extends Modal {
     for (let l = 1; l <= 4; l++) {
       legend.createDiv({
         cls: `db-heatmap-cell lv${l} mini`,
-        attr: { "data-tooltip": `完成度 ${l * 25}% 以上`, "data-tooltip-position": "top" },
+        attr: { "aria-label": `完成度 ${l * 25}% 以上` },
       });
     }
     legend.createSpan({ text: "多" });
-    legend.createDiv({ cls: "db-heatmap-cell skipped mini", attr: { "data-tooltip": "跳过", "data-tooltip-position": "top" } });
-    legend.createDiv({ cls: "db-heatmap-cell rest mini", attr: { "data-tooltip": "休息日", "data-tooltip-position": "top" } });
+    legend.createDiv({ cls: "db-heatmap-cell skipped mini", attr: { "aria-label": "跳过" } });
+    legend.createDiv({ cls: "db-heatmap-cell rest mini", attr: { "aria-label": "休息日" } });
   }
 
-  /** 依弹窗内容宽决定可见周数：每列约 19px，另留星期轴与右侧统计栏的空间 */
+  /** 依弹窗内容宽决定可见周数：每列实际 14px（11px 格 + 3px 缝），预留星期轴与内外边距约 96px；
+   *  弹窗较宽（≥620px）时右侧统计栏占约 120px，窄弹窗时统计栏经 CSS 换行到网格下方不计宽 */
   private visibleWeeks(): number {
     const width = this.contentEl?.clientWidth ?? 0;
     if (width <= 0) return 10;   // 布局未完成时的回退
-    return Math.max(5, Math.min(26, Math.floor((width - 145) / 19)));
+    const side = width >= 620 ? 120 : 0;
+    const cols = Math.floor((width - 96 - side) / 14);
+    return Math.max(5, Math.min(26, cols));
   }
 
   /** 热力图标题行右侧的翻页：‹ 范围 ›，按可见周数整段平移，不能翻到未来 */
@@ -624,8 +668,22 @@ export class HabitDetailModal extends Modal {
   private renderTrend(body: HTMLElement) {
     const today = moment();
     const card = this.makeCard(body, "历史记录趋势", "db-detail-trend", (head) => {
+      const right = head.createDiv({ cls: "db-trend-head-right" });
+      // 柱状图 / 折线图切换（小按钮，记忆选择）
+      const syncToggle = () => {
+        setIcon(chartBtn, this.trendChart === "bar" ? "line-chart" : "bar-chart");
+        chartBtn.setAttribute("aria-label", this.trendChart === "bar" ? "切换为折线图" : "切换为柱状图");
+      };
+      const chartBtn = makeActivatable(right.createDiv({ cls: "db-heatmap-arrow db-trend-chart-toggle" }), "切换图表类型");
+      syncToggle();
+      chartBtn.addEventListener("click", () => {
+        this.trendChart = this.trendChart === "bar" ? "line" : "bar";
+        this.saveChartPref();
+        syncToggle();
+        this.renderTrendOnly(card);
+      });
       // 维度切换标签（标题行右侧）
-      const tabs = head.createDiv({ cls: "db-trend-tabs" });
+      const tabs = right.createDiv({ cls: "db-trend-tabs" });
       ([["week", "周"], ["month", "月"], ["year", "年"]] as [TrendDimension, string][]).forEach(([dim, label]) => {
         const tab = makeActivatable(tabs.createDiv({
           cls: `db-trend-tab${this.trendDim === dim ? " active" : ""}`,
@@ -640,13 +698,22 @@ export class HabitDetailModal extends Modal {
       });
     });
 
-    // 范围 + 翻页 + 柱状图
+    // 范围 + 翻页 + 图表
     this.renderTrendRange(card);
   }
 
   private renderTrendOnly(card: HTMLElement) {
     card.querySelectorAll(".db-trend-range, .db-trend-chart, .db-trend-axis").forEach(el => el.remove());
     this.renderTrendRange(card);
+  }
+
+  /** 悬浮提示文案（柱状图与折线图共用） */
+  private trendTip(b: TrendBucket): string {
+    return this.trendDim === "year"
+      ? `${b.fullLabel} · 打卡 ${b.count} 次 · 达标率 ${Math.round(b.rate * 100)}%`
+      : b.rest
+        ? `${b.fullLabel} · 休息日`
+        : `${b.fullLabel} · ${b.count}/${b.target} 次 · 完成 ${Math.round(b.rate * 100)}%`;
   }
 
   private renderTrendRange(card: HTMLElement) {
@@ -672,9 +739,20 @@ export class HabitDetailModal extends Modal {
       this.renderTrendOnly(card);
     });
 
-    const chart = card.createDiv({ cls: "db-trend-chart" });
+    if (this.trendChart === "line") this.renderTrendLine(card, result);
+    else this.renderTrendBars(card, result);
+
+    // 横轴标签（两种图表共用）
     const axis = card.createDiv({ cls: "db-trend-axis" });
     const thin = result.buckets.length > 14;
+    result.buckets.forEach(b => {
+      const lab = axis.createDiv({ cls: `db-trend-label${thin ? " thin" : ""}` });
+      if (!thin || b.label === "1" || Number(b.label) % 5 === 0) lab.setText(b.label);
+    });
+  }
+
+  private renderTrendBars(card: HTMLElement, result: TrendResult) {
+    const chart = card.createDiv({ cls: "db-trend-chart" });
     result.buckets.forEach(b => {
       const col = chart.createDiv({ cls: "db-trend-col" });
       const bar = col.createDiv({ cls: "db-trend-bar-wrap" });
@@ -686,16 +764,75 @@ export class HabitDetailModal extends Modal {
       else cls.push("zero");
       const barEl = bar.createDiv({ cls: cls.join(" ") });
       barEl.style.height = `${h}%`;
-      barEl.setAttribute("data-tooltip",
-        this.trendDim === "year"
-          ? `${b.fullLabel} · 打卡 ${b.count} 次 · 达标率 ${Math.round(b.rate * 100)}%`
-          : b.rest
-            ? `${b.fullLabel} · 休息日`
-            : `${b.fullLabel} · ${b.count}/${b.target} 次 · 完成 ${Math.round(b.rate * 100)}%`
-      );
-      const lab = axis.createDiv({ cls: `db-trend-label${thin ? " thin" : ""}` });
-      if (!thin || b.label === "1" || Number(b.label) % 5 === 0) lab.setText(b.label);
-      void col;
+      barEl.setAttribute("aria-label", this.trendTip(b));
+    });
+  }
+
+  /** 折线图：SVG 折线 + 面积（休息日断开），HTML 圆点覆盖层保证点不变形且可悬浮 */
+  private renderTrendLine(card: HTMLElement, result: TrendResult) {
+    const buckets = result.buckets;
+    const n = buckets.length;
+    const dailyTarget = this.trendDim === "year" ? 0 : Math.max(1, this.habit.timesPerDay || 1);
+    const maxVal = Math.max(dailyTarget, 1, ...buckets.map(b => b.count));
+    // 纵向留 3% 顶部余量：value → 距底部百分比
+    const pctOf = (v: number) => 3 + (v / maxVal) * 94;
+    const chart = card.createDiv({ cls: "db-trend-chart db-trend-line" });
+
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("viewBox", `0 0 ${n * 10} 100`);
+    svg.setAttribute("preserveAspectRatio", "none");
+    const yOf = (v: number) => 100 - pctOf(v);
+
+    // 目标参考线（年维度的 target 是天数，量纲不同，不画）
+    if (dailyTarget > 0) {
+      const tline = document.createElementNS(svgNS, "line");
+      tline.setAttribute("x1", "0");
+      tline.setAttribute("x2", String(n * 10));
+      tline.setAttribute("y1", String(yOf(dailyTarget)));
+      tline.setAttribute("y2", String(yOf(dailyTarget)));
+      tline.setAttribute("class", "db-trend-line-target");
+      svg.appendChild(tline);
+    }
+
+    // 折线按休息日切成若干段；每段配一块面积
+    const segments: { pts: string; firstX: number; lastX: number }[] = [];
+    let cur: string[] = [];
+    let firstX = 0;
+    let lastX = 0;
+    buckets.forEach((b, i) => {
+      if (b.rest) {
+        if (cur.length) segments.push({ pts: cur.join(" "), firstX, lastX });
+        cur = [];
+        return;
+      }
+      const x = i * 10 + 5;
+      if (cur.length === 0) firstX = x;
+      lastX = x;
+      cur.push(`${x},${yOf(b.count).toFixed(2)}`);
+    });
+    if (cur.length) segments.push({ pts: cur.join(" "), firstX, lastX });
+    for (const seg of segments) {
+      if (seg.pts.includes(" ")) {
+        const area = document.createElementNS(svgNS, "polygon");
+        area.setAttribute("points", `${seg.pts} ${seg.lastX},97 ${seg.firstX},97`);
+        area.setAttribute("class", "db-trend-line-area");
+        svg.appendChild(area);
+      }
+      const line = document.createElementNS(svgNS, "polyline");
+      line.setAttribute("points", seg.pts);
+      line.setAttribute("class", "db-trend-line-path");
+      svg.appendChild(line);
+    }
+    chart.appendChild(svg);
+
+    // 圆点覆盖层：每列一个绝对定位的点（与 SVG 同一纵向映射）
+    const cols = chart.createDiv({ cls: "db-trend-line-cols" });
+    buckets.forEach(b => {
+      const col = cols.createDiv({ cls: "db-trend-line-col" });
+      const dot = col.createDiv({ cls: `db-trend-line-dot${b.rest ? " rest" : ""}` });
+      dot.style.bottom = `${pctOf(b.count)}%`;
+      dot.setAttribute("aria-label", this.trendTip(b));
     });
   }
 
@@ -835,6 +972,10 @@ export class DaybookView extends ItemView {
   private topbarActions: { icon: string; label: string; run: () => void; el?: HTMLElement }[] = [];
   // 习惯章节：筛选只作用于习惯列表，重渲染入口由 renderHabitsTab 登记
   private habitsRerender: (() => void) | null = null;
+  /** 最近一次整页渲染的日期（YYYY-MM-DD）：切回标签页时用于检测跨天 */
+  private renderedDate = moment().format("YYYY-MM-DD");
+  /** 底部编辑面板（打开中的引用，含编辑器；保存/收起后置空） */
+  private memoSheet: { el: HTMLElement; editor: LiveEditor } | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: DaybookPlugin) {
     super(leaf);
@@ -846,6 +987,8 @@ export class DaybookView extends ItemView {
   getIcon(): string { return "book-open"; }
 
   async onOpen() {
+    // 恢复最近使用的章节（章节已删/停用时 buildUI 会回退到首个）
+    this.activeSectionId = this.plugin.settings.lastSectionId || this.activeSectionId;
     this.buildUI();
     this.setupViewportAdapter();
   }
@@ -885,6 +1028,15 @@ export class DaybookView extends ItemView {
       this.applyTopbarInset();
       this.fitTopbar();
     }));
+    // 跨天检测：切回 Daybook 标签页时若日期已变，整页重建（今日记录流/输入区/习惯页翻到新的一天）
+    this.registerEvent(this.app.workspace.on("active-leaf-change", (leaf) => {
+      if (!leaf || leaf.view !== this) return;
+      const today = moment().format("YYYY-MM-DD");
+      if (today !== this.renderedDate) {
+        this.buildUI();
+        new Notice("ℹ️ 已跨入新的一天，Daybook 已按今天刷新");
+      }
+    }));
   }
 
   private teardownViewportAdapter() {
@@ -921,6 +1073,8 @@ export class DaybookView extends ItemView {
 
   buildUI() {
     const root = this.containerEl.children[1] as HTMLElement;
+    this.renderedDate = moment().format("YYYY-MM-DD");
+    this.memoSheet = null;
     this.destroyLiveEditors();
     this.todayPanel?.destroy();
     this.todayPanel = null;
@@ -965,6 +1119,25 @@ export class DaybookView extends ItemView {
     this.todayPanel = new TodayPanel(this.todayHostEl, this.plugin, todayHead);
     this.todayPanel.filter = this.getFilter(active.id);
     this.todayPanel.onResult = (count, days) => this.filterPanel?.setCount(count, days);
+    // 点击记录上的标签：叠加/移除该标签到章节筛选（多标签 = 全部包含）
+    this.todayPanel.onToggleTag = (tag) => {
+      const section = this._currentSection;
+      if (!section) return;
+      const f = this.getFilter(section.id);
+      f.tags = f.tags.includes(tag) ? f.tags.filter(t => t !== tag) : [...f.tags, tag];
+      this.applyFilter();
+      // 筛选面板开着时重建，让标签选中态同步
+      if (this.filterOpen) void this.openFilterPanel();
+    };
+    // 计划分组方式（任务总览）注入 TodayPanel，切换时持久化
+    this.todayPanel.planGroupBy = () => {
+      const v = this.plugin.settings.reviewState.planGroupBy;
+      return v === "priority" || v === "date" ? v : "none";
+    };
+    this.todayPanel.onPlanGroupByChange = (mode) => {
+      this.plugin.settings.reviewState.planGroupBy = mode;
+      void this.plugin.saveSettings();
+    };
     this.syncHabitStreamVisibility();
     void this.todayPanel.refresh(active.id);
 
@@ -977,8 +1150,34 @@ export class DaybookView extends ItemView {
     const bar = root.createDiv({ cls: "db-topbar" });
     this.topbarEl = bar;
 
-    /* ── 左区：本章节内容筛选入口 ── */
+    /* ── 左区：侧边抽屉（闪念）+ 本章节内容筛选入口 ── */
     const left = bar.createDiv({ cls: "db-topbar-zone db-topbar-left" });
+    if (active?.type === "memos") {
+      const drawerBtn = left.createEl("button", {
+        cls: "db-topbar-btn",
+        attr: { type: "button", "aria-label": "闪念统计与标签", title: "统计与标签" },
+      });
+      setIcon(drawerBtn, "menu");
+      drawerBtn.addEventListener("click", () => {
+        new MemoSidebar({
+          plugin: this.plugin,
+          section: active,
+          onClose: () => {},
+          onResetFilters: () => {
+            const f = this.getFilter(active.id);
+            Object.assign(f, emptyFilter());
+            this.applyFilter();
+            if (this.filterOpen) void this.openFilterPanel();
+          },
+          onTagClick: (tag) => {
+            const f = this.getFilter(active.id);
+            f.tags = f.tags.includes(tag) ? f.tags.filter(t => t !== tag) : [...f.tags, tag];
+            this.applyFilter();
+            if (this.filterOpen) void this.openFilterPanel();
+          },
+        }).open();
+      });
+    }
     const filterBtn = left.createEl("button", {
       cls: "db-topbar-btn db-filter-toggle",
       attr: { type: "button", "aria-label": "筛选本章节内容", "aria-expanded": "false", title: "筛选" },
@@ -1015,10 +1214,26 @@ export class DaybookView extends ItemView {
               this.currentPriority = null;
             }
             this.activeSectionId = sec.id;
+            // 记住最近使用的章节，下次打开视图直接进入
+            this.plugin.settings.lastSectionId = sec.id;
+            void this.plugin.saveSettings();
             this.buildUI();
           });
         });
       });
+      // 闪念章节：排序方式（新→旧 / 旧→新），持久化
+      if (active?.type === "memos") {
+        menu.addSeparator();
+        const cur = this.plugin.settings.memoSortOrder ?? "newest";
+        menu.addItem(item => {
+          item.setTitle(`排序：${cur === "newest" ? "创建时间从新到旧" : "创建时间从旧到新"}`).setIcon("arrow-down-up");
+          item.onClick(() => {
+            this.plugin.settings.memoSortOrder = cur === "newest" ? "oldest" : "newest";
+            void this.plugin.saveSettings();
+            void this.todayPanel?.refresh(active.id);
+          });
+        });
+      }
       // 固定锚定在标题下方（键盘 Enter 触发时 click 坐标为 0，不能直接用鼠标位置）
       const rect = trigger.getBoundingClientRect();
       menu.showAtPosition({ x: rect.left + 10, y: rect.bottom + 4 });
@@ -1028,6 +1243,9 @@ export class DaybookView extends ItemView {
     const right = bar.createDiv({ cls: "db-topbar-zone db-topbar-actions" });
     this.topbarRightEl = right;
     const specs: { icon: string; label: string; run: () => void; el?: HTMLElement }[] = [
+      ...(active?.type === "memos" ? [{
+        icon: "search", label: "搜索闪念", run: () => this.openMemoSearch(active),
+      }] : []),
       { icon: "file-text", label: "打开今日日记原文", run: () => this.revealTodayFile() },
       { icon: "layout-dashboard", label: "打开统计面板", run: () => void this.plugin.activateDashboard() },
       {
@@ -1147,7 +1365,7 @@ export class DaybookView extends ItemView {
   /* ── 内容筛选 ── */
 
   /** 取该章节的筛选条件（首次访问时建一份空条件；按章节各自保留） */
-  private getFilter(sectionId: string): SectionFilter {
+  getFilter(sectionId: string): SectionFilter {
     if (!this.sectionFilters[sectionId]) this.sectionFilters[sectionId] = emptyFilter();
     return this.sectionFilters[sectionId];
   }
@@ -1175,13 +1393,10 @@ export class DaybookView extends ItemView {
     host.empty();
 
     let tags: { tag: string; count: number }[] = [];
-    let categories: string[] = [];
     try {
       const groups = await readAllJournalEntries(this.app, this.plugin.settings, new Set([section.id]));
-      const all = groups.flatMap(g => g.entries);
-      tags = collectTags(all);
-      categories = collectExpenseCategories(all);
-    } catch { /* 读不到历史时只给静态维度（心情/分类/优先级等仍可用） */ }
+      tags = collectTags(groups.flatMap(g => g.entries));
+    } catch { /* 读不到历史时只给静态维度（心情/优先级等仍可用） */ }
     if (!this.filterOpen || !host.isConnected) return;
 
     host.empty();
@@ -1191,7 +1406,6 @@ export class DaybookView extends ItemView {
       section,
       filter: this.getFilter(section.id),
       tags,
-      categories,
       onChange: () => this.applyFilter(),
       onRequestClose: () => this.closeFilterPanel(),
     });
@@ -1258,6 +1472,22 @@ export class DaybookView extends ItemView {
   }
 
   /** 保存后局部刷新今日记录流（不重建输入区，保留草稿与滚动位置） */
+  /** 打开闪念搜索弹窗：确认后把关键词与快捷筛选写入章节筛选并刷新记录流 */
+  private openMemoSearch(section: SectionConfig) {
+    const f = this.getFilter(section.id);
+    new MemoSearchModal(this.app, {
+      plugin: this.plugin,
+      section,
+      initialKeyword: f.q,
+      onApply: (keyword, quick) => {
+        f.q = keyword.trim();
+        f.quick = quick;
+        this.applyFilter();
+        if (this.filterOpen) void this.openFilterPanel();
+      },
+    }).open();
+  }
+
   private refreshToday() {
     void this.todayPanel?.refresh(this.activeSectionId);
   }
@@ -1265,7 +1495,6 @@ export class DaybookView extends ItemView {
   private renderTabContent(container: HTMLElement, section: SectionConfig) {
     if (section.type === "plans") this.renderPlansTab(container, section);
     else if (section.type === "habits") this.renderHabitsTab(container, section);
-    else if (section.type === "expenses") this.renderExpensesTab(container, section);
     else this.renderMemosTab(container, section);
   }
 
@@ -1275,6 +1504,8 @@ export class DaybookView extends ItemView {
     container.addClass("db-habits-tab");
 
     const todayStr = moment().format("YYYY-MM-DD");
+    /** 跨天保护：动作发生的那一刻现取"今天"，视图开过夜时避免把打卡写到昨天 */
+    const nowToday = () => moment().format("YYYY-MM-DD");
     const rerender = () => { void this.renderHabitsTab(container, section); };
     this.habitsRerender = rerender;
     const f = this.getFilter(section.id);
@@ -1318,9 +1549,10 @@ export class DaybookView extends ItemView {
     // 默认只列未归档的习惯；筛选面板里可切到「已归档」
     const status: StatusFilter = f.status === "archived" ? "archived" : "active";
     const rowsOf = (id: string) => data.find(d => d.config.id === id)?.rows ?? [];
-    const habits = data
+    const computeHabits = () => data
       .map(d => d.config)
       .filter(h => matchHabit(h, rowsOf(h.id), { ...f, status }, todayStr));
+    let habits = computeHabits();
     this.filterPanel?.setCount(habits.length, 0);
     if (habits.length === 0) {
       container.createDiv({
@@ -1339,6 +1571,9 @@ export class DaybookView extends ItemView {
         try {
           data = await loadHabits(this.app, this.plugin.settings);
           if (!list.isConnected) return;
+          // 归档/取消归档会改变可见集合，过滤列表必须重算
+          habits = computeHabits();
+          this.filterPanel?.setCount(habits.length, 0);
           renderAll();
         } catch (e) { /* ignore */ }
       })();
@@ -1403,6 +1638,12 @@ export class DaybookView extends ItemView {
           check.createSpan({ cls: "db-habit-check-count", text: `${count}/${target}` });
         }
         check.addEventListener("click", async () => {
+          // 过天检测：界面还停在昨天时，整页按新的一天重渲染（旧计数不可信，不执行动作）
+          if (nowToday() !== todayStr) {
+            rerender();
+            new Notice("ℹ️ 已跨入新的一天，界面已按今天刷新");
+            return;
+          }
           if (resting) {
             new Notice(`🌙 ${habit.name} 今日休息，下个执行日是${nextExecuteLabel(habit)}`);
             return;
@@ -1434,6 +1675,12 @@ export class DaybookView extends ItemView {
         setIcon(more, "more-horizontal");
         more.addEventListener("click", (e: MouseEvent) => {
           e.stopPropagation();
+          // 过天检测：菜单里的"今天"操作（跳过/备注/清空）都按渲染日期执行，过天先重渲染
+          if (nowToday() !== todayStr) {
+            rerender();
+            new Notice("ℹ️ 已跨入新的一天，界面已按今天刷新");
+            return;
+          }
           const menu = new Menu();
           if (!resting) {
             if (skipped) {
@@ -1461,6 +1708,22 @@ export class DaybookView extends ItemView {
               refreshAll();
             }));
           }
+          menu.addItem(mi => mi
+            .setIcon(habit.archived ? "archive-restore" : "archive")
+            .setTitle(habit.archived ? "取消归档（恢复每日展示）" : "归档习惯（不再每日展示）")
+            .onClick(async () => {
+              const toArchived = !habit.archived;
+              try {
+                await updateHabitConfig(this.app, habit, { archived: toArchived });
+              } catch (e) {
+                new Notice("操作失败，请检查日记目录设置");
+                return;
+              }
+              new Notice(toArchived
+                ? `📦 ${habit.name} 已归档，可在筛选「已归档」中查看`
+                : `↩️ ${habit.name} 已取消归档`);
+              refreshAll();
+            }));
           menu.addItem(mi => mi.setIcon("sliders-horizontal").setTitle("编辑习惯").onClick(() => {
             new HabitEditModal(this.app, habit, async (draft) => {
               try {
@@ -1485,154 +1748,6 @@ export class DaybookView extends ItemView {
     };
 
     renderAll();
-  }
-
-  /** 记账：支出/收入 + 金额 + 分类（就地管理） + 备注，一行写入当日日记「记账」小节 */
-  private renderExpensesTab(container: HTMLElement, section: SectionConfig) {
-    container.empty();
-    container.addClass("db-expenses-tab");
-    this._currentSection = section;
-
-    let kind: ExpenseKind = "expense";
-    let selectedCat: string | null = null;
-    let manageCats = false;
-
-    // 头部：标题 + 支出/收入切换
-    const head = container.createDiv({ cls: "db-expenses-head" });
-    head.createSpan({ cls: "db-expenses-head-title", text: "记一笔" });
-    const seg = head.createDiv({ cls: "db-expense-seg" });
-    const segItems: [ExpenseKind, string][] = [["expense", "支出"], ["income", "收入"]];
-    segItems.forEach(([k, label]) => {
-      const btn = makeActivatable(seg.createDiv({
-        cls: `db-expense-seg-btn ${k === kind ? `active ${k}` : ""}`,
-        text: label,
-        attr: { "aria-pressed": String(k === kind), "aria-label": `${label}模式` },
-      }), `${label}模式`);
-      btn.addEventListener("click", () => {
-        kind = k;
-        seg.querySelectorAll<HTMLElement>(".db-expense-seg-btn").forEach(el => el.removeClass("active", "expense", "income"));
-        btn.addClass("active", k);
-        amountInput.removeClass("expense", "income");
-        amountInput.addClass(k);
-      });
-    });
-
-    // 金额输入（大字号，居中）
-    const amountRow = container.createDiv({ cls: "db-expense-amount-row" });
-    amountRow.createSpan({ cls: "db-expense-currency", text: "¥" });
-    const amountInput = amountRow.createEl("input", {
-      cls: `db-expense-amount-input ${kind}`,
-      attr: { type: "text", inputmode: "decimal", placeholder: "0.00", "aria-label": "金额" },
-    });
-
-    // 分类 chips（就地管理：＋ 新增 / 管理模式下 ✕ 删除）
-    const catRow = container.createDiv({ cls: "db-expense-cats" });
-
-    const persistCats = async (next: string[]) => {
-      this.plugin.settings.expenseCategories = next;
-      await this.plugin.saveSettings();
-    };
-
-    const renderCats = () => {
-      catRow.empty();
-      const cats = this.plugin.settings.expenseCategories;
-      cats.forEach(cat => {
-        const chip = makeActivatable(catRow.createDiv({
-          cls: `db-expense-cat${selectedCat === cat ? " selected" : ""}${manageCats ? " managing" : ""}`,
-          attr: { "aria-pressed": String(selectedCat === cat), "aria-label": `分类 ${cat}` },
-        }), `选择分类 ${cat}`);
-        chip.createSpan({ cls: "db-expense-cat-name", text: cat });
-        if (manageCats) {
-          const del = chip.createSpan({ cls: "db-expense-cat-del", text: "×", attr: { role: "button", "aria-label": `删除分类 ${cat}` } });
-          del.addEventListener("click", (e) => {
-            e.stopPropagation();
-            const next = cats.filter(c => c !== cat);
-            if (next.length === 0) { new Notice("至少保留一个分类"); return; }
-            if (selectedCat === cat) selectedCat = null;
-            void persistCats(next).then(renderCats);
-          });
-        } else {
-          chip.addEventListener("click", () => {
-            selectedCat = selectedCat === cat ? null : cat;
-            renderCats();
-          });
-        }
-      });
-      // ＋ 新增分类（行内输入）
-      const addChip = makeActivatable(catRow.createDiv({ cls: "db-expense-cat-add", attr: { "aria-label": "新增分类" } }), "新增分类");
-      addChip.createSpan({ text: "＋" });
-      addChip.addEventListener("click", () => {
-        addChip.empty();
-        const input = addChip.createEl("input", {
-          cls: "db-expense-cat-input",
-          attr: { type: "text", maxlength: "6", placeholder: "名称", "aria-label": "新分类名称" },
-        });
-        activeWindow.setTimeout(() => input.focus(), 30);
-        const commit = async () => {
-          const v = input.value.trim();
-          if (v && !this.plugin.settings.expenseCategories.includes(v)) {
-            await persistCats([...this.plugin.settings.expenseCategories, v]);
-          }
-          renderCats();
-        };
-        input.addEventListener("keydown", (e) => {
-          e.stopPropagation();
-          if (e.key === "Enter") void commit();
-          else if (e.key === "Escape") renderCats();
-        });
-        input.addEventListener("blur", () => void commit());
-      });
-      // 管理模式切换
-      const mgr = makeActivatable(catRow.createDiv({
-        cls: `db-expense-cat-mgr${manageCats ? " active" : ""}`,
-        text: manageCats ? "完成" : "管理",
-        attr: { "aria-label": manageCats ? "完成分类管理" : "管理分类" },
-      }), "管理分类");
-      mgr.addEventListener("click", () => { manageCats = !manageCats; renderCats(); });
-    };
-    renderCats();
-
-    // 备注 + 保存
-    const noteRow = container.createDiv({ cls: "db-expense-note-row" });
-    const noteInput = noteRow.createEl("input", {
-      cls: "db-expense-note-input",
-      attr: { type: "text", placeholder: "备注（可选），如：午饭", "aria-label": "备注" },
-    });
-    const saveBtn = makeActivatable(noteRow.createDiv({ cls: "db-save-btn db-expense-save-btn" }), "记一笔");
-    saveBtn.createDiv({ cls: "db-btn-text", text: "记一笔" });
-
-    const submit = async () => {
-      const amount = parseAmountInput(amountInput.value);
-      if (amount === null) {
-        new Notice("请输入正确的金额");
-        amountInput.focus();
-        return;
-      }
-      saveBtn.addClass("loading");
-      try {
-        const content = buildExpenseContent({
-          kind,
-          amount,
-          category: selectedCat ?? undefined,
-          note: noteInput.value,
-        });
-        await appendToSection(this.app, this.plugin.settings, section.label, section.type, content, section);
-        new Notice(kind === "expense" ? `−¥${formatMoney(amount)} 已记账` : `+¥${formatMoney(amount)} 已记账`);
-        amountInput.value = "";
-        noteInput.value = "";
-        this.refreshToday();
-        amountInput.focus();
-      } catch (e) {
-        new Notice("记账失败，请检查日记目录设置");
-      } finally {
-        saveBtn.removeClass("loading");
-      }
-    };
-    saveBtn.addEventListener("click", () => void submit());
-    amountInput.addEventListener("keydown", (e) => { if (e.key === "Enter") void submit(); });
-    noteInput.addEventListener("keydown", (e) => { if (e.key === "Enter") void submit(); });
-
-    activeWindow.setTimeout(() => amountInput.focus(), 50);
   }
 
   /** 根据当前文本刷新"已识别标签"预览 */
@@ -1693,13 +1808,13 @@ export class DaybookView extends ItemView {
     });
   }
 
-  /** 开始录音 */
-  private async startRecording(editor: LiveEditor, btn: HTMLElement) {
+  /** 通用录音启动：成功返回 true，停止时回调 blob（录音 UI 由调用方负责） */
+  private async startRecorder(onStop: (blob: Blob, ext: string) => void): Promise<boolean> {
     try {
       // 移动端 WebView 常无媒体设备权限/API，先探测再调用
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         new Notice("当前设备不支持录音功能");
-        return;
+        return false;
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       this.audioChunks = [];
@@ -1716,12 +1831,11 @@ export class DaybookView extends ItemView {
 
       if (typeof MediaRecorder === "undefined") {
         new Notice("当前环境不支持录音功能");
-        return;
+        return false;
       }
 
       this.mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       this.isRecording = true;
-      btn.addClass("recording");
 
       this.mediaRecorder.ondataavailable = (e: any) => {
         if (e.data.size > 0) this.audioChunks.push(e.data);
@@ -1730,19 +1844,29 @@ export class DaybookView extends ItemView {
       this.mediaRecorder.onstop = () => {
         stream.getTracks().forEach(t => t.stop());
         this.isRecording = false;
-        btn.removeClass("recording");
-
-        // 编辑器可能已因重渲染被销毁（脱离 DOM），此时只保存文件
         const blob = new Blob(this.audioChunks, { type: mimeType || "audio/webm" });
         const ext = mimeType.includes("mp4") ? "m4a" : mimeType.includes("ogg") ? "ogg" : "webm";
-        this.saveAudioBlob(blob, ext, editor.el.isConnected ? editor : null);
+        onStop(blob, ext);
       };
 
       this.mediaRecorder.start();
-      new Notice("\u{1F3A4} 开始录音，再次点击停止");
+      return true;
     } catch (e) {
       new Notice("无法启动录音，请检查麦克风权限");
       console.error("Daybook: 录音启动失败", e);
+      return false;
+    }
+  }
+
+  /** 开始录音（编辑面板内点按式：点击开始/再次点击停止，音频插入编辑器） */
+  private async startRecording(editor: LiveEditor, btn: HTMLElement) {
+    const ok = await this.startRecorder((blob, ext) => {
+      btn.removeClass("recording");
+      void this.saveAudioBlob(blob, ext, editor.el.isConnected ? editor : null);
+    });
+    if (ok) {
+      btn.addClass("recording");
+      new Notice("\u{1F3A4} 开始录音，再次点击停止");
     }
   }
 
@@ -1753,8 +1877,25 @@ export class DaybookView extends ItemView {
     }
   }
 
-  /** 保存音频 blob 到 vault，可选插入到编辑器 */
-  private async saveAudioBlob(blob: Blob, ext: string, editor: LiveEditor | null) {
+  /** 停止录音并在停止后执行回调（覆盖注册期回调，用于胶囊栏的发送/取消分支） */
+  private stopRecorderWith(onStop: (blob: Blob, ext: string) => void) {
+    if (this.mediaRecorder && this.isRecording) {
+      const rec = this.mediaRecorder;
+      rec.onstop = () => {
+        rec.stream.getTracks().forEach(t => t.stop());
+        this.isRecording = false;
+        const blob = new Blob(this.audioChunks, { type: rec.mimeType || "audio/webm" });
+        const mimeType = rec.mimeType || "";
+        const ext = mimeType.includes("mp4") ? "m4a" : mimeType.includes("ogg") ? "ogg" : "webm";
+        this.mediaRecorder = null;
+        onStop(blob, ext);
+      };
+      rec.stop();
+    }
+  }
+
+  /** 保存音频 blob 到 vault，可选插入到编辑器；返回嵌入文本（失败返回 null） */
+  private async saveAudioBlob(blob: Blob, ext: string, editor: LiveEditor | null): Promise<string | null> {
     try {
       const now = new Date();
       const ts = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,"0")}${String(now.getDate()).padStart(2,"0")}-${String(now.getHours()).padStart(2,"0")}${String(now.getMinutes()).padStart(2,"0")}${String(now.getSeconds()).padStart(2,"0")}`;
@@ -1769,14 +1910,17 @@ export class DaybookView extends ItemView {
 
       await this.app.vault.createBinary(audioPath, uint8);
 
+      const embed = `![[${fileName}]]`;
       if (editor) {
-        editor.insertAtCursor(`\n![[${fileName}]]\n`);
+        editor.insertAtCursor(`\n${embed}\n`);
       }
 
       new Notice(`\u{1F3A4} 录音已保存：${fileName}`);
+      return embed;
     } catch (e) {
       new Notice("音频保存失败，请检查日记目录设置");
       console.error("Daybook: 音频保存失败", e);
+      return null;
     }
   }
 
@@ -1805,17 +1949,98 @@ export class DaybookView extends ItemView {
     }
   }
 
-  /** 闪念 Tab：快速记录（心情选择器可选，支持 Markdown/双链/标签的增强编辑器） */
+  /** 闪念 Tab：移动端=底部悬浮输入栏(长按语音)；桌面端=顶部编辑器卡片(flomo 桌面式) */
   private renderMemosTab(container: HTMLElement, section: SectionConfig) {
+    this._currentSection = section;
+    const root = container.closest(".db-journal-root") as HTMLElement | null;
+    if (!root) return;
+
+    if (!isMobile()) {
+      // 桌面端：常驻编辑器卡片（composer 即卡片）
+      container.addClass("db-editor-card");
+      this.buildEditorPanel(container, container, section, null, "inline");
+      return;
+    }
+
+    // 移动端：底部悬浮胶囊栏（滚动容器末尾，sticky bottom 常驻可见）
+    const bar = root.createDiv({ cls: "db-memo-bar" });
+    const idle = bar.createDiv({ cls: "db-memo-bar-idle" });
+    const plus = makeActivatable(idle.createDiv({
+      cls: "db-memo-bar-btn",
+      attr: { role: "button", "aria-label": "展开输入" },
+    }), "展开输入");
+    setIcon(plus, "plus");
+    const mid = makeActivatable(idle.createDiv({
+      cls: "db-memo-bar-mid",
+      attr: { role: "button", "aria-label": "展开输入" },
+    }), "展开输入");
+    mid.createSpan({ cls: "db-memo-bar-placeholder", text: "点击输入或长按语音" });
+    const mic = makeActivatable(idle.createDiv({
+      cls: "db-memo-bar-btn db-memo-bar-mic",
+      attr: { role: "button", "aria-label": "长按说话" },
+    }), "长按说话");
+    setIcon(mic, "mic");
+
+    // 录音态内容（录音时切换显示）
+    const rec = bar.createDiv({ cls: "db-memo-bar-rec" });
+    rec.createSpan({ cls: "db-memo-bar-rec-time", text: "0:00" });
+    const wave = rec.createDiv({ cls: "db-memo-bar-wave" });
+    for (let i = 0; i < 5; i++) wave.createDiv({ cls: "db-memo-bar-wave-i" });
+    rec.createSpan({ cls: "db-memo-bar-rec-hint", text: "松开发送 · 上滑取消" });
+
+    const open = () => this.openMemoSheet(container, section, bar);
+    plus.addEventListener("click", open);
+    mid.addEventListener("click", open);
+    this.setupMemoBarMic(bar, mic, section);
+  }
+
+  /** 底部编辑面板（移动端）：壳 + 共用编辑内容 */
+  private openMemoSheet(container: HTMLElement, section: SectionConfig, bar: HTMLElement | null) {
+    if (this.memoSheet) return;
+    const root = container.closest(".db-journal-root") as HTMLElement | null;
+    if (!root) return;
+
+    // sticky bottom 常驻于滚动容器内，不受内容滚动影响
+    const sheet = root.createDiv({ cls: "db-memo-sheet" });
+    const panel = sheet.createDiv({ cls: "db-memo-sheet-panel" });
+
+    // 头部：收起
+    const head = panel.createDiv({ cls: "db-memo-sheet-head" });
+    const collapse = makeActivatable(head.createDiv({
+      cls: "db-memo-sheet-collapse",
+      attr: { role: "button", "aria-label": "收起" },
+    }), "收起");
+    setIcon(collapse, "chevron-down");
+    head.createSpan({ cls: "db-memo-sheet-title", text: `记录${section.label}` });
+    collapse.addEventListener("click", () => this.closeMemoSheet());
+
+    const editor = this.buildEditorPanel(panel, container, section, bar, "sheet");
+    this.memoSheet = { el: sheet, editor };
+    bar?.addClass("is-hidden");
+    editor.focus();
+  }
+
+  /**
+   * 编辑面板内容（移动端 sheet / 桌面端 inline 卡片共用）：
+   * 心情条 + 编辑器 + 快捷标签/字数 + 标签预览 + 媒体工具 + 保存( sheet 底部大按钮 / inline 纸飞机发送)
+   */
+  private buildEditorPanel(
+    panel: HTMLElement,
+    container: HTMLElement,
+    section: SectionConfig,
+    bar: HTMLElement | null,
+    mode: "sheet" | "inline"
+  ): LiveEditor {
     const mobile = isMobile();
     const moods = this.plugin.settings.customMoods;
-    // 章节设置“是否展开”只决定初始状态；随时可用录音按钮左侧的 emoji 按钮收起/展开
-    const moodOpen = this.moodOpenMap[section.id] ?? section.showMoodPicker !== false;
+    // inline(桌面) 默认收起心情条，保持卡片整洁；sheet(移动) 沿用章节设置
+    const moodOpen = this.moodOpenMap[section.id]
+      ?? (mode === "inline" ? false : section.showMoodPicker !== false);
     const moodToggleRef: { el: HTMLElement | null } = { el: null };
 
-    // 心情选择条（可收起；收起时整行隐藏，节约竖屏空间）
-    if (moods.length) {
-      const moodGrid = container.createDiv({ cls: `db-mood-grid db-mood-grid-4col${moodOpen ? "" : " is-collapsed"}` });
+    // 心情选择条（仅移动端 sheet；桌面卡片按设计精简不放置）
+    if (moods.length && mode === "sheet") {
+      const moodGrid = panel.createDiv({ cls: `db-mood-grid db-mood-grid-4col${moodOpen ? "" : " is-collapsed"}` });
       moods.forEach((mood, idx) => {
         const pill = moodGrid.createDiv({
           cls: `db-mood-pill ${this.selectedMood === mood.emoji ? "selected" : ""}`,
@@ -1824,10 +2049,8 @@ export class DaybookView extends ItemView {
         pill.createDiv({ cls: "db-mood-emoji", text: mood.emoji });
         pill.createEl("span", { cls: "db-mood-label", text: mood.label });
 
-        // 长按编辑（600ms）
         let longPressTimer: number | null = null;
         let isLongPress = false;
-
         const startPress = () => {
           isLongPress = false;
           longPressTimer = activeWindow.setTimeout(() => {
@@ -1845,7 +2068,7 @@ export class DaybookView extends ItemView {
                 if (this.selectedMood === mood.emoji) {
                   this.selectedMood = emoji;
                 }
-                this.buildUI();
+                this.reopenEditorPanel(container, section, bar, mode);
               },
               async (i) => {
                 if (this.selectedMood === this.plugin.settings.customMoods[i].emoji) {
@@ -1853,122 +2076,342 @@ export class DaybookView extends ItemView {
                 }
                 this.plugin.settings.customMoods.splice(i, 1);
                 await this.plugin.saveSettings();
-                this.buildUI();
+                this.reopenEditorPanel(container, section, bar, mode);
               }
             ).open();
           }, 600);
         };
-
         const cancelPress = () => {
           if (longPressTimer !== null) {
             activeWindow.clearTimeout(longPressTimer);
             longPressTimer = null;
           }
         };
-
         pill.addEventListener("pointerdown", startPress);
         pill.addEventListener("pointerup", cancelPress);
         pill.addEventListener("pointerleave", cancelPress);
         pill.addEventListener("pointermove", cancelPress);
         pill.addEventListener("pointercancel", cancelPress);
-
         pill.addEventListener("click", () => {
-          if (isLongPress) return; // 长按触发后不触发点击
+          if (isLongPress) return;
           this.selectedMood = this.selectedMood === mood.emoji ? null : mood.emoji;
           moodGrid.querySelectorAll(".db-mood-pill").forEach(p => p.removeClass("selected"));
           if (this.selectedMood) {
             pill.addClass("selected");
-            // 选中后自动收起心情条，省出输入空间；再点 🙂 可展开换选
             this.moodOpenMap[section.id] = false;
             moodGrid.toggleClass("is-collapsed", true);
             moodToggleRef.el?.toggleClass("is-active", false);
           }
-          // 收起状态下也能从按钮上看到当前选中的心情
-          moodToggleRef.el?.setText(this.selectedMood ?? "\u{1F642}");
+          moodToggleRef.el?.setText(this.selectedMood ?? "🙂");
+          updateSend?.();
         });
       });
     }
 
-    const wrap = container.createDiv({ cls: "db-input-wrap" });
-    // 工具栏挂载点（位于输入框上方）：照片 + 录音
-    const toolbarSlot = wrap.createDiv({ cls: "db-memo-toolbar-slot" });
-    this._currentSection = section;
-
-    // 内嵌 Live Preview 编辑器：输入即渲染（Obsidian 原生 Markdown 效果）
-    // tagPreview 在下方声明，onChange 回调触发时它必然已存在
+    const wrap = panel.createDiv({ cls: "db-input-wrap" });
     const tagPreviewRef: { el: HTMLElement | null } = { el: null };
-    // 字数统计刷新函数在 renderCharCount 里回填（onChange 触发时必然已就位）
     const charCountRef: { update: ((v: string) => void) | null } = { update: null };
+    let updateSend: (() => void) | null = null;
+
     const editor = this.makeEditor(wrap, {
       placeholder: section.placeholder,
       onChange: (value) => {
         if (tagPreviewRef.el) this.refreshTagPreview(value, tagPreviewRef.el);
         charCountRef.update?.(value);
+        updateSend?.();
       },
       onPasteFiles: (files) => {
         files.forEach(f => this.saveImageToVault(f, editor));
       },
     }, mobile ? "db-live-editor-mobile" : "");
 
-    // 快捷标签 chips（紧跟输入框）
     this.renderQuickTags(wrap, editor);
-    // 字数统计（快捷标签同一行最右）
     this.mountCharCount(wrap, editor, charCountRef);
-    // 标签识别预览
     const tagPreview = wrap.createDiv({ cls: "db-tag-preview" });
     tagPreviewRef.el = tagPreview;
     this.refreshTagPreview(editor.getValue(), tagPreview);
 
-    // 媒体：图片选择/粘贴 + 录音（精简工具栏渲染到 toolbarSlot）
-    this.setupMediaSupport(editor, wrap, section, toolbarSlot);
+    if (mode === "inline") {
+      // 桌面：编辑器下方工具行（左工具组 + 右纸飞机发送）
+      const toolbar = wrap.createDiv({ cls: "db-editor-toolbar" });
+      const toolsLeft = toolbar.createDiv({ cls: "db-editor-tools" });
 
-    // 心情展开按钮（emoji）：放在录音按钮右侧，收起/展开上方选择条
-    if (moods.length) {
-      const toggle = makeActivatable(toolbarSlot.createDiv({
-        cls: `db-memo-tb-btn db-mood-toggle${moodOpen ? " is-active" : ""}`,
-        text: this.selectedMood ?? "\u{1F642}",
-        attr: { role: "button", "aria-label": "展开/收起心情选择", title: "心情选择" },
-      }));
-      toggle.addEventListener("click", () => {
-        const now = !(this.moodOpenMap[section.id] ?? section.showMoodPicker !== false);
-        this.moodOpenMap[section.id] = now;
-        container.querySelectorAll(".db-mood-grid").forEach(g => g.toggleClass("is-collapsed", !now));
-        toggle.toggleClass("is-active", now);
+      // 1) 标签 #
+      const hashTool = makeActivatable(toolsLeft.createDiv({
+        cls: "db-editor-tool",
+        text: "#",
+        attr: { role: "button", "aria-label": "插入标签" },
+      }), "插入标签");
+      hashTool.addEventListener("click", () => {
+        editor.insertAtCursor("#");
+        editor.focus();
       });
-      moodToggleRef.el = toggle;
+
+      // 2) 图片（setupMediaSupport 的照片按钮；点按式麦克风按钮按设计移除）
+      const toolbarSlot = toolsLeft.createDiv({ cls: "db-memo-toolbar-slot" });
+      this.setupMediaSupport(editor, wrap, section, toolbarSlot);
+      toolsLeft.querySelector(".db-memo-tb-audio")?.remove();
+
+      toolsLeft.createDiv({ cls: "db-editor-divider" });
+
+      // 3) 文字样式 Aa（二级：加粗 / 下划线 / 高亮）
+      const styleTool = makeActivatable(toolsLeft.createDiv({
+        cls: "db-editor-tool",
+        text: "Aa",
+        attr: { role: "button", "aria-label": "文字样式" },
+      }), "文字样式");
+      styleTool.addEventListener("click", (e) => {
+        const menu = new Menu();
+        menu.addItem(mi => mi.setTitle("加粗").setIcon("bold").onClick(() => this.wrapSelection(editor, "**", "**")));
+        menu.addItem(mi => mi.setTitle("下划线").setIcon("underline").onClick(() => this.wrapSelection(editor, "<u>", "</u>")));
+        menu.addItem(mi => mi.setTitle("高亮").setIcon("highlighter").onClick(() => this.wrapSelection(editor, "==", "==")));
+        menu.showAtMouseEvent(e);
+      });
+
+      // 4) 无序列表
+      const ulTool = makeActivatable(toolsLeft.createDiv({
+        cls: "db-editor-tool",
+        attr: { role: "button", "aria-label": "无序列表" },
+      }), "无序列表");
+      setIcon(ulTool, "list");
+      ulTool.addEventListener("click", () => {
+        editor.insertAtCursor("\n- ");
+        editor.focus();
+      });
+
+      // 5) 有序列表
+      const olTool = makeActivatable(toolsLeft.createDiv({
+        cls: "db-editor-tool",
+        attr: { role: "button", "aria-label": "有序列表" },
+      }), "有序列表");
+      setIcon(olTool, "list-ordered");
+      olTool.addEventListener("click", () => {
+        editor.insertAtCursor("\n1. ");
+        editor.focus();
+      });
+
+      // 右侧动作按钮（双态）：默认麦克风=点击开始/再次点击停止录音；输入文字后变纸飞机发送
+      const actionBtn = toolbar.createEl("button", {
+        cls: "db-editor-send",
+        attr: { type: "button", "aria-label": "录音（点击开始，再次点击停止）" },
+      });
+      setIcon(actionBtn, "mic");
+      let actionMode: "mic" | "send" = "mic";
+      const syncAction = () => {
+        if (this.isRecording) return; // 录音中保持麦克风态（红色脉冲由 recording 类控制）
+        const has = !!editor.getValue().trim() || !!this.selectedMood;
+        const next: "mic" | "send" = has ? "send" : "mic";
+        if (next !== actionMode) {
+          actionMode = next;
+          setIcon(actionBtn, next === "send" ? "send" : "mic");
+          actionBtn.toggleClass("is-active", next === "send");
+          actionBtn.setAttribute("aria-label", next === "send" ? `保存${section.label}` : "录音（点击开始，再次点击停止）");
+        }
+      };
+      updateSend = syncAction;
+      syncAction();
+
+      const submit = async () => {
+        const text = editor.getValue().trim();
+        if (!text && !this.selectedMood) return;
+        const mood = moods.find(m => m.emoji === this.selectedMood);
+        const content = mood
+          ? (text ? `${mood.emoji} ${mood.label} — ${text}` : `${mood.emoji} ${mood.label}`)
+          : text;
+        actionBtn.disabled = true;
+        try {
+          await appendToSection(this.app, this.plugin.settings, section.label, section.type, content, section);
+          new Notice("✦ 闪念已记录");
+          editor.setValue("");
+          this.selectedMood = null;
+          moodToggleRef.el?.setText("🙂");
+          panel.querySelectorAll(".db-mood-pill.selected").forEach(p => p.removeClass("selected"));
+          this.refreshToday();
+          editor.focus();
+        } catch (e) { new Notice("记录失败，请检查日记目录设置"); }
+        finally { actionBtn.disabled = false; updateSend?.(); }
+      };
+      // 录音时长显示（桌面按钮录音态）
+      const recTime = toolbar.createSpan({ cls: "db-editor-rec-time", text: "0:00" });
+      recTime.style.display = "none";
+      let recTimer = 0;
+      let recSecs = 0;
+      const stopRecTimer = () => {
+        if (recTimer) { activeWindow.clearInterval(recTimer); recTimer = 0; }
+        recTime.style.display = "none";
+      };
+
+      actionBtn.addEventListener("click", () => {
+        if (this.isRecording) {
+          stopRecTimer();
+          this.stopRecording(editor, actionBtn);
+          return;
+        }
+        if (actionMode === "send") { void submit(); return; }
+        void (async () => {
+          await this.startRecording(editor, actionBtn);
+          if (!this.isRecording) return;   // 启动失败（无权限等）不计时
+          recSecs = 0;
+          recTime.textContent = "0:00";
+          recTime.style.display = "";
+          recTimer = activeWindow.setInterval(() => {
+            recSecs++;
+            recTime.textContent = `${Math.floor(recSecs / 60)}:${String(recSecs % 60).padStart(2, "0")}`;
+          }, 1000);
+        })();
+      });
+      editor.el.addEventListener("keydown", (e: KeyboardEvent) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && actionMode === "send") { e.preventDefault(); void submit(); }
+      });
+    } else {
+      // 移动端 sheet：工具在编辑器上方，底部大保存按钮
+      const toolbarSlot = wrap.createDiv({ cls: "db-memo-toolbar-slot" });
+      void toolbarSlot;
+      this.setupMediaSupport(editor, wrap, section, toolbarSlot);
+
+      if (moods.length) {
+        const toggle = makeActivatable(toolbarSlot.createDiv({
+          cls: `db-memo-tb-btn db-mood-toggle${moodOpen ? " is-active" : ""}`,
+          text: this.selectedMood ?? "🙂",
+          attr: { role: "button", "aria-label": "展开/收起心情选择", title: "心情选择" },
+        }));
+        toggle.addEventListener("click", () => {
+          const now = !(this.moodOpenMap[section.id] ?? section.showMoodPicker !== false);
+          this.moodOpenMap[section.id] = now;
+          panel.querySelectorAll(".db-mood-grid").forEach(g => g.toggleClass("is-collapsed", !now));
+          toggle.toggleClass("is-active", now);
+        });
+        moodToggleRef.el = toggle;
+      }
+
+      const saveBtn = makeActivatable(panel.createDiv({ cls: "db-save-btn db-save-btn-sticky" }), `保存${section.label}`);
+      saveBtn.createDiv({ cls: "db-btn-icon", text: section.emoji });
+      saveBtn.createDiv({ cls: "db-btn-text", text: `保存${section.label}` });
+      editor.el.addEventListener("focusin", () => {
+        activeWindow.setTimeout(() => saveBtn.scrollIntoView({ block: "nearest", behavior: "smooth" }), 350);
+      });
+      saveBtn.addEventListener("click", async () => {
+        const text = editor.getValue().trim();
+        if (!text && !this.selectedMood) { new Notice("请先输入内容～"); return; }
+        const mood = moods.find(m => m.emoji === this.selectedMood);
+        const content = mood
+          ? (text ? `${mood.emoji} ${mood.label} — ${text}` : `${mood.emoji} ${mood.label}`)
+          : text;
+        saveBtn.addClass("loading");
+        try {
+          await appendToSection(this.app, this.plugin.settings, section.label, section.type, content, section);
+          new Notice("✦ 闪念已记录");
+          this.closeMemoSheet();
+          this.refreshToday();
+        } catch (e) { new Notice("记录失败，请检查日记目录设置"); }
+        finally { saveBtn.removeClass("loading"); }
+      });
     }
-    // textarea 降级模式：保留旧的双链/标签自动补全（实时渲染模式使用原生补全）
+
+    // textarea 降级模式：保留旧的双链/标签自动补全
     if (!editor.isLive && editor.nativeInput) {
       attachMemoEditor(this.app, this.plugin, editor.nativeInput, wrap, { toolbar: false });
     }
+    return editor;
+  }
 
-    const saveBtn = makeActivatable(wrap.createDiv({ cls: "db-save-btn db-save-btn-sticky" }), `保存${section.label}`);
-    saveBtn.createDiv({ cls: "db-btn-icon", text: section.emoji });
-    saveBtn.createDiv({ cls: "db-btn-text", text: `\u4FDD\u5B58${section.label}` });
-    // focusin 对 textarea 与 CM contentDOM 均可冒泡捕获
-    editor.el.addEventListener("focusin", () => {
-      activeWindow.setTimeout(() => saveBtn.scrollIntoView({ block: "nearest", behavior: "smooth" }), 350);
+  /** 关闭并重建编辑面板（心情编辑等设置变更后刷新内容；inline 模式重建 composer 内卡片） */
+  private reopenEditorPanel(container: HTMLElement, section: SectionConfig, bar: HTMLElement | null, mode: "sheet" | "inline") {
+    if (mode === "sheet") {
+      this.closeMemoSheet();
+      this.openMemoSheet(container, section, bar);
+      return;
+    }
+    // inline：仅重建卡片内容，保留容器
+    container.empty();
+    container.addClass("db-editor-card");
+    this.buildEditorPanel(container, container, section, bar, "inline");
+  }
+
+  /** 关闭并重新打开编辑面板（心情编辑等设置变更后刷新面板内容） */
+  private reopenMemoSheet(container: HTMLElement, section: SectionConfig, bar: HTMLElement) {
+    this.closeMemoSheet();
+    this.openMemoSheet(container, section, bar);
+  }
+
+  /** 收起编辑面板并销毁编辑器 */
+  private closeMemoSheet() {
+    const sheet = this.memoSheet;
+    if (!sheet) return;
+    this.memoSheet = null;
+    sheet.editor.destroy();
+    this.liveEditors.delete(sheet.editor);
+    sheet.el.remove();
+    this.containerEl.querySelectorAll(".db-memo-bar.is-hidden").forEach(el => el.removeClass("is-hidden"));
+  }
+
+  /** 胶囊栏麦克风：按下即录音，松手发送（音频直存为新闪念），上滑取消 */
+  private setupMemoBarMic(bar: HTMLElement, mic: HTMLElement, section: SectionConfig) {
+    const state = { startY: 0, cancelled: false, timer: 0, seconds: 0 };
+
+    const stopTimer = () => {
+      if (state.timer) { activeWindow.clearInterval(state.timer); state.timer = 0; }
+    };
+    const finish = () => {
+      if (!this.isRecording) return;
+      const discard = state.cancelled;
+      stopTimer();
+      bar.removeClass("is-recording is-cancel");
+      this.stopRecorderWith((blob, ext) => {
+        if (discard) { new Notice("🔇 已取消录音"); return; }
+        void (async () => {
+          const embed = await this.saveAudioBlob(blob, ext, null);
+          if (!embed) return;
+          try {
+            await appendToSection(this.app, this.plugin.settings, section.label, section.type, embed, section);
+            new Notice("🎙 语音闪念已记录");
+            this.refreshToday();
+          } catch (e) {
+            new Notice("记录失败，请检查日记目录设置");
+          }
+        })();
+      });
+    };
+
+    mic.addEventListener("pointerdown", async (e) => {
+      e.preventDefault();
+      if (this.isRecording || this.memoSheet) return;
+      state.startY = e.clientY;
+      state.cancelled = false;
+      state.seconds = 0;
+      try { mic.setPointerCapture(e.pointerId); } catch (err) { /* 部分环境不支持 */ }
+      const ok = await this.startRecorder(() => { /* 停止回调由 stopRecorderWith 统一处理 */ });
+      if (!ok) return;
+      bar.addClass("is-recording");
+      const timeEl = bar.querySelector(".db-memo-bar-rec-time");
+      const tick = () => {
+        state.seconds++;
+        if (timeEl) timeEl.textContent = `${Math.floor(state.seconds / 60)}:${String(state.seconds % 60).padStart(2, "0")}`;
+      };
+      tick();
+      state.timer = activeWindow.setInterval(tick, 1000);
     });
-    saveBtn.addEventListener("click", async () => {
-      const text = editor.getValue().trim();
-      if (!text && !this.selectedMood) { new Notice("\u8BF7\u5148\u8F93\u5165\u5185\u5BB9\uFF5E"); return; }
-      const mood = moods.find(m => m.emoji === this.selectedMood);
-      const content = mood
-        ? (text ? `${mood.emoji} ${mood.label} \u2014 ${text}` : `${mood.emoji} ${mood.label}`)
-        : text;
-      saveBtn.addClass("loading");
-      try {
-        await appendToSection(this.app, this.plugin.settings, section.label, section.type, content, section);
-        new Notice("\u2726 \u95EA\u5FF5\u5DF2\u8BB0\u5F55");
-        editor.setValue("");
-        this.selectedMood = null;
-        moodToggleRef.el?.setText("\u{1F642}");
-        container.querySelectorAll(".db-mood-pill.selected").forEach(p => p.removeClass("selected"));
-        this.refreshToday();
-        editor.focus();
-      } catch (e) { new Notice("\u8BB0\u5F55\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u65E5\u8BB0\u76EE\u5F55\u8BBE\u7F6E"); }
-      finally { saveBtn.removeClass("loading"); }
+    mic.addEventListener("pointermove", (e) => {
+      if (!this.isRecording) return;
+      const up = state.startY - e.clientY;
+      const nowCancel = up > 60;
+      if (nowCancel !== state.cancelled) {
+        state.cancelled = nowCancel;
+        bar.toggleClass("is-cancel", nowCancel);
+        const hintEl = bar.querySelector(".db-memo-bar-rec-hint");
+        if (hintEl) hintEl.textContent = nowCancel ? "松开取消" : "松开发送 · 上滑取消";
+      }
     });
+    mic.addEventListener("pointerup", finish);
+    mic.addEventListener("pointercancel", finish);
+  }
+
+  /** 用标记包裹当前选区（无选区时插入样例文字，光标落在标记内） */
+  private wrapSelection(editor: LiveEditor, before: string, after: string) {
+    const sel = editor.getSelection();
+    const selected = editor.getValue().slice(sel.from, sel.to);
+    editor.replaceRange(sel.from, sel.to, before + selected + after);
+    editor.focus();
   }
 
   /** 渲染快捷标签 chips，点击向编辑器插入 #标签 */
