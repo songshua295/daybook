@@ -1087,15 +1087,27 @@ export class DaybookView extends ItemView {
     // 供吸底面板限高：面板底=视口底-bottom-inset，向上不超过视口顶
     root.style.setProperty("--db-vp-h", `${innerH}px`);
     // 固定悬浮栏（flomo 式）底部让位：
-    // 键盘弹出时 = 键盘高度（底边精确贴住键盘顶部，不叠加导航栏/安全区间距）；
+    // 键盘弹出时 = 键盘高度 + 键盘上方 Obsidian 输入工具栏的高度
+    // （底边贴在用户看到的"键盘"顶缘 = 工具栏顶；无工具栏时=键盘物理顶部）；
     // 键盘未弹出时 = 10px 呼吸 + 导航栏重叠 + 系统安全区（避开手势条）
     const keyboard = this.measureKeyboardHeight(vp, innerH, Math.round(containerRect.bottom));
     const bottomInset = keyboard > 0
-      ? keyboard
+      ? keyboard + this.readToolbarHeight(innerH, keyboard)
       : 10 + navbarInset + this.readSafeBottom(innerH);
     root.style.setProperty("--db-bottom-inset", `${bottomInset}px`);
     this.applyTopbarInset();
     this.fitTopbar();
+  }
+
+  /** Obsidian 键盘上方输入工具栏的高度：可见且紧贴键盘顶缘停靠时才计入 */
+  private readToolbarHeight(innerH: number, keyboardH: number): number {
+    const toolbar = activeDocument.querySelector(".mobile-toolbar") as HTMLElement | null;
+    if (!toolbar) return 0;
+    const rect = toolbar.getBoundingClientRect();
+    if (rect.height <= 0) return 0;
+    // 工具栏停靠位置：bottom ≈ 视口底 - 键盘高（即键盘顶缘）；未停靠/已隐藏时不占位
+    if (rect.bottom < innerH - keyboardH - 2) return 0;
+    return Math.round(rect.height);
   }
 
   /** 键盘高度：多信号取最大值（不同机型/键盘模式下生效的信号不同） */
@@ -1111,9 +1123,11 @@ export class DaybookView extends ItemView {
     // 3) 视觉视口收缩量：webview 随键盘收缩（adjustResize）时 innerHeight 同步收缩、差值为 0，
     //    仅 webview 未收缩时生效；捏合缩放（scale≠1）排除误判
     if (vp && vp.scale === 1) {
-      kb = Math.max(kb, Math.max(0, innerH - Math.round(vp.height)));
+      kb = Math.max(kb, Math.max(0, innerH - Math.round(vp.height + vp.offsetTop)));
     }
-    return kb;
+    // 防御性钳制：任何信号异常（如瞬时报 0）都不允许键盘高度超过屏高 70%，
+    // 否则底边 inset 会把面板整个推出屏幕外（"输入框消失"）
+    return Math.min(kb, Math.round(innerH * 0.7));
   }
 
   /** 读取 Obsidian 注入的 --keyboard-height（可能挂在 :root 或 body 上） */
@@ -2124,24 +2138,25 @@ export class DaybookView extends ItemView {
     const root = container.closest(".db-journal-root") as HTMLElement | null;
     if (!root) return;
 
-    // sticky bottom 常驻于滚动容器内，不受内容滚动影响
+    // 固定悬浮于视口底部（flomo 式），不受内容滚动影响
     const sheet = root.createDiv({ cls: "db-memo-sheet" });
     const panel = sheet.createDiv({ cls: "db-memo-sheet-panel" });
 
-    // 头部：收起
-    const head = panel.createDiv({ cls: "db-memo-sheet-head" });
-    const collapse = makeActivatable(head.createDiv({
-      cls: "db-memo-sheet-collapse",
-      attr: { role: "button", "aria-label": "收起" },
+    // 顶部抓握手柄：点按收起
+    const grabHit = makeActivatable(panel.createDiv({
+      cls: "db-memo-sheet-grabber",
+      attr: { role: "button", "aria-label": "收起", title: "收起" },
     }), "收起");
-    setIcon(collapse, "chevron-down");
-    head.createSpan({ cls: "db-memo-sheet-title", text: `记录${section.label}` });
-    collapse.addEventListener("click", () => this.closeMemoSheet());
+    grabHit.addEventListener("click", () => this.closeMemoSheet());
 
     const editor = this.buildEditorPanel(panel, container, section, bar, "sheet");
     this.memoSheet = { el: sheet, editor };
     bar?.addClass("is-hidden");
     editor.focus();
+    // 键盘弹出后视口会变化，延迟补测（部分机型键盘事件不触发 resize/观察器）
+    for (const delay of [300, 650, 1100]) {
+      activeWindow.setTimeout(() => this.applyViewportSize(), delay);
+    }
   }
 
   /**
@@ -2388,14 +2403,47 @@ export class DaybookView extends ItemView {
         if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && actionMode === "send") { e.preventDefault(); void submit(); }
       });
     } else {
-      // 移动端 sheet：工具在编辑器上方，底部大保存按钮
-      const toolbarSlot = wrap.createDiv({ cls: "db-memo-toolbar-slot" });
-      void toolbarSlot;
-      this.setupMediaSupport(editor, wrap, section, toolbarSlot);
+      // 移动端 sheet：flomo 式紧凑布局——文本区 + 单行工具条（# 图片 B 列表 心情 ⋯ ｜ 录音 发送）
+      const composerBar = wrap.createDiv({ cls: "db-composer-bar" });
+      const barLeft = composerBar.createDiv({ cls: "db-composer-bar-left" });
+      const barRight = composerBar.createDiv({ cls: "db-composer-bar-right" });
 
+      const barBtn = (label: string, title: string) => makeActivatable(barLeft.createDiv({
+        cls: "db-memo-tb-btn db-memo-tb-icon",
+        attr: { role: "button", "aria-label": title, title },
+      }), title);
+
+      // 1) # 标签
+      const hashBtn = barBtn("hash", "插入标签");
+      setIcon(hashBtn, "hash");
+      hashBtn.addEventListener("click", () => {
+        editor.insertAtCursor("#");
+        editor.focus();
+      });
+
+      // 2) 图片 + 录音（setupMediaSupport 生成两个按钮，录音移到右组）
+      const mediaSlot = barLeft.createDiv({ cls: "db-composer-media-slot" });
+      this.setupMediaSupport(editor, wrap, section, mediaSlot);
+
+      // 3) B 加粗
+      const boldBtn = barBtn("bold", "加粗");
+      setIcon(boldBtn, "bold");
+      boldBtn.addEventListener("click", () => {
+        this.wrapSelection(editor, "**", "**");
+      });
+
+      // 4) 列表
+      const listBtn = barBtn("list", "无序列表");
+      setIcon(listBtn, "list");
+      listBtn.addEventListener("click", () => {
+        editor.insertAtCursor("\n- ");
+        editor.focus();
+      });
+
+      // 5) 心情（配置了心情才显示）
       if (moods.length) {
-        const toggle = makeActivatable(toolbarSlot.createDiv({
-          cls: `db-memo-tb-btn db-mood-toggle${moodOpen ? " is-active" : ""}`,
+        const toggle = makeActivatable(barLeft.createDiv({
+          cls: `db-memo-tb-btn db-memo-tb-icon db-mood-toggle${moodOpen ? " is-active" : ""}`,
           text: this.selectedMood ?? "🙂",
           attr: { role: "button", "aria-label": "展开/收起心情选择", title: "心情选择" },
         }));
@@ -2408,27 +2456,53 @@ export class DaybookView extends ItemView {
         moodToggleRef.el = toggle;
       }
 
-      const saveBtn = makeActivatable(panel.createDiv({ cls: "db-save-btn db-save-btn-sticky" }), `保存${section.label}`);
-      saveBtn.createDiv({ cls: "db-btn-icon", text: section.emoji });
-      saveBtn.createDiv({ cls: "db-btn-text", text: `保存${section.label}` });
-      editor.el.addEventListener("focusin", () => {
-        activeWindow.setTimeout(() => saveBtn.scrollIntoView({ block: "nearest", behavior: "smooth" }), 350);
+      // 6) ⋯ 更多文字样式
+      const moreBtn = makeActivatable(barLeft.createDiv({
+        cls: "db-memo-tb-btn db-memo-tb-icon",
+        attr: { role: "button", "aria-label": "更多样式", title: "更多样式" },
+      }), "更多样式");
+      setIcon(moreBtn, "more-horizontal");
+      moreBtn.addEventListener("click", (e) => {
+        const menu = new Menu();
+        menu.addItem(mi => mi.setTitle("下划线").setIcon("underline").onClick(() => this.wrapSelection(editor, "<u>", "</u>")));
+        menu.addItem(mi => mi.setTitle("高亮").setIcon("highlighter").onClick(() => this.wrapSelection(editor, "==", "==")));
+        menu.addItem(mi => mi.setTitle("删除线").setIcon("strikethrough").onClick(() => this.wrapSelection(editor, "~~", "~~")));
+        menu.showAtMouseEvent(e as MouseEvent);
       });
-      saveBtn.addEventListener("click", async () => {
+
+      // 录音按钮移到右组
+      const micBtn = mediaSlot.querySelector(".db-memo-tb-audio") as HTMLElement | null;
+      if (micBtn) barRight.appendChild(micBtn);
+
+      // 发送（保存）按钮：绿色圆形纸飞机
+      const sendBtn = makeActivatable(barRight.createEl("button", {
+        cls: "db-composer-send",
+        attr: { type: "button", "aria-label": `保存${section.label}` },
+      }), `保存${section.label}`);
+      setIcon(sendBtn, "send");
+      let saving = false;
+      const submitSave = async () => {
         const text = editor.getValue().trim();
         if (!text && !this.selectedMood) { new Notice("请先输入内容～"); return; }
+        if (saving) return;
         const mood = moods.find(m => m.emoji === this.selectedMood);
         const content = mood
           ? (text ? `${mood.emoji} ${mood.label} — ${text}` : `${mood.emoji} ${mood.label}`)
           : text;
-        saveBtn.addClass("loading");
+        saving = true;
+        sendBtn.addClass("loading");
         try {
           await appendToSection(this.app, this.plugin.settings, section.label, section.type, content, section);
           new Notice("✦ 闪念已记录");
           this.closeMemoSheet();
           this.refreshToday();
         } catch (e) { new Notice("记录失败，请检查日记目录设置"); }
-        finally { saveBtn.removeClass("loading"); }
+        finally { saving = false; sendBtn.removeClass("loading"); }
+      };
+      sendBtn.addEventListener("click", () => { void submitSave(); });
+      // Ctrl/Cmd+Enter 发送
+      editor.el.addEventListener("keydown", (e: KeyboardEvent) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); void submitSave(); }
       });
     }
 

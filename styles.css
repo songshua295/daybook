@@ -4825,17 +4825,96 @@ body .db-journal-root .db-filter-q:focus {
   to { transform: translateY(0); opacity: 1; }
 }
 .db-memo-sheet-panel {
-  /* 不超过键盘/导航栏上方的可视高度（--db-vp-h、--db-bottom-inset 由视图实时测量），
-     避免输入框顶出屏幕 */
-  max-height: min(70vh, calc(var(--db-vp-h, 100vh) - var(--db-bottom-inset, 0px) - 16px));
+  /* 不超过键盘/导航栏上方的可视高度（--db-vp-h、--db-bottom-inset 由视图实时测量）；
+     保底 150px：任何测量异常下面板至少露出文本区，绝不整体消失 */
+  max-height: max(150px, min(70vh, calc(var(--db-vp-h, 100vh) - var(--db-bottom-inset, 0px) - 16px)));
   overflow-y: auto;
   border-radius: 16px 16px 0 0;
   background: var(--db-surface);
   border: 1px solid var(--db-border);
   border-bottom: none;
   box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.16);
-  padding: 10px 12px calc(12px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  padding: 6px 12px calc(10px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
 }
+/* flomo 式编辑面板：顶部抓握手柄（点按收起） */
+.db-memo-sheet-grabber {
+  display: flex;
+  justify-content: center;
+  padding: 2px 0 6px;
+}
+.db-memo-sheet-grabber-hit {
+  width: 44px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--db-text-muted);
+  opacity: 0.4;
+  transition: opacity 0.15s ease;
+}
+.db-memo-sheet-grabber-hit:hover,
+.db-memo-sheet-grabber-hit:active { opacity: 0.8; }
+
+/* 面板内输入区：去外壳边框，文本直接落在面板上（flomo 式） */
+.db-memo-sheet .db-input-wrap {
+  padding: 0 2px 0;
+}
+.db-memo-sheet .db-quick-tags {
+  padding: 0 2px;
+  margin-bottom: 2px;
+}
+
+/* 单行工具条：左=# 图片 B 列表 心情 ⋯，右=录音 发送 */
+.db-composer-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 2px 0;
+}
+.db-composer-bar-left {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+}
+.db-composer-bar-right {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+.db-composer-media-slot {
+  display: contents;
+}
+.db-composer-bar .db-memo-tb-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  color: var(--db-text-muted);
+}
+.db-composer-bar .db-memo-tb-btn svg { width: 19px; height: 19px; }
+.db-composer-bar .db-mood-toggle { font-size: 17px; }
+
+/* 绿色圆形发送键 */
+.db-composer-send {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: var(--db-accent);
+  color: var(--text-on-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.1s ease, opacity 0.15s ease;
+}
+.db-composer-send svg { width: 19px; height: 19px; }
+.db-composer-send:active { transform: scale(0.92); }
+.db-composer-send.loading { opacity: 0.55; pointer-events: none; }
+
 .db-memo-sheet-head {
   display: flex;
   flex-direction: row;
