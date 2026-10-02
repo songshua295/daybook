@@ -1358,7 +1358,7 @@ export class DaybookView extends ItemView {
         cls: "db-topbar-btn",
         attr: { type: "button", "aria-label": "闪念统计与标签", title: "统计与标签" },
       });
-      setIcon(drawerBtn, "menu");
+      setIcon(drawerBtn, "layout-grid"); // 四宫格：呼应抽屉里的热力图统计
       drawerBtn.addEventListener("click", () => {
         new MemoSidebar({
           plugin: this.plugin,
@@ -1367,6 +1367,21 @@ export class DaybookView extends ItemView {
           onResetFilters: () => {
             const f = this.getFilter(active.id);
             Object.assign(f, emptyFilter());
+            this.applyFilter();
+            if (this.filterOpen) void this.openFilterPanel();
+          },          onDateClick: (date) => {
+            const f = this.getFilter(active.id);
+            // 再点同一天 = 取消该日期筛选
+            const same = f.datePreset === "custom" && f.dateFrom === date && f.dateTo === date;
+            if (same) {
+              f.datePreset = "";
+              f.dateFrom = "";
+              f.dateTo = "";
+            } else {
+              f.datePreset = "custom";
+              f.dateFrom = date;
+              f.dateTo = date;
+            }
             this.applyFilter();
             if (this.filterOpen) void this.openFilterPanel();
           },

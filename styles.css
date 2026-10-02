@@ -4663,6 +4663,9 @@ body .db-journal-root .db-filter-q:focus {
 .db-memo-heatmap-cell.lv2 { background: color-mix(in srgb, var(--db-accent) 65%, transparent); }
 .db-memo-heatmap-cell.lv3 { background: var(--db-accent); }
 .db-memo-heatmap-cell.today { box-shadow: 0 0 0 1.5px var(--db-text); }
+/* 点击格子 = 筛选该日期的闪念 */
+.db-memo-heatmap-cell.clickable { cursor: pointer; }
+.db-memo-heatmap-cell.clickable:hover { box-shadow: 0 0 0 1.5px var(--db-text); border-radius: 3px; }
 .db-memo-tags-empty {
   font-size: 12px;
   color: var(--db-text-sub);

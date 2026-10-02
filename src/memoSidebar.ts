@@ -19,6 +19,8 @@ export interface MemoSidebarOptions {
   onTagClick: (tag: string) => void;
   /** 「全部闪念」→ 清空章节筛选并刷新 */
   onResetFilters: () => void;
+  /** 点击热力图格子 → 按该日期筛选记录流 */
+  onDateClick?: (date: string) => void;
 }
 
 export class MemoSidebar {
@@ -126,6 +128,15 @@ export class MemoSidebar {
         const cell = colEl.createDiv({ cls: `db-memo-heatmap-cell lv${level}` });
         cell.setAttribute("aria-label", `${ds} · ${n} 条`);
         if (ds === todayStr) cell.addClass("today");
+        // 点击格子 → 筛选并显示该日期的闪念（再次点击同日 = 取消，由视图侧处理）
+        const onDateClick = this.opts.onDateClick;
+        if (onDateClick) {
+          cell.addClass("clickable");
+          cell.addEventListener("click", () => {
+            this.close();
+            onDateClick(ds);
+          });
+        }
       });
       // 月份标注：该列包含某月 1 号（或为首列）时标出——
       // 标注值取该列实际包含的 1 号所属月份（1 号多在列中间，列首日常仍是上月）
