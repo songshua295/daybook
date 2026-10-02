@@ -4623,24 +4623,41 @@ body .db-journal-root .db-filter-q:focus {
   color: var(--db-text-muted);
   margin-bottom: 8px;
 }
+/* 格子按抽屉宽度均分铺满，不留右侧空白 */
 .db-memo-heatmap-grid {
   display: flex;
   flex-direction: row;
-  gap: 3px;
-  overflow-x: auto;
-  padding-bottom: 4px;
+  gap: 2px;
+  width: 100%;
 }
 .db-memo-heatmap-col {
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 .db-memo-heatmap-cell {
-  width: 10px;
-  height: 10px;
+  width: 100%;
+  aspect-ratio: 1 / 1;
   border-radius: 2px;
   background: color-mix(in srgb, var(--db-text-muted) 14%, transparent);
-  flex-shrink: 0;
+}
+/* 月份标注行：与格子列同宽对齐，标在每月首列下方 */
+.db-memo-heatmap-months {
+  display: flex;
+  gap: 2px;
+  margin-top: 4px;
+  margin-bottom: 2px;
+}
+.db-memo-heatmap-month {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--db-text-muted);
+  white-space: nowrap;
+  overflow: visible;
 }
 .db-memo-heatmap-cell.lv1 { background: color-mix(in srgb, var(--db-accent) 35%, transparent); }
 .db-memo-heatmap-cell.lv2 { background: color-mix(in srgb, var(--db-accent) 65%, transparent); }
@@ -4689,178 +4706,16 @@ body .db-journal-root .db-filter-q:focus {
 /* 空 composer（输入已移至底部栏） */
 .db-composer:empty { display: none; }
 
-/* 胶囊栏：滚动容器末尾 sticky 悬浮（安全区让位：导航栏隐藏时避开手势条） */
-.db-memo-bar {
-  position: sticky;
-  bottom: calc(10px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
-  z-index: 50;
-  margin: 8px 12px;
+/* 移动端编辑卡片：直接嵌在记录流顶部（文档流内，键盘由系统自然避让） */
+/* 移动端内联编辑卡片：记录流顶部的第一条位置（文档流内，无固定定位） */
+.db-composer-instream {
+  margin: 0 2px 10px;
+  padding: 10px 12px 8px;
 }
-/* 手机端：flomo 式固定悬浮——fixed 钉在屏幕底部，不随内容滚动。
-   --db-bottom-inset 由视图实时测量：键盘弹出时=键盘高度（底边精确贴住键盘顶部），
-   未弹出时=呼吸间距+导航栏重叠+安全区 */
-.is-phone .db-memo-bar {
-  position: fixed;
-  left: 12px;
-  right: 12px;
-  margin: 0;
-  bottom: var(--db-bottom-inset, 0px);
-}
-/* 固定悬浮栏下方的内容留白：滚动到底时最后一条不被栏体盖住。
-   注意 db-page 是被压缩的 flex 盒，留白必须加在实际溢出的列表上 */
-.is-phone .db-has-fixed-bar .db-today-list {
-  padding-bottom: calc(84px + var(--db-bottom-inset, 0px));
-}
-.db-memo-bar.is-hidden { display: none; }
-.db-memo-bar-idle {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border-radius: 24px;
-  background: var(--db-surface);
-  border: 1px solid var(--db-border);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-}
-.db-memo-bar-btn {
-  flex-shrink: 0;
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  color: var(--db-text-muted);
-  cursor: pointer;
-}
-.db-memo-bar-btn:hover { background: var(--db-bg-hover); color: var(--db-text); }
-.db-memo-bar-btn svg { width: 18px; height: 18px; }
-.db-memo-bar-mic { color: var(--db-accent); }
-.db-memo-bar-mid {
-  flex: 1 1 auto;
-  min-width: 0;
-  cursor: text;
-  padding: 4px 2px;
-}
-.db-memo-bar-placeholder {
-  font-size: 13px;
-  color: var(--db-text-sub);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: block;
-}
-
-/* 录音态 */
-.db-memo-bar-rec { display: none; }
-.db-memo-bar.is-recording .db-memo-bar-idle { display: none; }
-.db-memo-bar.is-recording .db-memo-bar-rec {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 16px;
-  border-radius: 24px;
-  background: var(--db-surface);
-  border: 1px solid var(--db-accent);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-}
-.db-memo-bar.is-cancel .db-memo-bar-rec { border-color: var(--color-red, #e93147); opacity: 0.75; }
-.db-memo-bar-rec-time {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--color-red, #e93147);
-  font-variant-numeric: tabular-nums;
-}
-.db-memo-bar-wave {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  height: 20px;
-}
-.db-memo-bar-wave-i {
-  width: 3px;
-  border-radius: 2px;
-  background: var(--db-accent);
-  animation: db-wave 0.9s ease-in-out infinite;
-}
-.db-memo-bar-wave-i:nth-child(1) { height: 8px; animation-delay: 0s; }
-.db-memo-bar-wave-i:nth-child(2) { height: 14px; animation-delay: 0.15s; }
-.db-memo-bar-wave-i:nth-child(3) { height: 20px; animation-delay: 0.3s; }
-.db-memo-bar-wave-i:nth-child(4) { height: 14px; animation-delay: 0.45s; }
-.db-memo-bar-wave-i:nth-child(5) { height: 8px; animation-delay: 0.6s; }
-@keyframes db-wave {
-  0%, 100% { transform: scaleY(0.4); opacity: 0.6; }
-  50% { transform: scaleY(1); opacity: 1; }
-}
-.db-memo-bar.is-cancel .db-memo-bar-wave-i { background: var(--db-text-sub); animation: none; }
-.db-memo-bar-rec-hint {
-  font-size: 11px;
-  color: var(--db-text-muted);
-  white-space: nowrap;
-}
-
-/* 编辑面板：sticky bottom 展开为大半屏 */
-.db-memo-sheet {
-  position: sticky;
-  bottom: 0;
-  z-index: 55;
-  margin: 0 8px;
-  animation: db-sheet-up 0.22s ease-out;
-}
-/* 手机端：面板同样固定悬浮（不随内容滚动）；键盘弹出时底边精确贴住键盘顶部 */
-.is-phone .db-memo-sheet {
-  position: fixed;
-  left: 8px;
-  right: 8px;
-  margin: 0;
-  bottom: var(--db-bottom-inset, 0px);
-}
-@keyframes db-sheet-up {
-  from { transform: translateY(24px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
-}
-.db-memo-sheet-panel {
-  /* 不超过键盘/导航栏上方的可视高度（--db-vp-h、--db-bottom-inset 由视图实时测量）；
-     保底 150px：任何测量异常下面板至少露出文本区，绝不整体消失 */
-  max-height: max(150px, min(70vh, calc(var(--db-vp-h, 100vh) - var(--db-bottom-inset, 0px) - 16px)));
-  overflow-y: auto;
-  border-radius: 16px 16px 0 0;
-  background: var(--db-surface);
-  border: 1px solid var(--db-border);
-  border-bottom: none;
-  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.16);
-  padding: 6px 12px calc(10px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
-}
-/* flomo 式编辑面板：顶部抓握手柄（点按收起） */
-.db-memo-sheet-grabber {
-  display: flex;
-  justify-content: center;
-  padding: 2px 0 6px;
-}
-.db-memo-sheet-grabber-hit {
-  width: 44px;
-  height: 5px;
-  border-radius: 3px;
-  background: var(--db-text-muted);
-  opacity: 0.4;
-  transition: opacity 0.15s ease;
-}
-.db-memo-sheet-grabber-hit:hover,
-.db-memo-sheet-grabber-hit:active { opacity: 0.8; }
-
-/* 面板内输入区：去外壳边框，文本直接落在面板上（flomo 式） */
-.db-memo-sheet .db-input-wrap {
-  padding: 0 2px 0;
-}
-.db-memo-sheet .db-quick-tags {
-  padding: 0 2px;
-  margin-bottom: 2px;
-}
+.db-composer-instream .db-input-wrap { min-height: 72px; }
+.db-composer-instream .db-live-editor-fallback .db-live-textarea,
+.db-composer-instream textarea { min-height: 64px; font-size: 15px; }
+.db-composer-instream .db-mood-grid { margin-bottom: 6px; }
 
 /* 单行工具条：左=# 图片 B 列表 心情 ⋯，右=录音 发送 */
 .db-composer-bar {
@@ -4914,31 +4769,6 @@ body .db-journal-root .db-filter-q:focus {
 .db-composer-send svg { width: 19px; height: 19px; }
 .db-composer-send:active { transform: scale(0.92); }
 .db-composer-send.loading { opacity: 0.55; pointer-events: none; }
-
-.db-memo-sheet-head {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-.db-memo-sheet-collapse {
-  width: 30px;
-  height: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  color: var(--db-text-muted);
-  cursor: pointer;
-}
-.db-memo-sheet-collapse:hover { background: var(--db-bg-hover); color: var(--db-text); }
-.db-memo-sheet-collapse svg { width: 16px; height: 16px; }
-.db-memo-sheet-title {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--db-text-muted);
-}
 
 /* 抽屉导航菜单(Phase 6) */
 .db-memo-nav {

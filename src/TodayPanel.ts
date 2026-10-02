@@ -523,7 +523,12 @@ export class TodayPanel {
       entries = filtering && filter
         ? groups.flatMap(g => g.entries).filter(e => matchEntry(e, filter, today))
         : memoStream
-          ? groups.flatMap(g => g.entries).filter(e => !e.archived)
+          ? (() => {
+              // 默认聚焦未归档；全部归档时兜底展示已归档条目，列表不全空
+              const all = groups.flatMap(g => g.entries);
+              const active = all.filter(e => !e.archived);
+              return active.length > 0 ? active : all.filter(e => e.archived);
+            })()
           : (() => {
               const todayEntries = groups.find(g => g.date === today)?.entries ?? [];
               // 默认内容为未归档的；已归档的追加到底部弱化展示，不与正常记录混排
@@ -534,8 +539,9 @@ export class TodayPanel {
         allPlanEntries = groups.flatMap(g => g.entries)
           .filter(e => e.renderType === "plans" && !e.archived && (e.todos?.length ?? 0) > 0);
       }
-    } catch {
-      /* 读取失败时保持空列表 */
+    } catch (e) {
+      // 读取失败时保持空列表；错误入控制台便于真机排查
+      console.error("Daybook: 记录流读取失败", e);
     }
     if (seq !== this.refreshSeq || !this.listEl.isConnected) return;
 

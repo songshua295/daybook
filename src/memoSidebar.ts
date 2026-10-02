@@ -96,25 +96,28 @@ export class MemoSidebar {
       });
   }
 
-  /** 近 12 周热力图（周一开列，与习惯详情热力图同风格但配色按记录条数） */
+  /** 近半年热力图（周一开列，格子按抽屉宽度均分铺满；底部标注月份） */
   private renderHeatmap(body: HTMLElement, entries: JournalEntry[]) {
     const counts = new Map<string, number>();
     entries.forEach(e => counts.set(e.date, (counts.get(e.date) ?? 0) + 1));
 
+    const WEEKS = 22; // 约半年
     const wrap = body.createDiv({ cls: "db-memo-heatmap" });
     wrap.createDiv({ cls: "db-memo-heatmap-title", text: "记录热力" });
-    const grid = wrap.createDiv({ cls: "db-memo-heatmap-grid" });
     const today = moment();
-    const lastColStart = today.clone().subtract((today.isoWeekday() + 6) % 7, "days");
-    const start = lastColStart.clone().subtract(11, "weeks");
+    const lastColStart = today.clone().subtract((today.isoWeekday() + 6) % 7, "days"); // 本周周一
+    const start = lastColStart.clone().subtract(WEEKS - 1, "weeks");
     const end = lastColStart.clone().add(6, "days");
-    const days: string[] = [];
-    for (let d = start.clone(); d.valueOf() <= end.valueOf(); d.add(1, "day")) {
-      days.push(d.format("YYYY-MM-DD"));
-    }
     const cols: string[][] = [];
-    for (let i = 0; i < days.length; i += 7) cols.push(days.slice(i, i + 7));
+    for (let d = start.clone(); d.valueOf() <= end.valueOf(); d.add(1, "day")) {
+      const col = cols[cols.length - 1];
+      if (!col || col.length === 7) cols.push([d.format("YYYY-MM-DD")]);
+      else col.push(d.format("YYYY-MM-DD"));
+    }
     const todayStr = today.format("YYYY-MM-DD");
+    const grid = wrap.createDiv({ cls: "db-memo-heatmap-grid" });
+    const monthRow = wrap.createDiv({ cls: "db-memo-heatmap-months" });
+    let first = true;
     cols.forEach(col => {
       const colEl = grid.createDiv({ cls: "db-memo-heatmap-col" });
       col.forEach(ds => {
@@ -124,9 +127,16 @@ export class MemoSidebar {
         cell.setAttribute("aria-label", `${ds} · ${n} 条`);
         if (ds === todayStr) cell.addClass("today");
       });
+      // 月份标注：该列包含某月 1 号（或为首列）时标出——
+      // 标注值取该列实际包含的 1 号所属月份（1 号多在列中间，列首日常仍是上月）
+      const labelEl = monthRow.createDiv({ cls: "db-memo-heatmap-month" });
+      const firstOfMonth = col.find(ds => moment(ds).date() === 1);
+      if (first || firstOfMonth) {
+        labelEl.setText(`${moment(firstOfMonth ?? col[0]).month() + 1}月`);
+      }
+      first = false;
     });
   }
-
   /** 标签树：按 "/" 建层级（子级缩进），行尾计数，点击 = 筛选该标签 */
   private renderTagTree(body: HTMLElement, entries: JournalEntry[]) {
     const tags = collectTags(entries);

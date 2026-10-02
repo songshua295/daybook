@@ -949,6 +949,17 @@ export class DaybookView extends ItemView {
   private todayPanel: TodayPanel | null = null;
   private todayHostEl: HTMLElement | null = null;
   private _vpResizeHandler: (() => void) | null = null;
+  /** pan 模式下 visualViewport 滚动（系统平移）监听 */
+  private _vpScrollHandler: (() => void) | null = null;
+  /** Obsidian 原生键盘事件监听（window 上的 keyboardWillShow/Hide） */
+  private _kbShowHandler: ((e: Event) => void) | null = null;
+  private _kbHideHandler: (() => void) | null = null;
+  /** 键盘收起状态下的布局视口高度基线（webview 是否随键盘收缩的判定基准） */
+  private _idleInnerH = 0;
+  /** 最近一次已知的键盘高度（收起后仍保留，用于面板展开前预抬、避免系统平移漂移） */
+  private _lastKnownKeyboardHeight = 0;
+  /** 最近一次记录的 visualViewport.offsetTop（pan 漂移校正用） */
+  private _lastVpOffsetTop = 0;
   /** 安卓底部导航栏显隐观察（body class/style 变化时重算底部让位） */
   private _navClassObserver: MutationObserver | null = null;
   /** 最近一次视口几何指纹（导航栏重叠|容器底|视口高|视觉视口|键盘变量），变化时才重算 */
@@ -981,8 +992,6 @@ export class DaybookView extends ItemView {
   private habitsRerender: (() => void) | null = null;
   /** 最近一次整页渲染的日期（YYYY-MM-DD）：切回标签页时用于检测跨天 */
   private renderedDate = moment().format("YYYY-MM-DD");
-  /** 底部编辑面板（打开中的引用，含编辑器；保存/收起后置空） */
-  private memoSheet: { el: HTMLElement; editor: LiveEditor } | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: DaybookPlugin) {
     super(leaf);
@@ -1035,6 +1044,26 @@ export class DaybookView extends ItemView {
     if (htmlEl && htmlEl !== activeDocument.body) {
       this._navClassObserver.observe(htmlEl, { attributes: true, attributeFilter: ["class", "style"] });
     }
+    // Obsidian 原生层在 window 上派发键盘事件（Capacitor Keyboard 插件，安卓/iOS 通用），
+    // 与自带移动工具栏用的是同一事件源——是键盘弹出/收起最确定、最及时的信号
+    this._kbShowHandler = () => {
+      this.applyViewportSize();
+      // 原生层先派发事件、后落地 --keyboard-height 与动画，连续补测对齐
+      activeWindow.setTimeout(() => this.applyViewportSize(), 80);
+      activeWindow.setTimeout(() => this.applyViewportSize(), 300);
+    };
+    this._kbHideHandler = () => {
+      this.applyViewportSize();
+      activeWindow.setTimeout(() => this.applyViewportSize(), 150);
+    };
+    activeWindow.addEventListener("keyboardWillShow", this._kbShowHandler as EventListener);
+    activeWindow.addEventListener("keyboardWillHide", this._kbHideHandler as EventListener);
+    // pan 模式下系统平移会改变 visualViewport.offsetTop，滚动事件里随时校正漂移
+    this._vpScrollHandler = () => {
+      const vp2 = activeWindow.visualViewport;
+      if (vp2 && Math.round(vp2.offsetTop) !== this._lastVpOffsetTop) this.applyViewportSize();
+    };
+    vp?.addEventListener("scroll", this._vpScrollHandler);
     // 跨天检测：切回 Daybook 标签页时若日期已变，整页重建（今日记录流/输入区/习惯页翻到新的一天）
     this.registerEvent(this.app.workspace.on("active-leaf-change", (leaf) => {
       if (!leaf || leaf.view !== this) return;
@@ -1056,6 +1085,18 @@ export class DaybookView extends ItemView {
     if (vp && this._vpResizeHandler) {
       vp.removeEventListener("resize", this._vpResizeHandler);
       this._vpResizeHandler = null;
+    }
+    if (vp && this._vpScrollHandler) {
+      vp.removeEventListener("scroll", this._vpScrollHandler);
+      this._vpScrollHandler = null;
+    }
+    if (this._kbShowHandler) {
+      activeWindow.removeEventListener("keyboardWillShow", this._kbShowHandler as EventListener);
+      this._kbShowHandler = null;
+    }
+    if (this._kbHideHandler) {
+      activeWindow.removeEventListener("keyboardWillHide", this._kbHideHandler as EventListener);
+      this._kbHideHandler = null;
     }
     this._navClassObserver?.disconnect();
     this._navClassObserver = null;
@@ -1091,6 +1132,7 @@ export class DaybookView extends ItemView {
     // （底边贴在用户看到的"键盘"顶缘 = 工具栏顶；无工具栏时=键盘物理顶部）；
     // 键盘未弹出时 = 10px 呼吸 + 导航栏重叠 + 系统安全区（避开手势条）
     const keyboard = this.measureKeyboardHeight(vp, innerH, Math.round(containerRect.bottom));
+    if (keyboard === 0) this._idleInnerH = innerH; // 维护"键盘未弹出"的视口高度基线
     const bottomInset = keyboard > 0
       ? keyboard + this.readToolbarHeight(innerH, keyboard)
       : 10 + navbarInset + this.readSafeBottom(innerH);
@@ -1110,24 +1152,38 @@ export class DaybookView extends ItemView {
     return Math.round(rect.height);
   }
 
-  /** 键盘高度：多信号取最大值（不同机型/键盘模式下生效的信号不同） */
+  /**
+   * 键盘让位高度 = 键盘实际遮住布局视口底部的量，只用真实几何测量：
+   * - 容器收缩量：Obsidian 键盘弹出时以 max-height: calc(100vh - 键盘高) 收缩工作区
+   * - 视觉视口收缩量：webview 自身随键盘收缩（adjustResize / resizes-visual）的机型
+   * 原生注入的 --keyboard-height 只反映键盘物理高度、不代表视口被遮多少——
+   * 在 webview 已收缩的机型上把它加进 bottom 会造成"二次抬升"（面板飞出屏幕顶），
+   * 因此绝不直接作为位移使用，只通过上面两条几何信号体现。
+   */
   private measureKeyboardHeight(
     vp: VisualViewport | null,
     innerH: number,
     containerBottom: number
   ): number {
-    // 1) Obsidian 原生注入的 --keyboard-height（Capacitor 键盘事件驱动，最可靠）
-    let kb = this.readCssKeyboardHeight();
-    // 2) 容器收缩量：Obsidian 以 max-height: calc(100vh - 键盘高) 收缩工作区
-    kb = Math.max(kb, Math.max(0, innerH - containerBottom));
-    // 3) 视觉视口收缩量：webview 随键盘收缩（adjustResize）时 innerHeight 同步收缩、差值为 0，
-    //    仅 webview 未收缩时生效；捏合缩放（scale≠1）排除误判
+    // webview 已随键盘收缩的机型（adjustResize）：布局视口底=键盘顶，
+    // fixed bottom:0 本就贴着键盘——任何额外让位都是二次抬升（面板飞出屏幕顶）
+    const resized = this._idleInnerH > 0 && innerH < this._idleInnerH - 5;
+    if (resized) return 0;
+    let kb = Math.max(0, innerH - containerBottom);
+    // pan 模式下系统平移由 offsetTop 反映：可见底缘=height+offsetTop 已到布局底时
+    // 差值为 0（此时系统自行把输入区顶到键盘上方，插件不再叠加位移，避免漂移）；
+    // 捏合缩放（scale≠1）排除误判
     if (vp && vp.scale === 1) {
+      this._lastVpOffsetTop = Math.round(vp.offsetTop || 0);
       kb = Math.max(kb, Math.max(0, innerH - Math.round(vp.height + vp.offsetTop)));
+    } else {
+      this._lastVpOffsetTop = 0;
     }
     // 防御性钳制：任何信号异常（如瞬时报 0）都不允许键盘高度超过屏高 70%，
     // 否则底边 inset 会把面板整个推出屏幕外（"输入框消失"）
-    return Math.min(kb, Math.round(innerH * 0.7));
+    const clamped = Math.min(kb, Math.round(innerH * 0.7));
+    if (clamped > 0) this._lastKnownKeyboardHeight = clamped;
+    return clamped;
   }
 
   /** 读取 Obsidian 注入的 --keyboard-height（可能挂在 :root 或 body 上） */
@@ -1209,7 +1265,6 @@ export class DaybookView extends ItemView {
   buildUI() {
     const root = this.containerEl.children[1] as HTMLElement;
     this.renderedDate = moment().format("YYYY-MM-DD");
-    this.memoSheet = null;
     this.destroyLiveEditors();
     this.todayPanel?.destroy();
     this.todayPanel = null;
@@ -1243,7 +1298,16 @@ export class DaybookView extends ItemView {
     }
 
     const composer = page.createDiv({ cls: "db-composer" });
-    this.renderTabContent(composer, active);
+    try {
+      this.renderTabContent(composer, active);
+    } catch (e) {
+      // 真机渲染异常兜底：直接显示错误，避免整页空白无从排查
+      console.error("Daybook: 编辑区渲染失败", e);
+      composer.createDiv({
+        cls: "db-page-empty",
+        text: `编辑区渲染失败：${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
 
     // 今日记录区标题（含条数徽标）
     const todayHead = page.createDiv({ cls: "db-today-head" });
@@ -2089,8 +2153,6 @@ export class DaybookView extends ItemView {
   /** 闪念 Tab：移动端=底部悬浮输入栏(长按语音)；桌面端=顶部编辑器卡片(flomo 桌面式) */
   private renderMemosTab(container: HTMLElement, section: SectionConfig) {
     this._currentSection = section;
-    const root = container.closest(".db-journal-root") as HTMLElement | null;
-    if (!root) return;
 
     if (!isMobile()) {
       // 桌面端：常驻编辑器卡片（composer 即卡片）
@@ -2099,64 +2161,12 @@ export class DaybookView extends ItemView {
       return;
     }
 
-    // 移动端：底部悬浮胶囊栏（滚动容器末尾，sticky bottom 常驻可见）
-    const bar = root.createDiv({ cls: "db-memo-bar" });
-    root.addClass("db-has-fixed-bar"); // 列表底部留白，避免最后一条被固定栏盖住
-    const idle = bar.createDiv({ cls: "db-memo-bar-idle" });
-    const plus = makeActivatable(idle.createDiv({
-      cls: "db-memo-bar-btn",
-      attr: { role: "button", "aria-label": "展开输入" },
-    }), "展开输入");
-    setIcon(plus, "plus");
-    const mid = makeActivatable(idle.createDiv({
-      cls: "db-memo-bar-mid",
-      attr: { role: "button", "aria-label": "展开输入" },
-    }), "展开输入");
-    mid.createSpan({ cls: "db-memo-bar-placeholder", text: "点击输入或长按语音" });
-    const mic = makeActivatable(idle.createDiv({
-      cls: "db-memo-bar-btn db-memo-bar-mic",
-      attr: { role: "button", "aria-label": "长按说话" },
-    }), "长按说话");
-    setIcon(mic, "mic");
-
-    // 录音态内容（录音时切换显示）
-    const rec = bar.createDiv({ cls: "db-memo-bar-rec" });
-    rec.createSpan({ cls: "db-memo-bar-rec-time", text: "0:00" });
-    const wave = rec.createDiv({ cls: "db-memo-bar-wave" });
-    for (let i = 0; i < 5; i++) wave.createDiv({ cls: "db-memo-bar-wave-i" });
-    rec.createSpan({ cls: "db-memo-bar-rec-hint", text: "松开发送 · 上滑取消" });
-
-    const open = () => this.openMemoSheet(container, section, bar);
-    plus.addEventListener("click", open);
-    mid.addEventListener("click", open);
-    this.setupMemoBarMic(bar, mic, section);
-  }
-
-  /** 底部编辑面板（移动端）：壳 + 共用编辑内容 */
-  private openMemoSheet(container: HTMLElement, section: SectionConfig, bar: HTMLElement | null) {
-    if (this.memoSheet) return;
-    const root = container.closest(".db-journal-root") as HTMLElement | null;
-    if (!root) return;
-
-    // 固定悬浮于视口底部（flomo 式），不受内容滚动影响
-    const sheet = root.createDiv({ cls: "db-memo-sheet" });
-    const panel = sheet.createDiv({ cls: "db-memo-sheet-panel" });
-
-    // 顶部抓握手柄：点按收起
-    const grabHit = makeActivatable(panel.createDiv({
-      cls: "db-memo-sheet-grabber",
-      attr: { role: "button", "aria-label": "收起", title: "收起" },
-    }), "收起");
-    grabHit.addEventListener("click", () => this.closeMemoSheet());
-
-    const editor = this.buildEditorPanel(panel, container, section, bar, "sheet");
-    this.memoSheet = { el: sheet, editor };
-    bar?.addClass("is-hidden");
-    editor.focus();
-    // 键盘弹出后视口会变化，延迟补测（部分机型键盘事件不触发 resize/观察器）
-    for (const delay of [300, 650, 1100]) {
-      activeWindow.setTimeout(() => this.applyViewportSize(), delay);
-    }
+    // 移动端：flomo 式编辑卡片直接嵌在记录流顶部（第一条闪念的位置）。
+    // 在文档流内随页面滚动，键盘弹出由系统自然避让光标——
+    // 不用 fixed 悬浮定位，从根上消除键盘导致的漂移/丢失
+    container.addClass("db-editor-card");
+    container.addClass("db-composer-instream");
+    this.buildEditorPanel(container, container, section, null, "sheet");
   }
 
   /**
@@ -2494,7 +2504,11 @@ export class DaybookView extends ItemView {
         try {
           await appendToSection(this.app, this.plugin.settings, section.label, section.type, content, section);
           new Notice("✦ 闪念已记录");
-          this.closeMemoSheet();
+          // 内联卡片：清空内容继续下一条，不关闭面板
+          editor.setValue("");
+          this.selectedMood = null;
+          moodToggleRef.el?.setText("🙂");
+          panel.querySelectorAll(".db-mood-pill.selected").forEach(p => p.removeClass("selected"));
           this.refreshToday();
         } catch (e) { new Notice("记录失败，请检查日记目录设置"); }
         finally { saving = false; sendBtn.removeClass("loading"); }
@@ -2513,95 +2527,12 @@ export class DaybookView extends ItemView {
     return editor;
   }
 
-  /** 关闭并重建编辑面板（心情编辑等设置变更后刷新内容；inline 模式重建 composer 内卡片） */
-  private reopenEditorPanel(container: HTMLElement, section: SectionConfig, bar: HTMLElement | null, mode: "sheet" | "inline") {
-    if (mode === "sheet") {
-      this.closeMemoSheet();
-      this.openMemoSheet(container, section, bar);
-      return;
-    }
-    // inline：仅重建卡片内容，保留容器
+  /** 重建编辑面板（心情编辑等设置变更后刷新内容；保留容器原位重建） */
+  private reopenEditorPanel(container: HTMLElement, section: SectionConfig, _bar: HTMLElement | null, mode: "sheet" | "inline") {
     container.empty();
     container.addClass("db-editor-card");
-    this.buildEditorPanel(container, container, section, bar, "inline");
-  }
-
-  /** 关闭并重新打开编辑面板（心情编辑等设置变更后刷新面板内容） */
-  private reopenMemoSheet(container: HTMLElement, section: SectionConfig, bar: HTMLElement) {
-    this.closeMemoSheet();
-    this.openMemoSheet(container, section, bar);
-  }
-
-  /** 收起编辑面板并销毁编辑器 */
-  private closeMemoSheet() {
-    const sheet = this.memoSheet;
-    if (!sheet) return;
-    this.memoSheet = null;
-    sheet.editor.destroy();
-    this.liveEditors.delete(sheet.editor);
-    sheet.el.remove();
-    this.containerEl.querySelectorAll(".db-memo-bar.is-hidden").forEach(el => el.removeClass("is-hidden"));
-  }
-
-  /** 胶囊栏麦克风：按下即录音，松手发送（音频直存为新闪念），上滑取消 */
-  private setupMemoBarMic(bar: HTMLElement, mic: HTMLElement, section: SectionConfig) {
-    const state = { startY: 0, cancelled: false, timer: 0, seconds: 0 };
-
-    const stopTimer = () => {
-      if (state.timer) { activeWindow.clearInterval(state.timer); state.timer = 0; }
-    };
-    const finish = () => {
-      if (!this.isRecording) return;
-      const discard = state.cancelled;
-      stopTimer();
-      bar.removeClass("is-recording is-cancel");
-      this.stopRecorderWith((blob, ext) => {
-        if (discard) { new Notice("🔇 已取消录音"); return; }
-        void (async () => {
-          const embed = await this.saveAudioBlob(blob, ext, null);
-          if (!embed) return;
-          try {
-            await appendToSection(this.app, this.plugin.settings, section.label, section.type, embed, section);
-            new Notice("🎙 语音闪念已记录");
-            this.refreshToday();
-          } catch (e) {
-            new Notice("记录失败，请检查日记目录设置");
-          }
-        })();
-      });
-    };
-
-    mic.addEventListener("pointerdown", async (e) => {
-      e.preventDefault();
-      if (this.isRecording || this.memoSheet) return;
-      state.startY = e.clientY;
-      state.cancelled = false;
-      state.seconds = 0;
-      try { mic.setPointerCapture(e.pointerId); } catch (err) { /* 部分环境不支持 */ }
-      const ok = await this.startRecorder(() => { /* 停止回调由 stopRecorderWith 统一处理 */ });
-      if (!ok) return;
-      bar.addClass("is-recording");
-      const timeEl = bar.querySelector(".db-memo-bar-rec-time");
-      const tick = () => {
-        state.seconds++;
-        if (timeEl) timeEl.textContent = `${Math.floor(state.seconds / 60)}:${String(state.seconds % 60).padStart(2, "0")}`;
-      };
-      tick();
-      state.timer = activeWindow.setInterval(tick, 1000);
-    });
-    mic.addEventListener("pointermove", (e) => {
-      if (!this.isRecording) return;
-      const up = state.startY - e.clientY;
-      const nowCancel = up > 60;
-      if (nowCancel !== state.cancelled) {
-        state.cancelled = nowCancel;
-        bar.toggleClass("is-cancel", nowCancel);
-        const hintEl = bar.querySelector(".db-memo-bar-rec-hint");
-        if (hintEl) hintEl.textContent = nowCancel ? "松开取消" : "松开发送 · 上滑取消";
-      }
-    });
-    mic.addEventListener("pointerup", finish);
-    mic.addEventListener("pointercancel", finish);
+    if (isMobile()) container.addClass("db-composer-instream");
+    this.buildEditorPanel(container, container, section, _bar, mode);
   }
 
   /** 用标记包裹当前选区（无选区时插入样例文字，光标落在标记内） */
