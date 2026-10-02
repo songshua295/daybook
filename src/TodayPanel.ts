@@ -11,6 +11,7 @@ import {
   Menu,
   Modal,
   Notice,
+  Platform,
   moment,
   TFile,
   type App,
@@ -513,17 +514,21 @@ export class TodayPanel {
     let entries: JournalEntry[] = [];
     const labels = new Map<string, string>();
     let allPlanEntries: JournalEntry[] = [];
+    // 闪念章节默认 = 全部未归档闪念（跨日期流，flomo 式）；其余章节无筛选仍只看今天
+    const memoStream = !filtering && section?.type === "memos";
     try {
       const groups = await readAllJournalEntries(app, this.plugin.settings, new Set([sectionId]));
       if (seq !== this.refreshSeq) return;   // 已有更新的刷新接管渲染，避免重复落笔
       groups.forEach(g => labels.set(g.date, g.dateLabel));
       entries = filtering && filter
         ? groups.flatMap(g => g.entries).filter(e => matchEntry(e, filter, today))
-        : (() => {
-            const todayEntries = groups.find(g => g.date === today)?.entries ?? [];
-            // 默认内容为未归档的；已归档的追加到底部弱化展示，不与正常记录混排
-            return [...todayEntries.filter(e => !e.archived), ...todayEntries.filter(e => e.archived)];
-          })();
+        : memoStream
+          ? groups.flatMap(g => g.entries).filter(e => !e.archived)
+          : (() => {
+              const todayEntries = groups.find(g => g.date === today)?.entries ?? [];
+              // 默认内容为未归档的；已归档的追加到底部弱化展示，不与正常记录混排
+              return [...todayEntries.filter(e => !e.archived), ...todayEntries.filter(e => e.archived)];
+            })();
       // 计划分组：跨日期聚合全部计划条目（分组视图只列未完成任务）
       if (groupMode !== "none") {
         allPlanEntries = groups.flatMap(g => g.entries)
@@ -554,7 +559,7 @@ export class TodayPanel {
 
     this.listEl.empty();
     this.container.toggleClass("is-empty", entries.length === 0);
-    this.setHead(filtering ? "筛选结果" : "今日记录", entries.length);
+    this.setHead(filtering ? "筛选结果" : memoStream ? "全部闪念" : "今日记录", entries.length);
     // 无筛选且当天没记录时不显示标题行；筛选态即使 0 条也保留，便于看清结果。
     // 宿主被视图整体隐藏时（习惯章节）不接管标题显隐，避免互相打架。
     if (!this.container.hasClass("is-hidden")) {
@@ -567,11 +572,13 @@ export class TodayPanel {
         cls: "db-today-empty",
         text: filtering
           ? "没有符合筛选条件的记录，放宽日期或去掉某个条件试试～"
-          : "今天还没有记录，在上方写下第一条～",
+          : memoStream
+            ? "还没有闪念，在上方写下第一条～"
+            : "今天还没有记录，在上方写下第一条～",
       });
       return;
     }
-    if (!filtering) {
+    if (!filtering && !memoStream) {
       // 默认视图：一次渲染全部（今日范围小）。
       // 置顶恒在最上、已归档恒垫底，与「新→旧 / 旧→新」设置无关；
       // 各组内部保持 parse 给出的时间序（旧→新时整组反转）
@@ -593,13 +600,21 @@ export class TodayPanel {
       return;
     }
 
-    // 筛选视图：按日期分桶分页加载（每页 5 组，滚动到底自动加载下一页）
+    // 筛选视图 / 闪念默认流：按日期分桶分页加载（每页 5 组，滚动到底自动加载下一页）
     const dates: string[] = [];
     const byDate = new Map<string, JournalEntry[]>();
     entries.forEach(entry => {
       if (!byDate.has(entry.date)) { byDate.set(entry.date, []); dates.push(entry.date); }
       byDate.get(entry.date)!.push(entry);
     });
+    // 闪念流：每天内部沿用排序设置（旧→新时组内反转，置顶仍居先），与今日视图一致
+    if (memoStream && this.plugin.settings.memoSortOrder === "oldest") {
+      byDate.forEach(list => {
+        const pinned = list.filter(e => e.pinned).reverse();
+        const normal = list.filter(e => !e.pinned).reverse();
+        list.splice(0, list.length, ...pinned, ...normal);
+      });
+    }
     this.disconnectPagerObserver();
     this.pager = { dates, rendered: 0, byDate, labels, observer: null };
     this.appendNextPage();
@@ -807,10 +822,10 @@ export class TodayPanel {
     }
 
     // 悬浮「⋯」操作按钮（头部右侧）
-    const moreBtn = head.createDiv({
+    const moreBtn = makeActivatable(head.createDiv({
       cls: "db-entry-more",
       attr: { role: "button", tabindex: "0", "aria-label": "更多操作" },
-    });
+    }), "更多操作");
     moreBtn.setText("⋯");
 
     if (entry.renderType === "plans" && entry.todos && entry.todos.length > 0) {
@@ -851,14 +866,14 @@ export class TodayPanel {
       });
     }
 
-    // ⋯ 操作按钮：键盘可访问 + 弹出菜单
-    moreBtn.addEventListener("keydown", (e) => {
-      if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); moreBtn.click(); }
-    });
+    // ⋯ 操作按钮：弹出菜单（键盘 Enter/Space 由 makeActivatable 处理）
     moreBtn.addEventListener("click", (evt) => {
       evt.stopPropagation();
-      this.showEntryMenu(evt as MouseEvent, card, entry);
+      this.showEntryMenu(card, entry, { x: evt.clientX, y: evt.clientY });
     });
+
+    // 触屏长按卡片 → 同一操作菜单（手机没有 hover，⋯ 按钮不易发现）
+    this.bindLongPressMenu(card, entry);
   }
 
   /** 卡片内图片点击放大：渲染完成后绑定（编辑区不绑定） */
@@ -886,8 +901,92 @@ export class TodayPanel {
     img.addEventListener("dragstart", (e) => e.preventDefault());
   }
 
-  /** 单条记录操作菜单：置顶 / 编辑 / 原文 / 归档 / 删除 */
-  private showEntryMenu(evt: MouseEvent, card: HTMLElement, entry: JournalEntry) {
+  /**
+   * 触屏长按卡片 → 弹出操作菜单（flomo/微信式）。
+   * 桌面鼠标不响应；长按交互元素（链接/图片/标签/勾选框/⋯）时让位给其自身行为；
+   * 菜单弹出后吞掉本次抬指产生的 click，防止误触卡片内部行（如勾选/详情）。
+   */
+  private bindLongPressMenu(card: HTMLElement, entry: JournalEntry) {
+    const LONG_PRESS_MS = 550;
+    const MOVE_TOLERANCE = 12;
+    const state = { timer: 0, startX: 0, startY: 0, pressing: false, fired: false };
+
+    const cancel = () => {
+      if (state.timer) { activeWindow.clearTimeout(state.timer); state.timer = 0; }
+      state.pressing = false;
+      card.removeClass("db-long-pressing");
+    };
+
+    card.addEventListener("pointerdown", (e) => {
+      const pe = e as PointerEvent;
+      if (pe.pointerType === "mouse") return;          // 桌面沿用 hover ⋯
+      if ((pe.button ?? 0) !== 0) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("a, img, button, input, textarea, .db-entry-tag, .db-entry-more, .db-entry-checkbox, .db-entry-edit")) return;
+      state.startX = pe.clientX;
+      state.startY = pe.clientY;
+      state.pressing = true;
+      state.fired = false;
+      card.addClass("db-long-pressing");               // 按住期间禁划选，避免系统选字与菜单打架
+      state.timer = activeWindow.setTimeout(() => {
+        state.timer = 0;
+        state.fired = true;
+        cancel();
+        if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+          try { navigator.vibrate(10); } catch { /* 不支持则忽略 */ }
+        }
+        this.showEntryMenu(card, entry, { x: pe.clientX, y: pe.clientY });
+      }, LONG_PRESS_MS) as unknown as number;
+    });
+    card.addEventListener("pointermove", (e) => {
+      if (!state.pressing) return;
+      const pe = e as PointerEvent;
+      if (Math.hypot(pe.clientX - state.startX, pe.clientY - state.startY) > MOVE_TOLERANCE) cancel();
+    });
+    card.addEventListener("pointerup", cancel);
+    card.addEventListener("pointercancel", cancel);
+    card.addEventListener("pointerleave", cancel);
+
+    // 抬指后的合成 click 不再落到卡片内部（勾选/计划详情等）
+    card.addEventListener("click", (e) => {
+      if (!state.fired) return;
+      state.fired = false;
+      e.preventDefault();
+      e.stopPropagation();
+    }, true);
+
+    // 抑制系统长按菜单/选字（安卓），桌面右键不受影响
+    card.addEventListener("contextmenu", (e) => {
+      if (state.pressing || state.fired) e.preventDefault();
+    });
+  }
+
+  /** 复制文本到剪贴板：优先 Clipboard API，失败降级 execCommand */
+  private async copyEntryText(text: string) {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        new Notice("⧉ 已复制原文");
+        return;
+      }
+    } catch { /* 降级 execCommand */ }
+    try {
+      const ta = activeDocument.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      activeDocument.body.appendChild(ta);
+      ta.select();
+      const ok = activeDocument.execCommand("copy");
+      ta.remove();
+      new Notice(ok ? "⧉ 已复制原文" : "复制失败");
+    } catch {
+      new Notice("复制失败");
+    }
+  }
+
+  /** 单条记录操作菜单：置顶 / 编辑 / 原文 / 复制 / 归档 / 删除 */
+  private showEntryMenu(card: HTMLElement, entry: JournalEntry, pos: { x: number; y: number }) {
     const menu = new Menu();
 
     menu.addItem(item =>
@@ -909,6 +1008,10 @@ export class TodayPanel {
 
     menu.addItem(item =>
       item.setTitle("原文").setIcon("file-text").onClick(() => this.revealEntryInFile(entry))
+    );
+
+    menu.addItem(item =>
+      item.setTitle("复制原文").setIcon("copy").onClick(() => { void this.copyEntryText(entry.text); })
     );
 
     if (!entry.archived) {
@@ -946,7 +1049,7 @@ export class TodayPanel {
         })
     );
 
-    menu.showAtMouseEvent(evt);
+    menu.showAtPosition(pos);
   }
 
   /** 置顶 / 取消置顶：在记录块尾增删 [pinned::true] 字段行 */
@@ -1121,6 +1224,12 @@ export class TodayPanel {
     };
 
     editor.focus();
+    // 移动端：软键盘弹起会压缩视口，把编辑中的卡片滚回可见区（等键盘动画结束后校正）
+    if (Platform.isMobile) {
+      activeWindow.setTimeout(() => {
+        if (editWrap.isConnected) editWrap.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }, 350);
+    }
   }
 
   /** 按当前任务顺序重写计划块（拖拽排序后调用，保留置顶/归档字段行） */

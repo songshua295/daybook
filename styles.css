@@ -3023,7 +3023,7 @@ body,
   font-weight: 600;
 }
 
-/* 悬浮「⋯」操作：桌面悬停显示，触屏常驻半透明 */
+/* 悬浮「⋯」操作：桌面悬停显示，触屏常驻全可见（长按卡片也可呼出同一菜单） */
 .db-entry-more {
   position: absolute;
   top: 6px;
@@ -3043,8 +3043,15 @@ body,
 }
 .db-entry:hover .db-entry-more { opacity: 1; }
 .db-entry-more:hover { background: var(--db-bg-hover); color: var(--db-text); }
-.is-phone .db-entry-more { opacity: 0.65; }
-.is-phone .db-entry-more:active { opacity: 1; }
+.is-phone .db-entry-more { opacity: 1; width: 34px; height: 34px; }
+.is-phone .db-entry-more:active { background: var(--db-bg-hover); color: var(--db-text); }
+
+/* 手机端长按卡片 = 操作菜单：按住期间禁系统划选；
+   整卡在手机上禁划选（复制走菜单「复制原文」），输入控件保持可选中 */
+.is-phone .db-entry { -webkit-user-select: none; user-select: none; }
+.is-phone .db-entry textarea,
+.is-phone .db-entry input { -webkit-user-select: text; user-select: text; }
+.db-entry.db-long-pressing { -webkit-user-select: none; user-select: none; }
 
 /* 计划任务（阅读卡片内） */
 .db-entry-todo-list {
@@ -4682,12 +4689,27 @@ body .db-journal-root .db-filter-q:focus {
 /* 空 composer（输入已移至底部栏） */
 .db-composer:empty { display: none; }
 
-/* 胶囊栏：滚动容器末尾 sticky 悬浮 */
+/* 胶囊栏：滚动容器末尾 sticky 悬浮（安全区让位：导航栏隐藏时避开手势条） */
 .db-memo-bar {
   position: sticky;
-  bottom: 10px;
+  bottom: calc(10px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
   z-index: 50;
   margin: 8px 12px;
+}
+/* 手机端：flomo 式固定悬浮——fixed 钉在屏幕底部，不随内容滚动。
+   --db-bottom-inset 由视图实时测量：键盘弹出时=键盘高度（底边精确贴住键盘顶部），
+   未弹出时=呼吸间距+导航栏重叠+安全区 */
+.is-phone .db-memo-bar {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  margin: 0;
+  bottom: var(--db-bottom-inset, 0px);
+}
+/* 固定悬浮栏下方的内容留白：滚动到底时最后一条不被栏体盖住。
+   注意 db-page 是被压缩的 flex 盒，留白必须加在实际溢出的列表上 */
+.is-phone .db-has-fixed-bar .db-today-list {
+  padding-bottom: calc(84px + var(--db-bottom-inset, 0px));
 }
 .db-memo-bar.is-hidden { display: none; }
 .db-memo-bar-idle {
@@ -4790,19 +4812,29 @@ body .db-journal-root .db-filter-q:focus {
   margin: 0 8px;
   animation: db-sheet-up 0.22s ease-out;
 }
+/* 手机端：面板同样固定悬浮（不随内容滚动）；键盘弹出时底边精确贴住键盘顶部 */
+.is-phone .db-memo-sheet {
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  margin: 0;
+  bottom: var(--db-bottom-inset, 0px);
+}
 @keyframes db-sheet-up {
   from { transform: translateY(24px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
 }
 .db-memo-sheet-panel {
-  max-height: 70vh;
+  /* 不超过键盘/导航栏上方的可视高度（--db-vp-h、--db-bottom-inset 由视图实时测量），
+     避免输入框顶出屏幕 */
+  max-height: min(70vh, calc(var(--db-vp-h, 100vh) - var(--db-bottom-inset, 0px) - 16px));
   overflow-y: auto;
   border-radius: 16px 16px 0 0;
   background: var(--db-surface);
   border: 1px solid var(--db-border);
   border-bottom: none;
   box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.16);
-  padding: 10px 12px 12px;
+  padding: 10px 12px calc(12px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
 }
 .db-memo-sheet-head {
   display: flex;

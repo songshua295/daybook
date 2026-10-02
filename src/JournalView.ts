@@ -949,6 +949,13 @@ export class DaybookView extends ItemView {
   private todayPanel: TodayPanel | null = null;
   private todayHostEl: HTMLElement | null = null;
   private _vpResizeHandler: (() => void) | null = null;
+  /** 安卓底部导航栏显隐观察（body class/style 变化时重算底部让位） */
+  private _navClassObserver: MutationObserver | null = null;
+  /** 最近一次视口几何指纹（导航栏重叠|容器底|视口高|视觉视口|键盘变量），变化时才重算 */
+  private _lastVpFingerprint = "";
+  /** 系统底部安全区高度缓存（按视口尺寸失效） */
+  private _safeBottom = -1;
+  private _safeBottomKey = "";
   // 录音相关
   private mediaRecorder: any = null;
   private audioChunks: Blob[] = [];
@@ -1011,23 +1018,23 @@ export class DaybookView extends ItemView {
 
   private setupViewportAdapter() {
     const vp = activeWindow.visualViewport;
-    if (!vp) return;
-    this._vpResizeHandler = () => {
-      const root = this.containerEl.children[1] as HTMLElement;
-      if (!root) return;
-      const h = Math.round(vp.height);
-      root.style.height = h + "px";
-      root.style.maxHeight = h + "px";
-      root.scrollTop = root.scrollHeight;
-      this.applyTopbarInset();
-      this.fitTopbar();
-    };
-    vp.addEventListener("resize", this._vpResizeHandler);
+    this._vpResizeHandler = () => this.applyViewportSize();
+    vp?.addEventListener("resize", this._vpResizeHandler);
     // 工作区尺寸变化（分栏拖拽、旋转屏幕、原生头部显隐）时重算避让与折叠
     this.registerEvent(this.app.workspace.on("resize", () => {
-      this.applyTopbarInset();
-      this.fitTopbar();
+      this.applyViewportSize();
     }));
+    // 安卓端 Obsidian 滚动/键盘时会显隐底部导航栏、设置键盘高度（body class/style 变化），
+    // 几何有变化时重算根容器高度与底部让位，保证固定输入栏/面板不被遮挡
+    this._navClassObserver = new MutationObserver(() => {
+      if (this.viewportFingerprint() !== this._lastVpFingerprint) this.applyViewportSize();
+    });
+    this._navClassObserver.observe(activeDocument.body, { attributes: true, attributeFilter: ["class", "style"] });
+    // --keyboard-height 可能挂在 :root 上，一并观察
+    const htmlEl = activeDocument.documentElement;
+    if (htmlEl && htmlEl !== activeDocument.body) {
+      this._navClassObserver.observe(htmlEl, { attributes: true, attributeFilter: ["class", "style"] });
+    }
     // 跨天检测：切回 Daybook 标签页时若日期已变，整页重建（今日记录流/输入区/习惯页翻到新的一天）
     this.registerEvent(this.app.workspace.on("active-leaf-change", (leaf) => {
       if (!leaf || leaf.view !== this) return;
@@ -1037,6 +1044,11 @@ export class DaybookView extends ItemView {
         new Notice("ℹ️ 已跨入新的一天，Daybook 已按今天刷新");
       }
     }));
+    this.applyViewportSize();
+    // 首帧布局未就绪时 visualViewport.height 可能为 0（被上面的守卫跳过），布局后再补测两次
+    activeWindow.requestAnimationFrame(() =>
+      activeWindow.requestAnimationFrame(() => this.applyViewportSize())
+    );
   }
 
   private teardownViewportAdapter() {
@@ -1045,6 +1057,115 @@ export class DaybookView extends ItemView {
       vp.removeEventListener("resize", this._vpResizeHandler);
       this._vpResizeHandler = null;
     }
+    this._navClassObserver?.disconnect();
+    this._navClassObserver = null;
+  }
+
+  /**
+   * 根容器高度 = min(可视视口高度 - 底部导航栏重叠, 容器实际可用高度)。
+   * 安卓端 floating navbar（.mobile-navbar）悬浮在内容之上，不清让会导致
+   * 底部输入栏/编辑面板/保存按钮被盖住；Obsidian 键盘弹起时会自行收缩
+   * app-container（--keyboard-height），visualViewport 也可能收缩——两者取小值，
+   * 无论哪种键盘模式都能让底部输入贴在键盘上方。桌面端无导航栏，重叠量为 0。
+   */
+  private applyViewportSize() {
+    const root = this.containerEl.children[1] as HTMLElement;
+    if (!root) return;
+    const vp = activeWindow.visualViewport;
+    const navbarInset = this.measureBottomInset();
+    const vpH = vp ? Math.round(vp.height) : 0;
+    const containerRect = this.containerEl.getBoundingClientRect();
+    const rootTop = root.getBoundingClientRect().top;
+    const availH = Math.round(containerRect.bottom - rootTop);
+    const base = vpH > 0 ? vpH - navbarInset : availH;
+    const h = Math.min(base, availH > 0 ? availH : base);
+    if (h <= 0) return; // 首帧未布局（如弹窗窗口）时不写 0 高度
+    const innerH = Math.round(activeWindow.innerHeight);
+    this._lastVpFingerprint = `${navbarInset}|${Math.round(containerRect.bottom)}|${innerH}|${vpH}|${this.readCssKeyboardHeight()}`;
+    root.style.height = h + "px";
+    root.style.maxHeight = h + "px";
+    // 供吸底面板限高：面板底=视口底-bottom-inset，向上不超过视口顶
+    root.style.setProperty("--db-vp-h", `${innerH}px`);
+    // 固定悬浮栏（flomo 式）底部让位：
+    // 键盘弹出时 = 键盘高度（底边精确贴住键盘顶部，不叠加导航栏/安全区间距）；
+    // 键盘未弹出时 = 10px 呼吸 + 导航栏重叠 + 系统安全区（避开手势条）
+    const keyboard = this.measureKeyboardHeight(vp, innerH, Math.round(containerRect.bottom));
+    const bottomInset = keyboard > 0
+      ? keyboard
+      : 10 + navbarInset + this.readSafeBottom(innerH);
+    root.style.setProperty("--db-bottom-inset", `${bottomInset}px`);
+    this.applyTopbarInset();
+    this.fitTopbar();
+  }
+
+  /** 键盘高度：多信号取最大值（不同机型/键盘模式下生效的信号不同） */
+  private measureKeyboardHeight(
+    vp: VisualViewport | null,
+    innerH: number,
+    containerBottom: number
+  ): number {
+    // 1) Obsidian 原生注入的 --keyboard-height（Capacitor 键盘事件驱动，最可靠）
+    let kb = this.readCssKeyboardHeight();
+    // 2) 容器收缩量：Obsidian 以 max-height: calc(100vh - 键盘高) 收缩工作区
+    kb = Math.max(kb, Math.max(0, innerH - containerBottom));
+    // 3) 视觉视口收缩量：webview 随键盘收缩（adjustResize）时 innerHeight 同步收缩、差值为 0，
+    //    仅 webview 未收缩时生效；捏合缩放（scale≠1）排除误判
+    if (vp && vp.scale === 1) {
+      kb = Math.max(kb, Math.max(0, innerH - Math.round(vp.height)));
+    }
+    return kb;
+  }
+
+  /** 读取 Obsidian 注入的 --keyboard-height（可能挂在 :root 或 body 上） */
+  private readCssKeyboardHeight(): number {
+    const doc = activeDocument;
+    for (const el of [doc.documentElement, doc.body]) {
+      if (!el) continue;
+      const v = parseFloat(getComputedStyle(el).getPropertyValue("--keyboard-height"));
+      if (!Number.isNaN(v) && v > 0) return Math.round(v);
+    }
+    return 0;
+  }
+
+  /** 系统底部安全区高度（键盘未弹出时避开手势条）；按视口尺寸缓存 */
+  private readSafeBottom(viewportKey: number): number {
+    const key = `${viewportKey}x${Math.round(activeWindow.innerWidth)}`;
+    if (this._safeBottomKey === key && this._safeBottom >= 0) return this._safeBottom;
+    let value = 0;
+    const doc = activeDocument;
+    const rootEl = doc.documentElement;
+    const v = rootEl ? parseFloat(getComputedStyle(rootEl).getPropertyValue("--safe-area-inset-bottom")) : NaN;
+    if (!Number.isNaN(v) && v > 0) {
+      value = Math.round(v);
+    } else if (doc.body) {
+      // env() 探针：部分安卓机型 var 未注入，用真实布局测
+      const probe = doc.createElement("div");
+      probe.style.cssText = "position:fixed;bottom:0;left:0;height:0;padding-bottom:env(safe-area-inset-bottom,0px);visibility:hidden;pointer-events:none;";
+      doc.body.appendChild(probe);
+      value = Math.round(probe.getBoundingClientRect().height);
+      probe.remove();
+    }
+    this._safeBottomKey = key;
+    this._safeBottom = value;
+    return value;
+  }
+
+  /** 视口几何指纹：导航栏重叠|容器底缘|视口高|视觉视口高|键盘变量（键盘弹起会改变后三者） */
+  private viewportFingerprint(): string {
+    const containerRect = this.containerEl.getBoundingClientRect();
+    const vp = activeWindow.visualViewport;
+    const vpH = vp ? Math.round(vp.height) : 0;
+    return `${this.measureBottomInset()}|${Math.round(containerRect.bottom)}|${Math.round(activeWindow.innerHeight)}|${vpH}|${this.readCssKeyboardHeight()}`;
+  }
+
+  /** 测量底部导航栏与视图底部的重叠量（导航栏隐藏/非悬浮/桌面端时为 0） */
+  private measureBottomInset(): number {
+    const navbar = activeDocument.querySelector(".mobile-navbar") as HTMLElement | null;
+    if (!navbar) return 0;
+    const navRect = navbar.getBoundingClientRect();
+    if (navRect.height <= 0) return 0;
+    const viewRect = this.containerEl.getBoundingClientRect();
+    return Math.max(0, Math.round(viewRect.bottom - navRect.top));
   }
 
   /** 销毁所有内嵌编辑器（buildUI 全量重建/视图关闭前调用） */
@@ -1143,6 +1264,8 @@ export class DaybookView extends ItemView {
 
     // 视图重建后恢复已展开的筛选面板
     if (this.filterOpen) this.openFilterPanel();
+    // 重建后立即让位底部导航栏（等不到下一次视口 resize）
+    this.applyViewportSize();
   }
 
   /** 顶栏（memos 式三区）：左=筛选、中=章节切换标题、右=操作；窄屏溢出折进「＋」菜单 */
@@ -1964,6 +2087,7 @@ export class DaybookView extends ItemView {
 
     // 移动端：底部悬浮胶囊栏（滚动容器末尾，sticky bottom 常驻可见）
     const bar = root.createDiv({ cls: "db-memo-bar" });
+    root.addClass("db-has-fixed-bar"); // 列表底部留白，避免最后一条被固定栏盖住
     const idle = bar.createDiv({ cls: "db-memo-bar-idle" });
     const plus = makeActivatable(idle.createDiv({
       cls: "db-memo-bar-btn",
