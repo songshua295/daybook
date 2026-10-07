@@ -14,16 +14,24 @@ export interface PlanOverviewTask {
   todo: TodoItem;
 }
 
-/** 从计划条目里收集未完成的任务（已放弃的任务不进总览） */
-export function collectPlanTasks(entries: JournalEntry[]): PlanOverviewTask[] {
+/**
+ * 从计划条目里收集任务：collectAllPlanTasks 收全部（含已完成），
+ * collectPlanTasks 只收未完成的（已放弃的任务两者都不收）。
+ */
+export function collectAllPlanTasks(entries: JournalEntry[]): PlanOverviewTask[] {
   const out: PlanOverviewTask[] = [];
   for (const e of entries) {
     if (e.renderType !== "plans" || e.abandoned) continue;
     for (const t of e.todos ?? []) {
-      if (!t.done) out.push({ entry: e, todo: t });
+      out.push({ entry: e, todo: t });
     }
   }
   return out;
+}
+
+/** 从计划条目里收集未完成的任务（总览分组默认口径） */
+export function collectPlanTasks(entries: JournalEntry[]): PlanOverviewTask[] {
+  return collectAllPlanTasks(entries).filter(t => !t.todo.done);
 }
 
 export type PlanGroupMode = "priority" | "date" | "tag";

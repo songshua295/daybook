@@ -5048,3 +5048,124 @@ body .db-journal-root .db-filter-q:focus {
     font-size: 12px;
   }
 }
+
+/* ══════════════════════════════════════════════════════
+   计划输入条：紧凑优先级按钮（与闪念工具条按钮同规格）
+   ══════════════════════════════════════════════════════ */
+.db-composer-bar .db-priority-btn.db-priority-btn-compact {
+  gap: 4px;
+  width: auto;
+  height: 34px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+}
+.db-composer-bar .db-priority-btn.db-priority-btn-compact:hover {
+  background: var(--background-modifier-hover);
+}
+.db-composer-bar .db-priority-btn.db-priority-btn-compact .db-priority-label {
+  font-size: 12px;
+}
+
+/* ══════════════════════════════════════════════════════
+   月历日期选择弹窗（计划输入条 / 任务编辑 / 任务菜单共用）
+   ══════════════════════════════════════════════════════ */
+.modal.db-date-select-modal {
+  width: 320px;
+}
+.db-date-select h3 {
+  margin: 0 0 10px;
+}
+.db-date-select-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.db-date-select-month {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-normal);
+}
+.db-date-select-nav {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.db-date-select-nav:hover { background: var(--background-modifier-hover); }
+.db-date-select-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.db-date-select-weekday {
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+.db-date-select-day {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text-normal);
+}
+.db-date-select-day:hover { background: var(--background-modifier-hover); }
+.db-date-select-day.today {
+  color: var(--interactive-accent);
+  font-weight: 700;
+}
+.db-date-select-day.selected {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-weight: 700;
+}
+.db-date-select-quick {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.db-date-select-quick button { flex: 1; }
+
+/* 计划输入条：截止日期按钮（带日期徽标时自动加宽） */
+.db-composer-bar .db-plans-due-btn {
+  width: auto;
+  padding: 0 10px;
+}
+.db-composer-bar .db-plans-due-btn.has-due {
+  color: var(--interactive-accent);
+}
+.db-plans-due-flag {
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* 任务编辑弹窗：截止日期行的日历按钮 */
+.db-plan-detail-cal {
+  width: 34px;
+  height: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.db-plan-detail-cal:hover { color: var(--interactive-accent); }
+.db-plan-detail-cal svg { width: 17px; height: 17px; }

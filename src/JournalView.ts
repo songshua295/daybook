@@ -2,6 +2,7 @@ import { ItemView, WorkspaceLeaf, Notice, moment, TFile, Modal, Menu, setIcon, d
 import type DaybookPlugin from "./main";
 import { appendToSection, resolveSectionPath } from "./fileManager";
 import { createPriorityBadge, effectivePriority, PRIORITY_META, readAllJournalEntries, type PriorityLevel } from "./fileReader";
+import { openDateSelect } from "./dateSelect";
 import { getVisibleSections, type SectionConfig, type MoodOption } from "./settings";
 import { ConfirmModal, TodayPanel } from "./TodayPanel";
 import { FilterPanel } from "./FilterPanel";
@@ -974,6 +975,8 @@ export class DaybookView extends ItemView {
   private isRecording = false;
   // 计划优先级
   private currentPriority: PriorityLevel | null = null;
+  /** 计划输入条当前选中的截止日期（日历图设置；优先于输入文本中的日期词） */
+  private currentDue: string | null = null;
   // 当前页面上的内嵌实时渲染编辑器（buildUI 重建/onClose 时统一销毁）
   private liveEditors = new Set<LiveEditor>();
   // 内容筛选：每个章节各自保留一份条件（视图会话内有效，不持久化）
@@ -2610,6 +2613,8 @@ export class DaybookView extends ItemView {
 
     // 提示区元素在编辑器后创建，onChange 触发时通过 ref 访问
     const hintRefs: { date: HTMLElement | null; tags: HTMLElement | null } = { date: null, tags: null };
+    // 截止日期提示：优先显示日历图选中的日期，其次识别输入文本中的日期词
+    let refreshDateHint: (value?: string) => void = () => {};
 
     // 单行增长型实时编辑器：Enter 添加、Shift+Enter 换行（高度由 CSS 自适应，最高 120px）
     const editor = this.makeEditor(addRow, {
@@ -2621,17 +2626,7 @@ export class DaybookView extends ItemView {
           ta.style.height = "auto";
           ta.style.height = Math.min(ta.scrollHeight, 120) + "px";
         }
-        const dateHint = hintRefs.date;
-        if (dateHint) {
-          const result = extractDateFromText(value);
-          if (result.date) {
-            dateHint.setText(`\u{1F4C5} \u5DF2\u8BC6\u522B\uFF1A${formatDueDate(result.date)}（${result.date}）`);
-            dateHint.addClass("visible");
-          } else {
-            dateHint.setText("");
-            dateHint.removeClass("visible");
-          }
-        }
+        refreshDateHint(value);
         if (hintRefs.tags) this.refreshTagPreview(value, hintRefs.tags);
       },
       onEnter: (_mod, shift) => {
@@ -2654,41 +2649,118 @@ export class DaybookView extends ItemView {
     // 自动识别日期的提示区
     const dateHint = wrap.createDiv({ cls: "db-date-hint" });
     hintRefs.date = dateHint;
+    // 截止日期提示：日历图选中的日期优先，其次识别输入文本中的日期词
+    refreshDateHint = (value?: string) => {
+      const recognized = extractDateFromText(value ?? editor.getValue()).date;
+      const due = this.currentDue ?? recognized;
+      if (due) {
+        dateHint.setText(`\u{1F4C5} \u622A\u6B62\uFF1A${formatDueDate(due)}（${due}）`);
+        dateHint.addClass("visible");
+      } else {
+        dateHint.setText("");
+        dateHint.removeClass("visible");
+      }
+    };
+    refreshDateHint(editor.getValue());
     // 标签识别预览
     const tagPreview = wrap.createDiv({ cls: "db-tag-preview db-tag-preview-plans" });
     hintRefs.tags = tagPreview;
     this.refreshTagPreview(editor.getValue(), tagPreview);
 
-    // 媒体支持（图片粘贴/选择；计划页不放录音工具栏）
-    this.setupMediaSupport(editor, wrap, section);
-    // textarea 降级模式：保留旧的双链/标签自动补全
-    if (!editor.isLive && editor.nativeInput) {
-      attachMemoEditor(this.app, this.plugin, editor.nativeInput, wrap, { toolbar: false });
-    }
+    // ── 单行工具条（与闪念输入卡同款）：左 = # 标签 / 图片 / 优先级，右 = 圆形纸飞机发送 ──
+    const composerBar = wrap.createDiv({ cls: "db-composer-bar" });
+    const barLeft = composerBar.createDiv({ cls: "db-composer-bar-left" });
+    const barRight = composerBar.createDiv({ cls: "db-composer-bar-right" });
 
-    // 优先级按钮行
-    const priorityRow = wrap.createDiv({ cls: "db-priority-row" });
-    const priorityBtn = makeActivatable(priorityRow.createDiv({
-      cls: `db-priority-btn ${this.currentPriority ? `priority-${this.currentPriority}` : ""}`,
-      attr: { "aria-label": "设置优先级" },
+    // # 标签
+    const hashBtn = makeActivatable(barLeft.createDiv({
+      cls: "db-memo-tb-btn db-memo-tb-icon",
+      attr: { role: "button", "aria-label": "插入标签", title: "插入标签" },
+    }), "插入标签");
+    setIcon(hashBtn, "hash");
+    hashBtn.addEventListener("click", () => {
+      editor.insertAtCursor("#");
+      editor.focus();
+    });
+
+    // 图片（计划页不放录音按钮）
+    const mediaSlot = barLeft.createDiv({ cls: "db-composer-media-slot" });
+    this.setupMediaSupport(editor, wrap, section, mediaSlot);
+    mediaSlot.querySelector(".db-memo-tb-audio")?.remove();
+
+    // 截止日期：日历图按钮 → 月历选择弹窗（移动端 / PC 同款）
+    const dueBtn = makeActivatable(barLeft.createDiv({
+      cls: `db-memo-tb-btn db-memo-tb-icon db-plans-due-btn${this.currentDue ? " has-due" : ""}`,
+      attr: { role: "button", "aria-label": "设置截止日期", title: "截止日期" },
+    }), "设置截止日期");
+    const renderDueBtn = () => {
+      dueBtn.empty();
+      setIcon(dueBtn, "calendar");
+      if (this.currentDue) {
+        dueBtn.createSpan({ cls: "db-plans-due-flag", text: formatDueDate(this.currentDue) });
+      }
+      dueBtn.setAttribute(
+        "aria-label",
+        this.currentDue ? `截止日期：${formatDueDate(this.currentDue)}（${this.currentDue}）` : "设置截止日期"
+      );
+    };
+    renderDueBtn();
+    dueBtn.addEventListener("click", () => {
+      openDateSelect(this.app, {
+        value: this.currentDue ?? undefined,
+        onPick: (d) => {
+          this.currentDue = d;
+          renderDueBtn();
+          refreshDateHint();
+        },
+      });
+    });
+
+    // 优先级：紧凑触发按钮（色块徽标 + 罗马数字）+ 四级弹出层
+    const priorityBtn = makeActivatable(barLeft.createDiv({
+      cls: `db-priority-btn db-priority-btn-compact ${this.currentPriority ? `priority-${this.currentPriority}` : ""}`,
+      attr: { "aria-label": "设置优先级", title: "优先级" },
     }));
-    createPriorityBadge(priorityBtn, this.currentPriority);
-    priorityBtn.createSpan({ cls: "db-priority-label", text: PRIORITY_META[effectivePriority(this.currentPriority)].label });
+    const renderPriorityBtn = () => {
+      priorityBtn.empty();
+      (["1", "2", "3", "4"] as PriorityLevel[]).forEach(lv => priorityBtn.removeClass(`priority-${lv}`));
+      if (this.currentPriority) priorityBtn.addClass(`priority-${this.currentPriority}`);
+      createPriorityBadge(priorityBtn, this.currentPriority);
+      priorityBtn.createSpan({ cls: "db-priority-label", text: PRIORITY_META[effectivePriority(this.currentPriority)].numeral });
+      priorityBtn.setAttribute("aria-label", `优先级：${PRIORITY_META[effectivePriority(this.currentPriority)].label}`);
+    };
+    renderPriorityBtn();
 
-    // 优先级弹出层（4 级：1重要且紧急 / 2重要不紧急默认 / 3不重要但紧急 / 4不重要不紧急）
     const priorityPopover = wrap.createDiv({ cls: "db-priority-popover" });
     priorityPopover.style.display = "none";
 
     const doc = activeDocument;
+    let popoverOpen = false;
+    const closePopover = () => {
+      popoverOpen = false;
+      priorityPopover.style.display = "none";
+      priorityBtn.removeClass("open");
+      doc.removeEventListener("click", docClickHandler);
+    };
+    const docClickHandler = () => {
+      if (popoverOpen) closePopover();
+    };
+
+    const syncPopoverActive = () => {
+      priorityPopover.querySelectorAll(".db-priority-option").forEach(o => o.removeClass("active"));
+    };
     (["1", "2", "3", "4"] as PriorityLevel[]).forEach(lv => {
       const opt = priorityPopover.createDiv({ cls: `db-priority-option level-${lv}` });
       createPriorityBadge(opt, lv);
       opt.createSpan({ text: `${lv} ${PRIORITY_META[lv].label}` });
       if (effectivePriority(this.currentPriority) === lv) opt.addClass("active");
       opt.addEventListener("click", () => {
-        doc.removeEventListener("click", docClickHandler);
+        closePopover();
         this.currentPriority = lv;
-        this.buildUI();
+        syncPopoverActive();
+        opt.addClass("active");
+        renderPriorityBtn();
+        editor.focus();
       });
     });
 
@@ -2696,16 +2768,15 @@ export class DaybookView extends ItemView {
     clearOpt.createSpan({ text: "\u{274C}" });
     clearOpt.createSpan({ text: "\u6062\u590D\u9ED8\u8BA4\uFF082 \u91CD\u8981\u4E0D\u7D27\u6025\uFF09" });
     if (!this.currentPriority) clearOpt.addClass("active");
+    clearOpt.addEventListener("click", () => {
+      closePopover();
+      this.currentPriority = null;
+      syncPopoverActive();
+      clearOpt.addClass("active");
+      renderPriorityBtn();
+      editor.focus();
+    });
 
-    let popoverOpen = false;
-    const docClickHandler = () => {
-      if (popoverOpen) {
-        popoverOpen = false;
-        priorityPopover.style.display = "none";
-        priorityBtn.removeClass("open");
-        doc.removeEventListener("click", docClickHandler);
-      }
-    };
     const togglePopover = () => {
       popoverOpen = !popoverOpen;
       priorityPopover.style.display = popoverOpen ? "block" : "none";
@@ -2722,20 +2793,12 @@ export class DaybookView extends ItemView {
     priorityBtn.addEventListener("click", (e) => { e.stopPropagation(); togglePopover(); });
     priorityPopover.addEventListener("click", (e) => { e.stopPropagation(); });
 
-    clearOpt.addEventListener("click", () => {
-      doc.removeEventListener("click", docClickHandler);
-      this.currentPriority = null;
-      this.buildUI();
-    });
-
-    // 保存按钮紧贴输入区，本次编辑的任务列表显示在其下方
-    // 「添加todo」按钮紧贴输入区：一次点击直接入库一条（替代旧的暂存＋保存两步）
-    const saveBtn = makeActivatable(container.createDiv({ cls: "db-save-btn db-save-btn-sticky" }), "添加todo");
-    saveBtn.createDiv({ cls: "db-btn-icon", text: section.emoji });
-    saveBtn.createDiv({ cls: "db-btn-text", text: "添加todo" });
-    editor.el.addEventListener("focusin", () => {
-      activeWindow.setTimeout(() => saveBtn.scrollIntoView({ block: "nearest", behavior: "smooth" }), 350);
-    });
+    // 发送按钮：绿色圆形纸飞机（与闪念发送一致），替代旧的整幅大按钮
+    const sendBtn = makeActivatable(barRight.createEl("button", {
+      cls: "db-composer-send",
+      attr: { type: "button", "aria-label": `添加${section.label}` },
+    }), `添加${section.label}`);
+    setIcon(sendBtn, "send");
 
     const addItem = async () => {
       const rawText = editor.getValue().trim();
@@ -2745,9 +2808,11 @@ export class DaybookView extends ItemView {
       let taskLine = `- [ ] ${text || rawText}`;
       const eff = effectivePriority(this.currentPriority);
       if (eff !== "2") taskLine += ` [priority::${eff}]`;
-      if (date) taskLine += ` [due::${date}]`;
+      // 截止日期：日历图选中的优先，其次输入文本中识别到的日期词
+      const due = this.currentDue ?? date;
+      if (due) taskLine += ` [due::${due}]`;
       taskLine += ` [createdAt::${moment().format("YYYY-MM-DD HH:mm")}]`;
-      saveBtn.addClass("loading");
+      sendBtn.addClass("loading");
       try {
         await appendToSection(this.app, this.plugin.settings, section.label, section.type, taskLine, section);
         new Notice("\u2726 \u5DF2\u6DFB\u52A0\u5F85\u529E");
@@ -2755,13 +2820,22 @@ export class DaybookView extends ItemView {
         dateHint.setText("");
         dateHint.removeClass("visible");
         this.currentPriority = null;
+        renderPriorityBtn();
+        this.currentDue = null;
+        renderDueBtn();
+        refreshDateHint("");
         void this.refreshToday();
         editor.focus();
       } catch { new Notice("\u6DFB\u52A0\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u65E5\u8BB0\u76EE\u5F55\u8BBE\u7F6E"); }
-      finally { saveBtn.removeClass("loading"); }
+      finally { sendBtn.removeClass("loading"); }
     };
 
-    saveBtn.addEventListener("click", () => { void addItem(); });
-    // Enter 添加 / Shift+Enter 换行已由编辑器 onEnter 统一处理
+    sendBtn.addEventListener("click", () => { void addItem(); });
+    // Enter 添加 / Shift+Enter 换行 / Ctrl+Enter 添加，均由编辑器 onEnter 统一处理
+
+    // textarea 降级模式：保留旧的双链/标签自动补全
+    if (!editor.isLive && editor.nativeInput) {
+      attachMemoEditor(this.app, this.plugin, editor.nativeInput, wrap, { toolbar: false });
+    }
   }
 }
