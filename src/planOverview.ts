@@ -17,15 +17,28 @@ export interface PlanOverviewTask {
 /**
  * 从计划条目里收集任务：collectAllPlanTasks 收全部（含已完成），
  * collectPlanTasks 只收未完成的（已放弃的任务两者都不收）。
+ * 只收顶级任务：子任务折叠在父任务下，由视图层点击父任务展开渲染，
+ * 否则分组排序会把父子拆散到不同组（各自的截止日/优先级不同）。
  */
 export function collectAllPlanTasks(entries: JournalEntry[]): PlanOverviewTask[] {
   const out: PlanOverviewTask[] = [];
   for (const e of entries) {
     if (e.renderType !== "plans" || e.abandoned) continue;
     for (const t of e.todos ?? []) {
+      if (t.indent) continue;
       out.push({ entry: e, todo: t });
     }
   }
+  return out;
+}
+
+/** 某父任务的子任务区间：todos 数组里紧跟其后、indent 为真的若干条 */
+export function childTodosOfParent(entry: JournalEntry, parent: TodoItem): TodoItem[] {
+  const todos = entry.todos ?? [];
+  const i = todos.indexOf(parent);
+  if (i === -1) return [];
+  const out: TodoItem[] = [];
+  for (let j = i + 1; j < todos.length && todos[j].indent; j++) out.push(todos[j]);
   return out;
 }
 

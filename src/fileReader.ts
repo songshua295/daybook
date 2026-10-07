@@ -337,7 +337,7 @@ async function parseJournalFile(
 /**
  * 解析计划章节 —— 任务中心模型（v4 重构）
  *
- * 每条顶格任务行（`- [ ] 文本`）就是一个独立的计划条目，子任务（缩进比上一任务更深）
+ * 每条顶格任务行（`- [ ] 文本`）就是一个独立的计划条目，子任务（缩进比父任务更深，可多条）
  * 挂在其父任务下；不再依赖 `- HH:mm 标题` 分块。
  *
  * 兼容读取旧格式：
@@ -359,8 +359,8 @@ export function parsePlanSection(
   let currentTime: string | undefined;   // 继承自旧格式时间标题（新格式任务无时间）
   let blockEntries: JournalEntry[] = []; // 自上一个时间标题以来的任务条目（旧块字段行的作用域）
   let lastLineIndex = -1;
-  let prevWs = -1;                       // 上一任务行的缩进空格数（更深 = 子任务）
   let lastFlushedEntry: JournalEntry | null = null;
+  let groupWs = -1;                      // 当前组父任务的缩进空格数（更深 = 其子任务）
 
   const flush = () => {
     if (currentTodos.length === 0) return;
@@ -425,7 +425,7 @@ export function parsePlanSection(
       flush();
       blockEntries = [];
       currentTime = (planHeaderMatch ?? bulletHeaderMatch)![1];
-      prevWs = -1;
+      groupWs = -1;
       return;
     }
 
@@ -489,12 +489,14 @@ export function parsePlanSection(
         todoText = todoText.replace(noteMatch[0], "");
       }
 
-      // 层级判定：缩进比上一任务行更深 = 子任务（同时兼容旧格式 4/8 空格与新格式 0/4 空格）
+      // 层级判定：缩进比本组父任务更深 = 子任务（同级缩进的多条子任务都挂在同一父任务下）
       const leadingWs = text.match(/^[ \t]*/)?.[0] ?? "";
       const ws = leadingWs.replace(/\t/g, "    ").length;
-      const isChild = currentTodos.length > 0 && ws > prevWs;
-      if (!isChild) flush(); // 顶级任务：上一个任务条目到此结束
-      prevWs = ws;
+      const isChild = currentTodos.length > 0 && ws > groupWs;
+      if (!isChild) {
+        flush();          // 顶级任务：上一个任务条目到此结束
+        groupWs = ws;
+      }
       currentTodos.push({
         text: todoText.trim(),
         done,

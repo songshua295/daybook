@@ -47,7 +47,7 @@ import {
 import { getAllSections, type SectionConfig } from "./settings";
 import { isFilterActive, matchEntry, type SectionFilter } from "./filters";
 import { openDateSelect } from "./dateSelect";
-import { collectPlanTasks, collectAllPlanTasks, groupPlanTasks, type PlanGroupMode, type PlanTaskGroup } from "./planOverview";
+import { collectPlanTasks, collectAllPlanTasks, groupPlanTasks, childTodosOfParent, type PlanGroupMode, type PlanTaskGroup } from "./planOverview";
 
 /** 删除等危险操作确认弹窗 */
 export class ConfirmModal extends Modal {
@@ -302,6 +302,8 @@ export class TodayPanel {
   private headEl: HTMLElement | null;
   private liveEditors = new Set<LiveEditor>();
   private busy = false;
+  /** 已展开子任务的父任务（本次会话内的视图状态，键 = 文件路径:父任务行号，不落盘） */
+  private expandedTasks = new Set<string>();
   /** 当前筛选条件（由视图注入；生效时结果跨日期） */
   filter: SectionFilter | null = null;
   /** 结果条数回调（供筛选面板显示） */
@@ -654,17 +656,86 @@ export class TodayPanel {
     }
   }
 
+  /** 父任务展开状态（键 = 文件路径:任务行号） */
+  private taskKey(entry: JournalEntry, todo: TodoItem): string {
+    return `${entry.filePath}:${todo.lineIndex}`;
+  }
+
+  private isTaskExpanded(entry: JournalEntry, todo: TodoItem): boolean {
+    return this.expandedTasks.has(this.taskKey(entry, todo));
+  }
+
+  private toggleTaskExpanded(entry: JournalEntry, todo: TodoItem): void {
+    const k = this.taskKey(entry, todo);
+    if (this.expandedTasks.has(k)) this.expandedTasks.delete(k);
+    else this.expandedTasks.add(k);
+  }
+
+  /**
+   * 任务勾选控件（平铺 / 分组 / 筛选卡片三处共用）：
+   * - 无子任务：圆形勾选框，点击 = 完成 / 取消完成
+   * - 有子任务且未完成：方形「子任务」图标，点击 = 展开 / 收起子任务
+   *   （父任务的完成状态由子任务级联得出，不在这里直接勾选）
+   * - 有子任务且已完成：与普通完成态一致（✓），点击仍可展开查看
+   */
+  private makeTaskCheckbox(
+    host: HTMLElement,
+    entry: JournalEntry,
+    todo: TodoItem,
+    kids: TodoItem[],
+    onClick: () => void
+  ): HTMLElement {
+    const hasKids = kids.length > 0;
+    const expanded = hasKids && this.isTaskExpanded(entry, todo);
+    const box = host.createDiv({
+      cls: `db-entry-checkbox${todo.done ? " checked" : ""}${hasKids ? " has-kids" : ""}${expanded ? " is-expanded" : ""}`,
+      attr: { tabindex: "0" },
+    });
+    if (hasKids) {
+      const tip = `${expanded ? "收起" : "展开"}子任务（${kids.length}）`;
+      box.setAttribute("role", "button");
+      box.setAttribute("aria-expanded", String(expanded));
+      box.setAttribute("aria-label", `${tip}：${todo.text}`);
+      box.setAttribute("title", tip);
+      if (!todo.done) setIcon(box, "list");
+    } else {
+      box.setAttribute("role", "checkbox");
+      box.setAttribute("aria-checked", String(todo.done));
+      box.setAttribute("aria-label", todo.done ? `取消完成：${todo.text}` : `完成：${todo.text}`);
+    }
+    box.addEventListener("click", (e) => { e.stopPropagation(); void onClick(); });
+    makeActivatable(box);   // Enter/Space → click（沿用已设好的 role / aria）
+    return box;
+  }
+
   /** 分组卡片内的任务行：样式与计划卡片中的任务一致（勾选级联写回原文件） */
   private renderGroupTodoRow(
     list: HTMLElement,
     entry: JournalEntry,
     todo: TodoItem,
-    sectionId: string
+    sectionId: string,
+    depth = 0
   ) {
-    const item = list.createDiv({ cls: "db-plan-group-row" });
-    const checkbox = item.createDiv({
-      cls: `db-entry-checkbox ${todo.done ? "checked" : ""}`,
-      attr: { role: "checkbox", "aria-checked": String(todo.done), "aria-label": todo.done ? `取消完成：${todo.text}` : `完成：${todo.text}` },
+    const kids = depth === 0 ? childTodosOfParent(entry, todo) : [];
+    const expanded = kids.length > 0 && this.isTaskExpanded(entry, todo);
+    const item = list.createDiv({ cls: `db-plan-group-row${depth ? " sub" : ""}` });
+    const toggleDone = async () => {
+      try {
+        const stamp = moment().format("YYYY-MM-DD HH:mm");
+        const newDone = !todo.done;
+        const updates = buildTodoCascade(entry.todos ?? [todo], todo, newDone, stamp);
+        await setTodoStatesInFile(this.plugin.app, entry.filePath, updates, this.plugin.settings);
+        if (newDone) this.plugin.feedback.notify();
+        void this.refresh(sectionId);
+      } catch (e) {
+        new Notice("更新失败，请检查日记文件");
+      }
+    };
+    this.makeTaskCheckbox(item, entry, todo, kids, () => {
+      if (kids.length > 0) {
+        this.toggleTaskExpanded(entry, todo);
+        void this.refresh(sectionId);   // 展开态是视图状态，重绘列表即可
+      } else void toggleDone();
     });
     const textEl = item.createDiv({ cls: `db-entry-todo-text ${todo.done ? "done" : ""}` });
     if (shouldShowPriorityBadge(todo.priority, this.plugin.settings)) {
@@ -686,23 +757,29 @@ export class TodayPanel {
       });
     }
 
-    const toggle = async () => {
-      try {
-        const stamp = moment().format("YYYY-MM-DD HH:mm");
-        const newDone = !todo.done;
-        const updates = buildTodoCascade(entry.todos ?? [todo], todo, newDone, stamp);
-        await setTodoStatesInFile(this.plugin.app, entry.filePath, updates, this.plugin.settings);
-        if (newDone) this.plugin.feedback.notify();
-        void this.refresh(sectionId);
-      } catch (e) {
-        new Notice("更新失败，请检查日记文件");
+    // 有子任务且已完成一部分 → 行最右侧显示 x/y（父任务全部完成时已是 ✓ 完成态，不再重复显示）
+    if (kids.length > 0 && !todo.done) {
+      const kidDone = kids.filter(k => k.done).length;
+      if (kidDone > 0) {
+        item.createDiv({
+          cls: "db-plan-group-progress",
+          text: `${kidDone}/${kids.length}`,
+          attr: { "aria-label": `子任务已完成 ${kidDone}/${kids.length}` },
+        });
       }
-    };
-    checkbox.addEventListener("click", () => void toggle());
+    }
+
     textEl.addEventListener("click", () => {
-      if (todo.indent) void toggle();
+      if (depth > 0) void toggleDone();
       else this.openTaskEdit(entry);
     });
+
+    // 手机端：长按任务行 = 与卡片视图同一套操作菜单（延后 / 放弃 / 截止日期 / 归档 / 删除…）
+    // 分组视图此前没有任何操作入口，手机上够不到这些功能
+    if (depth === 0) this.bindLongPressMenu(item, entry);
+
+    // 展开态：子任务紧跟父任务行渲染（只是视图状态，不改文件）
+    if (expanded) kids.forEach(k => this.renderGroupTodoRow(list, entry, k, sectionId, 1));
   }
 
   /** 单条记录块 */
@@ -1240,7 +1317,7 @@ export class TodayPanel {
     let dragFrom: number | null = null;
     let { done: doneCount, total } = planTodoProgress(todos);
 
-    const refs = new Map<number, { todo: TodoItem; checkbox: HTMLElement; textEl: HTMLElement; itemEl: HTMLElement }>();
+    const refs = new Map<number, { todo: TodoItem; kids: TodoItem[]; checkbox: HTMLElement; textEl: HTMLElement; itemEl: HTMLElement }>();
 
     let progressText: HTMLElement | null = null;
     let progressFill: HTMLElement | null = null;
@@ -1259,17 +1336,29 @@ export class TodayPanel {
       ref.checkbox.toggleClass("checked", todo.done);
       ref.textEl.toggleClass("done", todo.done);
       ref.itemEl.toggleClass("done", todo.done);
+      if (ref.kids.length > 0) {
+        // 父任务：未完成显示「子任务」图标，完成后与普通完成态一致（✓）
+        ref.checkbox.empty();
+        if (!todo.done) setIcon(ref.checkbox, "list");
+      }
       appendTodoCompletionInfo(ref.textEl, todo, this.plugin.settings, true);
     };
 
     const todoList = card.createDiv({ cls: "db-entry-todo-list" });
 
     const renderItem = (todo: TodoItem, isSub: boolean) => {
+      const kids = isSub ? [] : childTodosOfParent(entry, todo);
+      const expanded = kids.length > 0 && this.isTaskExpanded(entry, todo);
       const item = todoList.createDiv({ cls: `db-entry-todo-item ${todo.done ? "done" : ""} ${isSub ? "sub" : ""}` });
 
-      const checkbox = item.createDiv({
-        cls: `db-entry-checkbox ${todo.done ? "checked" : ""}`,
-        attr: { role: "checkbox", tabindex: "0", "aria-checked": String(todo.done), "aria-label": todo.done ? "取消完成" : "标记完成" },
+      // 勾选框：无子任务 = 完成/取消；有子任务 = 展开/收起子任务（完成状态由级联得出）
+      const checkbox = this.makeTaskCheckbox(item, entry, todo, kids, () => {
+        if (kids.length > 0) {
+          this.toggleTaskExpanded(entry, todo);
+          renderList();
+          return;
+        }
+        void toggle();
       });
 
       const textEl = item.createDiv({ cls: `db-entry-todo-text ${todo.done ? "done" : ""}` });
@@ -1294,7 +1383,7 @@ export class TodayPanel {
         });
       }
 
-      refs.set(todo.lineIndex, { todo, checkbox, textEl, itemEl: item });
+      refs.set(todo.lineIndex, { todo, kids, checkbox, textEl, itemEl: item });
 
       // 拖拽调整任务顺序/层级
       item.draggable = true;
@@ -1368,10 +1457,6 @@ export class TodayPanel {
         }
       };
 
-      checkbox.addEventListener("click", toggle);
-      checkbox.addEventListener("keydown", (e) => {
-        if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); void toggle(); }
-      });
       // 点击文字：顶级任务 → 任务编辑（标题/优先级/截止日/备注/子任务）；子任务 → 直接勾选
       if (isSub) {
         textEl.addEventListener("click", () => { void toggle(); });
@@ -1385,9 +1470,19 @@ export class TodayPanel {
           if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); this.openTaskEdit(entry); }
         });
       }
+
+      // 展开态：子任务紧跟父任务行渲染
+      if (expanded) kids.forEach(k => renderItem(k, true));
     };
 
-    todos.forEach(t => renderItem(t, !!t.indent));
+    /** 重绘任务列表（展开/收起子任务时调用；进度条在 card 上，不受影响） */
+    const renderList = () => {
+      todoList.empty();
+      refs.clear();
+      todos.forEach(t => { if (!t.indent) renderItem(t, false); });
+    };
+
+    renderList();
 
     // 单条无子任务的任务卡片不需要 1/1 进度条
     if (total > 1) {
