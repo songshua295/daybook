@@ -765,6 +765,35 @@ body,
   font-weight: 600;
   color: var(--text-normal);
 }
+.db-plan-detail-title {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 14px;
+  font-weight: 600;
+}
+.db-plan-detail-props {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+/* 已放弃的任务：灰色淡化 + 斜体（区别于完成态的删除线） */
+.db-entry.abandoned .db-entry-todo-text > span {
+  font-style: italic;
+}
+.db-entry.abandoned .db-entry-todo-item,
+.db-entry.abandoned .db-entry-tags {
+  opacity: 0.5;
+}
+.db-entry.abandoned .db-entry-checkbox {
+  opacity: 0.5;
+}
 .db-plan-detail-due {
   font-size: 12px;
   font-weight: 500;
@@ -4997,4 +5026,25 @@ body .db-journal-root .db-filter-q:focus {
   font-weight: 700;
   color: var(--color-red, #e93147);
   font-variant-numeric: tabular-nums;
+}
+
+/* ══════════════════════════════════════════════════════
+   手机端：计划分组切换独占一行
+   （标题行放不下四个分段按钮，窄屏换行铺满，保证移动端可切换分组）
+   ══════════════════════════════════════════════════════ */
+@media (max-width: 600px) {
+  .db-today-head {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .db-today-head .db-plan-seg {
+    margin-left: 0;
+    width: 100%;
+  }
+  .db-today-head .db-plan-seg-btn {
+    flex: 1;
+    text-align: center;
+    padding: 6px 0;
+    font-size: 12px;
+  }
 }

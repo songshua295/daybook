@@ -14,11 +14,11 @@ export interface PlanOverviewTask {
   todo: TodoItem;
 }
 
-/** 从计划条目里收集未完成的任务 */
+/** 从计划条目里收集未完成的任务（已放弃的任务不进总览） */
 export function collectPlanTasks(entries: JournalEntry[]): PlanOverviewTask[] {
   const out: PlanOverviewTask[] = [];
   for (const e of entries) {
-    if (e.renderType !== "plans") continue;
+    if (e.renderType !== "plans" || e.abandoned) continue;
     for (const t of e.todos ?? []) {
       if (!t.done) out.push({ entry: e, todo: t });
     }
@@ -26,7 +26,7 @@ export function collectPlanTasks(entries: JournalEntry[]): PlanOverviewTask[] {
   return out;
 }
 
-export type PlanGroupMode = "priority" | "date";
+export type PlanGroupMode = "priority" | "date" | "tag";
 
 export interface PlanTaskGroup {
   key: string;
@@ -54,6 +54,7 @@ function byDue(a: PlanOverviewTask, b: PlanOverviewTask): number {
  * 分组：
  * - priority：I 重要且紧急 → IV 不重要不紧急
  * - date：逾期 → 今天 → 明天 → 7 天内 → 以后 → 无截止日
+ * - tag：按任务的第一个有效标签（排除 #pinned/#abandoned），无标签归入"未分类"
  */
 export function groupPlanTasks(
   tasks: PlanOverviewTask[],
@@ -72,6 +73,30 @@ export function groupPlanTasks(
       label,
       tasks: tasks.filter(t => (t.todo.priority ?? "2") === key).sort(byDue),
     }));
+  }
+
+  if (mode === "tag") {
+    // 第一个非状态标签作为分组键，按标签名排序，"未分类"固定垫底
+    const buckets = new Map<string, PlanOverviewTask[]>();
+    for (const t of tasks) {
+      const tag = (t.entry.tags ?? []).filter(x => x !== "pinned" && x !== "abandoned")[0];
+      const key = tag ?? "__none__";
+      const list = buckets.get(key) ?? [];
+      list.push(t);
+      buckets.set(key, list);
+    }
+    const groups: PlanTaskGroup[] = [];
+    for (const [key, list] of buckets) {
+      if (key !== "__none__") {
+        groups.push({ key, label: `#${key}`, tasks: list.sort(byDue) });
+      }
+    }
+    groups.sort((a, b) => a.key.localeCompare(b.key, "zh"));
+    const none = buckets.get("__none__");
+    if (none && none.length > 0) {
+      groups.push({ key: "__none__", label: "未分类", tasks: none.sort(byDue) });
+    }
+    return groups;
   }
 
   const buckets: Record<string, PlanOverviewTask[]> = {

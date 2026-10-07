@@ -39,7 +39,6 @@ import {
   shouldShowPriorityBadge,
   planTodoProgress,
   PRIORITY_META,
-  PRIORITY_EMOJI,
   type PriorityLevel,
   type JournalEntry,
   type TodoItem,
@@ -80,229 +79,62 @@ export class ConfirmModal extends Modal {
   }
 }
 
-/** 计划编辑弹窗中的一行任务 */
-interface PlanTodoRow {
-  text: string;
-  done: boolean;
-  priority?: PriorityLevel;
-  dueDate?: string;
-  createdAt?: string;
-  completedAt?: string;
-  indent?: number;
-  note?: string;
-}
-
-/** 计划块编辑弹窗：逐条编辑任务文字/完成/优先级/截止日期，支持增删任务 */
-class PlanEditModal extends Modal {
-  private entry: JournalEntry;
-  private onSave: (title: string, rows: PlanTodoRow[]) => void;
-  private rows: PlanTodoRow[] = [];
+/** 任务编辑弹窗（替代旧"计划块编辑"+"计划详情"两个弹窗）：标题/优先级/截止日/备注/子任务一体编辑，保存才整条回写 */
+class TaskEditModal extends Modal {
+  private todos: TodoItem[];
 
   constructor(
     app: App,
     private plugin: DaybookPlugin,
     entry: JournalEntry,
-    onSave: (title: string, rows: PlanTodoRow[]) => void
-  ) {
-    super(app);
-    this.entry = entry;
-    this.onSave = onSave;
-    this.rows = (entry.todos ?? []).map(t => ({
-      text: t.text,
-      done: t.done,
-      priority: t.priority,
-      dueDate: t.dueDate,
-      createdAt: t.createdAt,
-      completedAt: t.completedAt,
-      indent: t.indent,
-      note: t.note,
-    }));
-  }
-
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.addClass("db-plan-edit-modal");
-    contentEl.createEl("h3", { text: "编辑计划" });
-
-    // 标题行：时间 + 标题输入
-    const headerRow = contentEl.createDiv({ cls: "db-plan-edit-header" });
-    headerRow.createSpan({ cls: "db-plan-edit-time", text: this.entry.time ?? "🕐" });
-    const titleInput = headerRow.createEl("input", {
-      cls: "db-plan-edit-title",
-      attr: { type: "text", placeholder: "计划标题", "aria-label": "计划标题" },
-    });
-    // entry.text 含时间前缀（"HH:mm 标题"），剥离后才是纯标题
-    titleInput.value = this.entry.time ? this.entry.text.replace(/^\d{2}:\d{2}(?::\d{2})?\s*/, "") : "";
-
-    const listEl = contentEl.createDiv({ cls: "db-plan-edit-list" });
-
-    const renderList = () => {
-      listEl.empty();
-      this.rows.forEach(r => renderRow(r));
-    };
-
-    const renderRow = (row: PlanTodoRow) => {
-      const itemEl = listEl.createDiv({ cls: "db-plan-edit-row" });
-
-      const cb = itemEl.createEl("input", {
-        cls: "db-plan-edit-done",
-        attr: { type: "checkbox", "aria-label": "已完成" },
-      });
-      cb.checked = row.done;
-      cb.addEventListener("change", () => {
-        row.done = cb.checked;
-        row.completedAt = row.done ? moment().format("YYYY-MM-DD HH:mm") : undefined;
-      });
-
-      const textInput = itemEl.createEl("input", {
-        cls: "db-plan-edit-text",
-        attr: { type: "text", placeholder: "任务内容", "aria-label": "任务内容" },
-      });
-      textInput.value = row.text;
-      textInput.addEventListener("input", () => { row.text = textInput.value; });
-
-      const prioritySelect = itemEl.createEl("select", {
-        cls: "db-plan-edit-priority",
-        attr: { "aria-label": "优先级" },
-      });
-      (["1", "2", "3", "4"] as PriorityLevel[]).forEach(lv => {
-        const meta = PRIORITY_META[lv];
-        const opt = prioritySelect.createEl("option", { value: lv, text: `${meta.numeral} ${meta.label}` });
-        if (effectivePriority(row.priority) === lv) opt.setAttribute("selected", "selected");
-      });
-      prioritySelect.addEventListener("change", () => {
-        const v = prioritySelect.value as PriorityLevel;
-        row.priority = v === "2" ? undefined : v;
-      });
-
-      const indentBtn = itemEl.createDiv({
-        cls: `db-plan-edit-indent ${row.indent ? "active" : ""}`,
-        text: "↳",
-        attr: { role: "button", "aria-label": "切换为子任务/顶级任务" },
-      });
-      indentBtn.addEventListener("click", () => {
-        row.indent = row.indent ? undefined : 1;
-        indentBtn.toggleClass("active", !!row.indent);
-        itemEl.toggleClass("sub", !!row.indent);
-      });
-      if (row.indent) itemEl.addClass("sub");
-
-      const dueInput = itemEl.createEl("input", {
-        cls: "db-plan-edit-due",
-        attr: { type: "text", placeholder: "YYYY-MM-DD", "aria-label": "截止日期" },
-      });
-      dueInput.value = row.dueDate ?? "";
-      dueInput.addEventListener("input", () => {
-        const v = dueInput.value.trim();
-        row.dueDate = v && moment(v, "YYYY-MM-DD", true).isValid() ? v : undefined;
-      });
-
-      // 上移 / 下移（触屏设备无法使用拖拽，用按钮排序）
-      const moveUp = itemEl.createDiv({
-        cls: "db-plan-edit-move",
-        text: "↑",
-        attr: { role: "button", "aria-label": "上移任务", tabindex: "0" },
-      });
-      moveUp.addEventListener("click", () => {
-        const i = this.rows.indexOf(row);
-        if (i <= 0) return;
-        [this.rows[i - 1], this.rows[i]] = [this.rows[i], this.rows[i - 1]];
-        renderList();
-      });
-      const moveDown = itemEl.createDiv({
-        cls: "db-plan-edit-move",
-        text: "↓",
-        attr: { role: "button", "aria-label": "下移任务", tabindex: "0" },
-      });
-      moveDown.addEventListener("click", () => {
-        const i = this.rows.indexOf(row);
-        if (i < 0 || i >= this.rows.length - 1) return;
-        [this.rows[i + 1], this.rows[i]] = [this.rows[i], this.rows[i + 1]];
-        renderList();
-      });
-
-      const del = itemEl.createDiv({
-        cls: "db-plan-edit-del",
-        text: "×",
-        attr: { role: "button", "aria-label": "删除任务" },
-      });
-      del.addEventListener("click", () => {
-        this.rows = this.rows.filter(r => r !== row);
-        itemEl.remove();
-      });
-    };
-
-    renderList();
-
-    const addBtn = contentEl.createEl("button", {
-      cls: "db-plan-edit-add",
-      text: "+ 添加任务",
-      attr: { "aria-label": "添加任务" },
-    });
-    addBtn.addEventListener("click", () => {
-      const row: PlanTodoRow = { text: "", done: false, priority: undefined, dueDate: undefined };
-      this.rows.push(row);
-      renderRow(row);
-      listEl.lastElementChild?.querySelector("input")?.focus();
-    });
-
-    const btnRow = contentEl.createDiv({ cls: "db-mood-modal-btns" });
-    const cancelBtn = btnRow.createEl("button", { text: "取消" });
-    cancelBtn.addEventListener("click", () => this.close());
-    const saveBtn = btnRow.createEl("button", { text: "保存", cls: "mod-cta" });
-    saveBtn.addEventListener("click", () => {
-      this.onSave(this.entry.time ? titleInput.value.trim() : "", this.rows);
-      this.close();
-    });
-
-    activeWindow.setTimeout(() => titleInput.focus(), 50);
-  }
-
-  onClose(): void {
-    this.contentEl.empty();
-  }
-}
-
-/** 计划详情弹窗：点击顶级任务进入 — 写备注、添加/勾选/删除子计划；保存才整块回写 */
-class PlanDetailModal extends Modal {
-  private todos: TodoItem[];
-  private parentIdx: number;
-
-  constructor(
-    app: App,
-    private plugin: DaybookPlugin,
-    private entry: JournalEntry,
-    parent: TodoItem,
     private persist: (todos: TodoItem[]) => Promise<void>
   ) {
     super(app);
     // 浅拷贝：取消即丢弃全部改动，只有「保存」才落盘
     this.todos = (entry.todos ?? []).map(t => ({ ...t }));
-    this.parentIdx = Math.max(0, this.todos.findIndex(t => t.lineIndex === parent.lineIndex));
   }
 
   onOpen(): void {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("db-plan-detail-modal");
-    contentEl.createEl("h3", { text: "计划详情" });
+    contentEl.createEl("h3", { text: "编辑任务" });
 
-    const parent = this.todos[this.parentIdx];
+    const parent = this.todos[0];
 
-    // 任务本体（只读；修改文字仍走「编辑计划」弹窗）
-    const head = contentEl.createDiv({ cls: "db-plan-detail-task" });
-    if (shouldShowPriorityBadge(parent.priority, this.plugin.settings)) {
-      createPriorityBadge(head, parent.priority);
-    }
-    head.createSpan({ cls: "db-plan-detail-task-text", text: parent.text });
-    if (parent.dueDate) {
-      const overdue = isTodoOverdue(parent.dueDate);
-      head.createSpan({
-        cls: `db-plan-detail-due ${overdue ? "overdue" : ""}`,
-        text: overdue ? "⚠️过期" : `📅 ${formatTodoDue(parent.dueDate)}`,
-      });
-    }
+    // 任务标题（原生标签 #工作 等随文本一起编辑）
+    contentEl.createDiv({ cls: "db-plan-detail-label", text: "任务" });
+    const titleInput = contentEl.createEl("input", {
+      cls: "db-plan-detail-title",
+      attr: { type: "text", placeholder: "任务内容", "aria-label": "任务内容" },
+    });
+    titleInput.value = parent.text;
+
+    // 属性行：优先级 + 截止日期
+    const propRow = contentEl.createDiv({ cls: "db-plan-detail-props" });
+    const prioritySelect = propRow.createEl("select", {
+      cls: "db-plan-edit-priority",
+      attr: { "aria-label": "优先级" },
+    });
+    (["1", "2", "3", "4"] as PriorityLevel[]).forEach(lv => {
+      const meta = PRIORITY_META[lv];
+      const opt = prioritySelect.createEl("option", { value: lv, text: `${meta.numeral} ${meta.label}` });
+      if (effectivePriority(parent.priority) === lv) opt.setAttribute("selected", "selected");
+    });
+    const dueInput = propRow.createEl("input", {
+      cls: "db-plan-edit-due",
+      attr: { type: "text", placeholder: "截止 YYYY-MM-DD", "aria-label": "截止日期" },
+    });
+    dueInput.value = parent.dueDate ?? "";
+    const dueHint = propRow.createSpan({ cls: "db-plan-detail-due" });
+    const refreshDueHint = () => {
+      const v = dueInput.value.trim();
+      const valid = !!v && moment(v, "YYYY-MM-DD", true).isValid();
+      dueHint.setText(valid ? (isTodoOverdue(v) ? "⚠️过期" : `📅 ${formatTodoDue(v)}`) : "");
+      dueHint.toggleClass("overdue", valid && isTodoOverdue(v));
+    };
+    refreshDueHint();
+    dueInput.addEventListener("input", refreshDueHint);
 
     // 备注
     contentEl.createDiv({ cls: "db-plan-detail-label", text: "备注" });
@@ -312,13 +144,13 @@ class PlanDetailModal extends Modal {
     });
     noteInput.value = parent.note ?? "";
 
-    // 子计划
-    contentEl.createDiv({ cls: "db-plan-detail-label", text: "子计划" });
+    // 子任务
+    contentEl.createDiv({ cls: "db-plan-detail-label", text: "子任务" });
     const subList = contentEl.createDiv({ cls: "db-plan-detail-subs" });
 
     /** 顶级任务的连续子任务区间 [start, end) */
     const childRange = () => {
-      const start = this.parentIdx + 1;
+      const start = 1;
       let end = start;
       while (end < this.todos.length && this.todos[end].indent) end++;
       return { start, end };
@@ -328,7 +160,7 @@ class PlanDetailModal extends Modal {
       subList.empty();
       const { start, end } = childRange();
       if (start === end) {
-        subList.createDiv({ cls: "db-plan-detail-subs-empty", text: "还没有子计划，在下方输入添加～" });
+        subList.createDiv({ cls: "db-plan-detail-subs-empty", text: "还没有子任务，在下方输入添加～" });
         return;
       }
       for (let i = start; i < end; i++) {
@@ -344,7 +176,7 @@ class PlanDetailModal extends Modal {
           const stamp = moment().format("YYYY-MM-DD HH:mm");
           sub.done = done;
           sub.completedAt = done ? stamp : undefined;
-          // 子计划全部完成 → 顶级任务自动完成；有未完成 → 顶级恢复未完成
+          // 子任务全部完成 → 顶级任务自动完成；有未完成 → 顶级恢复未完成
           const rng = childRange();
           const kids = this.todos.slice(rng.start, rng.end);
           if (kids.length > 0) {
@@ -359,17 +191,17 @@ class PlanDetailModal extends Modal {
           if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); toggleSub(); }
         });
         row.createSpan({ cls: "db-plan-detail-sub-text", text: sub.text });
-        const del = row.createDiv({ cls: "db-plan-detail-sub-del", text: "×", attr: { role: "button", tabindex: "0", "aria-label": "删除子计划" } });
+        const del = row.createDiv({ cls: "db-plan-detail-sub-del", text: "×", attr: { role: "button", tabindex: "0", "aria-label": "删除子任务" } });
         del.addEventListener("click", () => { this.todos.splice(i, 1); renderSubs(); });
       }
     };
     renderSubs();
 
-    // 添加子计划
+    // 添加子任务
     const addRow = contentEl.createDiv({ cls: "db-plan-detail-add-row" });
     const addInput = addRow.createEl("input", {
       cls: "db-plan-detail-add-input",
-      attr: { type: "text", placeholder: "输入子计划，回车添加", "aria-label": "添加子计划" },
+      attr: { type: "text", placeholder: "输入子任务，回车添加", "aria-label": "添加子任务" },
     });
     const addBtn = addRow.createEl("button", { text: "添加", cls: "db-plan-detail-add-btn" });
     const addSub = () => {
@@ -397,11 +229,19 @@ class PlanDetailModal extends Modal {
     cancel.addEventListener("click", () => this.close());
     const save = btns.createEl("button", { text: "保存", cls: "mod-cta" });
     save.addEventListener("click", () => {
-      const note = noteInput.value.replace(/[\r\n\]]+/g, " ").trim();
-      parent.note = note || undefined;
+      const title = titleInput.value.trim();
+      if (!title) { new Notice("任务内容不能为空～"); return; }
+      const due = dueInput.value.trim();
+      parent.text = title;
+      const prio = prioritySelect.value as PriorityLevel;
+      parent.priority = prio === "2" ? undefined : prio;
+      parent.dueDate = due && moment(due, "YYYY-MM-DD", true).isValid() ? due : undefined;
+      parent.note = noteInput.value.replace(/[\r\n\]]+/g, " ").trim() || undefined;
       save.disabled = true;
       this.persist(this.todos).then(() => this.close()).catch(() => { save.disabled = false; });
     });
+
+    activeWindow.setTimeout(() => titleInput.focus(), 50);
   }
 
   onClose(): void {
@@ -409,22 +249,12 @@ class PlanDetailModal extends Modal {
   }
 }
 
-/** 计划块标题行（entry.text 含时间前缀时剥离，避免重复） */
-function planHeaderLine(entry: JournalEntry): string {
-  if (entry.time) {
-    const title = entry.text.replace(/^\d{2}:\d{2}(?::\d{2})?\s*/, "");
-    return `- ${entry.time}${title ? ` ${title}` : ""}`;
-  }
-  return `- ${entry.text || entry.sectionLabel}`;
-}
-
-/** 计划任务行（与记录页保存格式一致：顶级缩进4空格，子任务缩进8空格） */
+/** 任务行生成器（新格式：顶格任务、子任务缩进4空格；属性全部 Dataview 行内字段，标签留在文本里） */
 function planTaskLine(t: TodoItem, completedField: string): string {
-  const indent = t.indent ? "        " : "    ";
+  const indent = t.indent ? "    " : "";
   let line = `${indent}- [${t.done ? "x" : " "}] ${t.text}`;
-  const eff = effectivePriority(t.priority);
-  if (eff !== "2") line += ` ${PRIORITY_EMOJI[eff]}`;
-  if (t.dueDate) line += ` \u{1F4C5} ${t.dueDate}`;
+  if (t.priority && t.priority !== "2") line += ` [priority::${t.priority}]`;
+  if (t.dueDate) line += ` [due::${t.dueDate}]`;
   if (t.createdAt) line += ` [createdAt::${t.createdAt}]`;
   if (t.done && t.completedAt) line += ` [${completedField}::${t.completedAt}]`;
   if (t.note) line += ` [note::${t.note.replace(/[\r\n\]]+/g, " ")}]`;
@@ -461,7 +291,7 @@ export class TodayPanel {
   onResult: ((count: number, days: number, filtering: boolean) => void) | null = null;
   /** 点击记录上的标签 → 切换该标签到章节筛选（由视图注入；再点一次取消，可叠加多个） */
   onToggleTag: ((tag: string) => void) | null = null;
-  /** 计划分组方式（由视图注入，读 reviewState.planGroupBy；"none" = 按计划块原样展示） */
+  /** 计划分组方式（由视图注入，读 reviewState.planGroupBy；"none" = 平铺展示今日记录流） */
   planGroupBy: (() => PlanGroupMode | "none") | null = null;
   /** 用户切换分组方式 → 视图持久化 */
   onPlanGroupByChange: ((mode: PlanGroupMode | "none") => void) | null = null;
@@ -504,6 +334,9 @@ export class TodayPanel {
   /** 重新加载并渲染指定章节的记录（无筛选=今天；有筛选=按条件跨日期查询；计划章节可按优先级/日期分组） */
   async refresh(sectionId: string): Promise<void> {
     this.destroyEditors();
+    // 先移除旧的分组切换控件：仅计划章节的非筛选视图会重新渲染它，
+    // 否则切到筛选结果或其他章节时按钮残留、错位
+    this.headEl?.querySelector(".db-plan-seg")?.remove();
     const seq = ++this.refreshSeq;
     const app = this.plugin.app;
     const today = moment().format("YYYY-MM-DD");
@@ -534,10 +367,10 @@ export class TodayPanel {
               // 默认内容为未归档的；已归档的追加到底部弱化展示，不与正常记录混排
               return [...todayEntries.filter(e => !e.archived), ...todayEntries.filter(e => e.archived)];
             })();
-      // 计划分组：跨日期聚合全部计划条目（分组视图只列未完成任务）
+      // 计划分组：跨日期聚合全部计划条目（分组视图只列未完成任务，已放弃的除外）
       if (groupMode !== "none") {
         allPlanEntries = groups.flatMap(g => g.entries)
-          .filter(e => e.renderType === "plans" && !e.archived && (e.todos?.length ?? 0) > 0);
+          .filter(e => e.renderType === "plans" && !e.archived && !e.abandoned && (e.todos?.length ?? 0) > 0);
       }
     } catch (e) {
       // 读取失败时保持空列表；错误入控制台便于真机排查
@@ -570,6 +403,10 @@ export class TodayPanel {
     // 宿主被视图整体隐藏时（习惯章节）不接管标题显隐，避免互相打架。
     if (!this.container.hasClass("is-hidden")) {
       this.headEl?.toggleClass("is-hidden", entries.length === 0 && !filtering);
+    }
+    // 计划章节平铺模式：分组切换入口保留（"平铺"高亮），否则选平铺后按钮随分组视图一起消失、无法切回
+    if (section?.type === "plans" && !filtering && !memoStream) {
+      this.renderPlanSeg(section, "none");
     }
     this.onResult?.(entries.length, new Set(entries.map(e => e.date)).size, filtering);
 
@@ -691,6 +528,30 @@ export class TodayPanel {
   }
 
   /**
+   * 分组切换分段控件：挂在"今日记录"标题行尾部。
+   * 平铺（none）模式同样渲染（高亮"平铺"），保证任何模式下都能切回其他分组。
+   */
+  private renderPlanSeg(section: SectionConfig, mode: PlanGroupMode | "none") {
+    if (!this.headEl) return;
+    this.headEl.toggleClass("is-hidden", false);
+    this.headEl.querySelector(".db-plan-seg")?.remove();
+    const seg = this.headEl.createDiv({ cls: "db-plan-seg" });
+    ([["priority", "优先级"], ["date", "日期"], ["tag", "标签"], ["none", "平铺"]] as [PlanGroupMode | "none", string][])
+      .forEach(([m, label]) => {
+        const tab = seg.createDiv({
+          cls: `db-plan-seg-btn${mode === m ? " active" : ""}`,
+          text: label,
+          attr: { role: "button", "aria-pressed": String(mode === m) },
+        });
+        tab.addEventListener("click", () => {
+          if (mode === m) return;
+          this.onPlanGroupByChange?.(m);
+          void this.refresh(section.id);
+        });
+      });
+  }
+
+  /**
    * 计划分组视图：按优先级或截止日期把全部未完成任务合并进"原样"的计划卡片。
    * 每组一张卡（组标题 + 计数 + 任务行，行样式与计划卡片内的任务一致）；
    * 勾选走级联写回原文件，完成后从分组中消失。
@@ -707,25 +568,7 @@ export class TodayPanel {
     this.listEl.empty();
     this.container.toggleClass("is-empty", tasks.length === 0);
     this.setHead("未完成任务", tasks.length);
-    if (this.headEl) {
-      this.headEl.toggleClass("is-hidden", false);
-      // 分组切换（先移除旧 seg，避免重复渲染）
-      this.headEl.querySelector(".db-plan-seg")?.remove();
-      const seg = this.headEl.createDiv({ cls: "db-plan-seg" });
-      ([["priority", "优先级"], ["date", "日期"], ["none", "计划块"]] as [PlanGroupMode | "none", string][])
-        .forEach(([m, label]) => {
-          const tab = seg.createDiv({
-            cls: `db-plan-seg-btn${mode === m ? " active" : ""}`,
-            text: label,
-            attr: { role: "button", "aria-pressed": String(mode === m) },
-          });
-          tab.addEventListener("click", () => {
-            if (mode === m) return;
-            this.onPlanGroupByChange?.(m);
-            void this.refresh(section.id);
-          });
-        });
-    }
+    this.renderPlanSeg(section, mode);
     this.onResult?.(tasks.length, 0, false);
 
     if (tasks.length === 0) {
@@ -790,13 +633,15 @@ export class TodayPanel {
     checkbox.addEventListener("click", () => void toggle());
     textEl.addEventListener("click", () => {
       if (todo.indent) void toggle();
-      else this.openPlanDetail(entry, todo);
+      else this.openTaskEdit(entry);
     });
   }
 
   /** 单条记录块 */
   private renderEntry(entry: JournalEntry) {
-    const card = this.listEl.createDiv({ cls: `db-entry ${entry.pinned ? "pinned" : ""} ${entry.archived ? "archived" : ""}` });
+    const card = this.listEl.createDiv({
+      cls: `db-entry ${entry.pinned ? "pinned" : ""} ${entry.archived ? "archived" : ""} ${entry.abandoned ? "abandoned" : ""}`,
+    });
 
     // 卡片头部：左=置顶标识+日期时间灰字（跨日期筛选时含日期），右=归档标记 + ⋯ 操作
     const head = card.createDiv({ cls: "db-entry-head" });
@@ -835,10 +680,7 @@ export class TodayPanel {
     moreBtn.setText("⋯");
 
     if (entry.renderType === "plans" && entry.todos && entry.todos.length > 0) {
-      const title = entry.text.replace(/^\d{2}:\d{2}(?::\d{2})?\s*/, "");
-      if (title && title !== entry.sectionLabel) {
-        card.createDiv({ cls: "db-entry-title", text: title });
-      }
+      // 任务中心：一张卡片就是一条任务（含子任务），标题即任务文本，无需块标题层
       this.renderTodoCard(card, entry);
     } else {
       const body = card.createDiv({ cls: "db-entry-body" });
@@ -1004,8 +846,22 @@ export class TodayPanel {
 
     if (entry.renderType === "plans") {
       menu.addItem(item =>
-        item.setTitle("编辑").setIcon("pencil").onClick(() => this.openPlanEditModal(entry))
+        item.setTitle("编辑").setIcon("pencil").onClick(() => this.openTaskEdit(entry))
       );
+      if (entry.todos?.length) {
+        menu.addItem(item =>
+          item
+            .setTitle("延后")
+            .setIcon("calendar-plus")
+            .onClick(() => this.postponeTask(entry))
+        );
+        menu.addItem(item =>
+          item
+            .setTitle(entry.abandoned ? "恢复" : "放弃")
+            .setIcon(entry.abandoned ? "rotate-ccw" : "circle-off")
+            .onClick(() => this.toggleAbandonEntry(entry))
+        );
+      }
     } else {
       menu.addItem(item =>
         item.setTitle("编辑").setIcon("pencil").onClick(() => this.enterEditMode(card, entry))
@@ -1058,7 +914,7 @@ export class TodayPanel {
     menu.showAtPosition(pos);
   }
 
-  /** 置顶 / 取消置顶：在记录块尾增删 [pinned::true] 字段行 */
+  /** 置顶 / 取消置顶：计划任务走 #pinned 标签；旧格式块尾 [pinned::true] 字段行优先移除；其他记录保持字段行方式 */
   private async togglePinEntry(entry: JournalEntry) {
     try {
       const start = entry.rawLineIndex ?? 0;
@@ -1068,6 +924,13 @@ export class TodayPanel {
       if (fieldIdx >= 0) {
         await removeLineRange(this.plugin.app, entry.filePath, start + fieldIdx, start + fieldIdx);
         new Notice("已取消置顶");
+      } else if (entry.renderType === "plans" && entry.todos && entry.todos.length > 0) {
+        const todo = entry.todos[0];
+        todo.text = entry.pinned
+          ? todo.text.replace(/(^|\s)#pinned(?=\s|$)/g, "$1").replace(/\s{2,}/g, " ").trim()
+          : `${todo.text} #pinned`;
+        await this.rewriteTaskLine(entry, todo);
+        new Notice(entry.pinned ? "已取消置顶" : "📌 已置顶");
       } else {
         await insertLineAfter(this.plugin.app, entry.filePath, end, "[pinned::true]");
         new Notice("📌 已置顶");
@@ -1075,6 +938,62 @@ export class TodayPanel {
       void this.refresh(entry.type);
     } catch (e) {
       new Notice("操作失败，请检查日记文件");
+    }
+  }
+
+  /** 用当前任务数据重建单条任务行（子任务行不动；顺带完成旧格式 → 新格式的就地迁移） */
+  private async rewriteTaskLine(entry: JournalEntry, todo: TodoItem) {
+    const completedField = getCompletedFieldName(this.plugin.settings);
+    await replaceLineRange(
+      this.plugin.app,
+      entry.filePath,
+      todo.lineIndex,
+      todo.lineIndex,
+      [planTaskLine(todo, completedField)]
+    );
+  }
+
+  /** 延后：已逾期的任务延到今天，其余顺延一天；没有截止日不操作 */
+  private async postponeTask(entry: JournalEntry) {
+    if (!entry.todos?.length) return;
+    const todo = entry.todos[0];
+    if (!todo.dueDate) {
+      new Notice("该任务没有截止日期");
+      return;
+    }
+    const today = moment().format("YYYY-MM-DD");
+    const newDue = todo.dueDate < today
+      ? today
+      : moment(todo.dueDate).add(1, "day").format("YYYY-MM-DD");
+    todo.dueDate = newDue;
+    this.busy = true;
+    try {
+      await this.rewriteTaskLine(entry, todo);
+      new Notice(`⏩ 已延后至 ${formatTodoDue(newDue)}`);
+      void this.refresh(entry.type);
+    } catch (e) {
+      new Notice("操作失败，请检查日记文件");
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /** 放弃 / 恢复：在任务行增删 #abandoned 标签（放弃 ≠ 完成：灰色淡化 + 斜体） */
+  private async toggleAbandonEntry(entry: JournalEntry) {
+    if (!entry.todos?.length) return;
+    const todo = entry.todos[0];
+    todo.text = entry.abandoned
+      ? todo.text.replace(/(^|\s)#abandoned(?=\s|$)/g, "$1").replace(/\s{2,}/g, " ").trim()
+      : `${todo.text} #abandoned`;
+    this.busy = true;
+    try {
+      await this.rewriteTaskLine(entry, todo);
+      new Notice(entry.abandoned ? "↩️ 已恢复" : "🚫 已放弃");
+      void this.refresh(entry.type);
+    } catch (e) {
+      new Notice("操作失败，请检查日记文件");
+    } finally {
+      this.busy = false;
     }
   }
 
@@ -1119,40 +1038,13 @@ export class TodayPanel {
     }
   }
 
-  /** 打开计划块编辑弹窗，保存后整块回写日记文件 */
-  private openPlanEditModal(entry: JournalEntry) {
-    new PlanEditModal(this.plugin.app, this.plugin, entry, async (title, rows) => {
-      try {
-        const start = entry.rawLineIndex ?? 0;
-        const end = entry.endLineIndex ?? start;
-        const block = await readLineRange(this.plugin.app, entry.filePath, start, end);
-        const fieldLines = block.filter(l => /^\s*\[(pinned|archived)::.*\]\s*$/.test(l));
-
-        const completedField = getCompletedFieldName(this.plugin.settings);
-        const lines: string[] = [];
-        lines.push(entry.time ? `- ${entry.time}${title ? ` ${title}` : ""}` : `- ${title || entry.sectionLabel}`);
-        rows.forEach(r => {
-          const text = r.text.trim();
-          if (!text && !r.dueDate) return;
-          lines.push(planTaskLine(r as unknown as TodoItem, completedField));
-        });
-
-        await replaceLineRange(this.plugin.app, entry.filePath, start, end, [...lines, ...fieldLines]);
-        new Notice("✎ 计划已保存");
-        void this.refresh(entry.type);
-      } catch (e) {
-        new Notice("保存失败，请检查日记文件");
-      }
-    }).open();
-  }
-
-  /** 打开计划详情（备注 + 子计划）；保存时按当前任务数组整块回写 */
-  private openPlanDetail(entry: JournalEntry, todo: TodoItem) {
-    new PlanDetailModal(this.plugin.app, this.plugin, entry, todo, async (todos) => {
+  /** 打开任务编辑弹窗（标题/优先级/截止日/备注/子任务一体），保存后整条回写 */
+  private openTaskEdit(entry: JournalEntry) {
+    new TaskEditModal(this.plugin.app, this.plugin, entry, async (todos) => {
       this.busy = true;
       try {
-        await this.rewritePlanBlock(entry, todos);
-        new Notice("✎ 详情已保存");
+        await this.rewriteTaskEntry(entry, todos);
+        new Notice("✎ 任务已保存");
         void this.refresh(entry.type);
       } catch (e) {
         new Notice("保存失败，请检查日记文件");
@@ -1238,14 +1130,14 @@ export class TodayPanel {
     }
   }
 
-  /** 按当前任务顺序重写计划块（拖拽排序后调用，保留置顶/归档字段行） */
-  private async rewritePlanBlock(entry: JournalEntry, todos: TodoItem[]) {
+  /** 按当前任务数据重写任务条目（任务编辑保存/拖拽排序后调用，保留置顶/归档字段行） */
+  private async rewriteTaskEntry(entry: JournalEntry, todos: TodoItem[]) {
     const start = entry.rawLineIndex ?? 0;
     const end = entry.endLineIndex ?? start;
     const block = await readLineRange(this.plugin.app, entry.filePath, start, end);
     const fieldLines = block.filter(l => /^\s*\[(pinned|archived)::.*\]\s*$/.test(l));
     const completedField = getCompletedFieldName(this.plugin.settings);
-    const lines = [planHeaderLine(entry), ...todos.map(t => planTaskLine(t, completedField))];
+    const lines = todos.map(t => planTaskLine(t, completedField));
     await replaceLineRange(this.plugin.app, entry.filePath, start, end, [...lines, ...fieldLines]);
   }
 
@@ -1349,7 +1241,7 @@ export class TodayPanel {
         moveTodoSubtree(todos, fromIdx, targetIdx, asChild, lower && !asChild);
         this.busy = true;
         try {
-          await this.rewritePlanBlock(entry, todos);
+          await this.rewriteTaskEntry(entry, todos);
           void this.refresh(entry.type);
         } catch (err) {
           new Notice("排序保存失败，请检查日记文件");
@@ -1387,24 +1279,25 @@ export class TodayPanel {
       checkbox.addEventListener("keydown", (e) => {
         if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); void toggle(); }
       });
-      // 点击文字：顶级任务 → 计划详情（备注/子计划）；子任务 → 直接勾选
+      // 点击文字：顶级任务 → 任务编辑（标题/优先级/截止日/备注/子任务）；子任务 → 直接勾选
       if (isSub) {
         textEl.addEventListener("click", () => { void toggle(); });
       } else {
         textEl.addClass("clickable");
         textEl.setAttribute("role", "button");
         textEl.setAttribute("tabindex", "0");
-        textEl.setAttribute("aria-label", "打开计划详情：备注与子计划");
-        textEl.addEventListener("click", () => this.openPlanDetail(entry, todo));
+        textEl.setAttribute("aria-label", "打开任务编辑");
+        textEl.addEventListener("click", () => this.openTaskEdit(entry));
         textEl.addEventListener("keydown", (e) => {
-          if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); this.openPlanDetail(entry, todo); }
+          if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); this.openTaskEdit(entry); }
         });
       }
     };
 
     todos.forEach(t => renderItem(t, !!t.indent));
 
-    if (total > 0) {
+    // 单条无子任务的任务卡片不需要 1/1 进度条
+    if (total > 1) {
       const progress = card.createDiv({ cls: "db-entry-progress" });
       progressText = progress.createSpan({ cls: "db-entry-progress-text", text: `${doneCount}/${total}` });
       const bar = progress.createDiv({ cls: "db-entry-progress-bar" });

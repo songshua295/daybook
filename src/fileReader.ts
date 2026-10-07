@@ -30,8 +30,9 @@ export interface JournalEntry {
   filePath: string;     // 来源文件路径
   rawLineIndex?: number; // 在文件中的起始行号（用于任务回写/原文定位）
   endLineIndex?: number; // 在文件中的结束行号（含续行与字段行，用于编辑/归档/删除）
-  pinned?: boolean;     // 置顶（块尾 [pinned::true] 行内字段）
+  pinned?: boolean;     // 置顶（任务行 #pinned 标签，或旧格式块尾 [pinned::true] 字段行）
   archived?: string;    // 归档时间（块尾 [archived::时间] 行内字段）
+  abandoned?: boolean;  // 已放弃（任务行 #abandoned 标签；区别于完成：灰色淡化+斜体）
 }
 
 /** 计划任务项 */
@@ -228,7 +229,7 @@ async function parseJournalFile(
     }
 
     if (currentConfig.type === "plans") {
-      // 计划：按 "- HH:mm 标题"（新）或 "**HH:mm 计划**"（旧）分块
+      // 计划（任务中心）：每条任务一个条目；旧格式时间标题仅作兼容边界
       parsePlanSection(currentLines, currentConfig, file.path, file.basename, entries, settings);
     } else {
       // 其他：多行合并解析（v3.1.4）
@@ -334,11 +335,19 @@ async function parseJournalFile(
 }
 
 /**
- * 解析计划区块（可能含多个计划块）
- * 新格式：`- HH:mm 标题`（标题可省略）顶格列表项，任务为缩进的 `- [ ]` 子项
- * 旧格式：`**HH:mm 计划**` 加粗小标题 + 顶格任务行（向后兼容）
+ * 解析计划章节 —— 任务中心模型（v4 重构）
+ *
+ * 每条顶格任务行（`- [ ] 文本`）就是一个独立的计划条目，子任务（缩进比上一任务更深）
+ * 挂在其父任务下；不再依赖 `- HH:mm 标题` 分块。
+ *
+ * 兼容读取旧格式：
+ * - 时间标题 `- HH:mm [标题]` / `**HH:mm 计划**`：仅作为展示时间来源与旧块边界，
+ *   其下任务照常拍平为独立条目
+ * - 📅 日期 ≡ [due::YYYY-MM-DD]；🟥🟧🟦🟩 ≡ [priority::1..4]
+ * - 块尾 [pinned::true] / [archived::时间] 字段行作用于自上一个时间标题以来的全部任务条目
+ * - 状态标签：#pinned = 置顶、#abandoned = 放弃（新格式写入方式）
  */
-function parsePlanSection(
+export function parsePlanSection(
   lines: { text: string; lineIndex: number }[],
   config: SectionConfig,
   filePath: string,
@@ -346,38 +355,41 @@ function parsePlanSection(
   entries: JournalEntry[],
   settings: DaybookSettings
 ) {
-  let currentHeader: string | null = null;
-  let currentTime: string | undefined;
   let currentTodos: TodoItem[] = [];
-  let headerLineIndex = -1;
+  let currentTime: string | undefined;   // 继承自旧格式时间标题（新格式任务无时间）
+  let blockEntries: JournalEntry[] = []; // 自上一个时间标题以来的任务条目（旧块字段行的作用域）
   let lastLineIndex = -1;
+  let prevWs = -1;                       // 上一任务行的缩进空格数（更深 = 子任务）
   let lastFlushedEntry: JournalEntry | null = null;
 
   const flush = () => {
-    if (currentTodos.length === 0 && !currentHeader) return;
+    if (currentTodos.length === 0) return;
+    const parent = currentTodos[0];
     // 从所有 todo 文本中收集标签
     const allTodoText = currentTodos.map(t => t.text).join(" ");
     const planTags = extractInlineTags(allTodoText);
     const entry: JournalEntry = {
-      id: `${date}-plan-${headerLineIndex}`,
+      id: `${date}-task-${parent.lineIndex}`,
       type: config.id,
       sectionLabel: config.label,
       sectionEmoji: config.emoji,
       renderType: config.type,
       date,
       time: currentTime,
-      text: currentHeader ?? config.label,
+      text: parent.text,
       todos: [...currentTodos],
       tags: planTags.length > 0 ? planTags : undefined,
       filePath,
-      rawLineIndex: headerLineIndex,
+      rawLineIndex: parent.lineIndex,
       endLineIndex: lastLineIndex,
     };
+    // 状态标签：#pinned 置顶 / #abandoned 放弃
+    if (planTags.includes("pinned")) entry.pinned = true;
+    if (planTags.includes("abandoned")) entry.abandoned = true;
     entries.push(entry);
+    blockEntries.push(entry);
     lastFlushedEntry = entry;
     currentTodos = [];
-    currentHeader = null;
-    currentTime = undefined;
   };
 
   lines.forEach(({ text, lineIndex }) => {
@@ -388,18 +400,22 @@ function parsePlanSection(
     const fieldMatch = trimmed.match(/^\[(pinned|archived)::(.+)\]$/);
     if (fieldMatch) {
       // 字段行总是写在所属块尾之后，遇到时该块还没结算——先 flush 再挂字段，
-      // 否则会错挂到上一个块（首个块的字段则直接丢失），表现为置顶/归档失效或错位
+      // 否则会错挂到上一个块（首个块的字段则直接丢失），表现为置顶/归档失效或错位。
+      // 旧格式：作用于整块（时间标题以来的全部任务条目）；新格式无标题，块即最后一条任务
       flush();
-      if (lastFlushedEntry) {
-        if (fieldMatch[1] === "pinned") lastFlushedEntry.pinned = fieldMatch[2].trim() === "true";
-        else lastFlushedEntry.archived = fieldMatch[2].trim();
-        lastFlushedEntry.endLineIndex = lineIndex;
-      }
+      const isPin = fieldMatch[1] === "pinned";
+      const val = fieldMatch[2].trim();
+      const targets = blockEntries.length > 0 ? blockEntries : lastFlushedEntry ? [lastFlushedEntry] : [];
+      targets.forEach(e => {
+        if (isPin) e.pinned = val === "true";
+        else e.archived = val;
+        e.endLineIndex = lineIndex;
+      });
       lastLineIndex = lineIndex;
       return;
     }
 
-    // 计划块标题：新格式为顶格 `- HH:mm[:ss] [标题]`（标题可省略）；兼容旧格式 `**HH:mm[:ss] 计划**`
+    // 旧格式计划块标题（兼容读取；新格式不再写入）：`- HH:mm[:ss] [标题]` 或 `**HH:mm[:ss] 计划**`
     const isIndented = /^[\t ]/.test(text);
     const planHeaderMatch = trimmed.match(/^\*\*(\d{2}:\d{2}(?::\d{2})?)\s+计划\*\*$/);
     const bulletHeaderMatch = !isIndented
@@ -407,17 +423,13 @@ function parsePlanSection(
       : null;
     if (planHeaderMatch || bulletHeaderMatch) {
       flush();
-      const m = planHeaderMatch ?? bulletHeaderMatch!;
-      currentTime = m[1];
-      currentHeader = planHeaderMatch
-        ? trimmed.replace(/\*\*/g, "")
-        : (m[2] ? trimmed.replace(/^-\s*/, "") : m[1]);
-      headerLineIndex = lineIndex;
-      lastLineIndex = lineIndex;
+      blockEntries = [];
+      currentTime = (planHeaderMatch ?? bulletHeaderMatch)![1];
+      prevWs = -1;
       return;
     }
 
-    // - [ ] 或 - [x] 任务行（v3.1.6：支持截止日期📅）
+    // 任务行（任意缩进）：`- [ ]` / `- [x]`，支持截止日期、优先级、行内字段、标签
     const todoMatch = trimmed.match(/^-\s+\[( |x|X)\]\s+(.+)$/);
     if (todoMatch) {
       let todoText = todoMatch[2];
@@ -427,14 +439,24 @@ function parsePlanSection(
       let completedAt: string | undefined;
       let createdAtVal: string | undefined;
 
-      // 解析截止日期（📅 YYYY-MM-DD）
+      // 解析截止日期：[due::YYYY-MM-DD]（新）与 📅 YYYY-MM-DD（旧）等效，两者都剥离出标题
+      const dueFieldMatch = todoText.match(/\[due::(\d{4}-\d{2}-\d{2})\]/);
+      if (dueFieldMatch) {
+        dueDate = dueFieldMatch[1];
+        todoText = todoText.replace(dueFieldMatch[0], "");
+      }
       const dueMatch = todoText.match(/📅\s*(\d{4}-\d{2}-\d{2})/);
       if (dueMatch) {
-        dueDate = dueMatch[1];
+        dueDate = dueDate ?? dueMatch[1];
         todoText = todoText.replace(/📅\s*\d{4}-\d{2}-\d{2}\s*/, "");
       }
 
-      // 解析优先级（🟥1 / 🟧2 / 🟦3 / 🟩4）
+      // 解析优先级：[priority::1..4]（新）与 🟥🟧🟦🟩（旧）等效
+      const prioFieldMatch = todoText.match(/\[priority::([1-4])\]/);
+      if (prioFieldMatch) {
+        priority = prioFieldMatch[1] as PriorityLevel;
+        todoText = todoText.replace(prioFieldMatch[0], "");
+      }
       (Object.entries(PRIORITY_EMOJI) as [PriorityLevel, string][]).forEach(([lv, emoji]) => {
         if (priority === undefined && todoText.includes(emoji)) {
           priority = lv;
@@ -467,10 +489,12 @@ function parsePlanSection(
         todoText = todoText.replace(noteMatch[0], "");
       }
 
-      // 子任务层级：块内任务基础缩进为 4 空格（顶级），8 空格为子任务
+      // 层级判定：缩进比上一任务行更深 = 子任务（同时兼容旧格式 4/8 空格与新格式 0/4 空格）
       const leadingWs = text.match(/^[ \t]*/)?.[0] ?? "";
-      const level = Math.round(leadingWs.replace(/\t/g, "    ").length / 4) - 1;
-
+      const ws = leadingWs.replace(/\t/g, "    ").length;
+      const isChild = currentTodos.length > 0 && ws > prevWs;
+      if (!isChild) flush(); // 顶级任务：上一个任务条目到此结束
+      prevWs = ws;
       currentTodos.push({
         text: todoText.trim(),
         done,
@@ -479,18 +503,14 @@ function parsePlanSection(
         priority,
         completedAt,
         createdAt: createdAtVal ?? date,
-        indent: level >= 1 ? 1 : undefined,
+        indent: isChild ? 1 : undefined,
         note,
       });
       lastLineIndex = lineIndex;
       return;
     }
 
-    // 其他内容行（没有标题时兜底创建一个）
-    if (!currentHeader) {
-      currentHeader = "计划";
-      headerLineIndex = lineIndex;
-    }
+    // 非任务内容行（旧格式块内的说明文字）：忽略内容，但纳入条目行范围
     lastLineIndex = lineIndex;
   });
   flush();

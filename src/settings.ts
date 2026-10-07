@@ -69,11 +69,8 @@ export function getVisiblePanels(settings: DaybookSettings): PanelConfig[] {
 export interface ReviewViewState {
   groupVisible: boolean;                     // 分组面板是否展开（计划）
   sortVisible: boolean;                      // 排序面板是否展开
-  planGroupBy: "none" | "priority" | "date"; // 任务总览分组方式（priority/date；none 仅为兼容旧数据）
+  planGroupBy: "none" | "priority" | "date" | "tag"; // 任务总览分组方式（priority/date/tag；none = 平铺，仅为兼容旧数据）
   planGroupByDefaulted?: boolean;            // 遗留默认值已迁移为 priority（一次性）
-  planDateGranularity: "day" | "week" | "month"; // 日期分组粒度
-  planSortBy: "time" | "title" | "tag" | "priority"; // 排序方式：时间/标题/标签/优先级
-  planSortAsc: boolean;                      // 排序方向
   activeInlineTag: string | null;            // 当前标签筛选
   filterDateFrom: string;                    // 日期范围起
   filterDateTo: string;                      // 日期范围止
@@ -153,9 +150,6 @@ export const DEFAULT_SETTINGS: DaybookSettings = {
     groupVisible: false,
     sortVisible: false,
     planGroupBy: "priority",
-    planDateGranularity: "day",
-    planSortBy: "time",
-    planSortAsc: false,
     activeInlineTag: null,
     filterDateFrom: "",
     filterDateTo: "",

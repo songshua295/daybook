@@ -1,7 +1,7 @@
 import { ItemView, WorkspaceLeaf, Notice, moment, TFile, Modal, Menu, setIcon, debounce } from "obsidian";
 import type DaybookPlugin from "./main";
 import { appendToSection, resolveSectionPath } from "./fileManager";
-import { createPriorityBadge, effectivePriority, PRIORITY_EMOJI, PRIORITY_META, readAllJournalEntries, type PriorityLevel } from "./fileReader";
+import { createPriorityBadge, effectivePriority, PRIORITY_META, readAllJournalEntries, type PriorityLevel } from "./fileReader";
 import { getVisibleSections, type SectionConfig, type MoodOption } from "./settings";
 import { ConfirmModal, TodayPanel } from "./TodayPanel";
 import { FilterPanel } from "./FilterPanel";
@@ -1331,7 +1331,7 @@ export class DaybookView extends ItemView {
     // 计划分组方式（任务总览）注入 TodayPanel，切换时持久化
     this.todayPanel.planGroupBy = () => {
       const v = this.plugin.settings.reviewState.planGroupBy;
-      return v === "priority" || v === "date" ? v : "none";
+      return v === "priority" || v === "date" || v === "tag" ? v : "none";
     };
     this.todayPanel.onPlanGroupByChange = (mode) => {
       this.plugin.settings.reviewState.planGroupBy = mode;
@@ -2741,18 +2741,15 @@ export class DaybookView extends ItemView {
       const rawText = editor.getValue().trim();
       if (!rawText) { new Notice("\u8BF7\u5148\u8F93\u5165\u5185\u5BB9\uFF5E"); return; }
       const { date, text } = extractDateFromText(rawText);
-      const now = new Date();
-      const timeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-      // 单条计划块，格式与旧批量保存一致：顶级任务缩进 4 空格 + 行内字段
-      let taskLine = `    - [ ] ${text || rawText}`;
+      // 新格式：顶格任务行，属性全部 Dataview 行内字段（不再写 "- HH:mm" 时间标题包装）
+      let taskLine = `- [ ] ${text || rawText}`;
       const eff = effectivePriority(this.currentPriority);
-      if (eff !== "2") taskLine += ` ${PRIORITY_EMOJI[eff]}`;
-      if (date) taskLine += ` \u{1F4C5} ${date}`;
+      if (eff !== "2") taskLine += ` [priority::${eff}]`;
+      if (date) taskLine += ` [due::${date}]`;
       taskLine += ` [createdAt::${moment().format("YYYY-MM-DD HH:mm")}]`;
       saveBtn.addClass("loading");
       try {
-        await appendToSection(this.app, this.plugin.settings, section.label, section.type,
-          [`- ${timeStr}`, taskLine].join("\n"), section);
+        await appendToSection(this.app, this.plugin.settings, section.label, section.type, taskLine, section);
         new Notice("\u2726 \u5DF2\u6DFB\u52A0\u5F85\u529E");
         editor.setValue("");
         dateHint.setText("");
