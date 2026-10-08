@@ -131,7 +131,18 @@ export class DashboardPage extends Component {
 
     const actions = header.createDiv({ cls: "db-header-actions" });
     const refreshBtn = this.createIconButton(actions, "refresh-cw", "刷新数据");
-    refreshBtn.addEventListener("click", async () => { this.loaded = false; await this.loadData(); this.render(); });
+    refreshBtn.addEventListener("click", async () => {
+      // 点击反馈：图标旋转一圈；重渲染会替换按钮节点，故等动画播完再刷新界面
+      refreshBtn.classList.remove("db-rotating");
+      void refreshBtn.offsetWidth; // 强制重排，连点时可重新起播
+      refreshBtn.classList.add("db-rotating");
+      this.loaded = false;
+      const startAt = Date.now();
+      await this.loadData();
+      const remain = 600 - (Date.now() - startAt);
+      if (remain > 0) await new Promise<void>((r) => setTimeout(r, remain));
+      this.render();
+    });
     const settingsBtn = this.createIconButton(actions, "settings-2", "打开设置");
     settingsBtn.addEventListener("click", () => {
       const setting = (this.app as unknown as { setting?: { open(): void; openTabById(id: string): void } }).setting;
