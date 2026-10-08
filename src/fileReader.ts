@@ -4,12 +4,20 @@ import { getAllSections } from "./settings";
 import { getSectionFolders } from "./fileManager";
 
 /** 从文本中提取行内标签 */
-function extractInlineTags(text: string): string[] {
+export function extractInlineTags(text: string): string[] {
   const regex = /(^|[\s\u3000"'`([{<\uFF0C\u3002\uFF01\uFF1F\uFF1B\uFF1A\u3001\uFF08\uFF09\u3010\u3011\u300A\u300B\u300C\u300D\u300E\u300F,.;!?])#([\p{L}\p{N}_-]+(?:\/[\p{L}\p{N}_-]+)*)/gu;
   const tags: string[] = [];
   let m;
   while ((m = regex.exec(text)) !== null) { tags.push(m[2]); }
   return [...new Set(tags)];
+}
+
+/** 去掉文本里的行内 #标签，只留纯文字（计划「隐藏详细」时的任务标题） */
+export function stripInlineTags(text: string): string {
+  return text
+    .replace(/(^|\s)#([\p{L}\p{N}_-]+(?:\/[\p{L}\p{N}_-]+)*)/gu, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
 }
 
 /** 单条记录的类型（章节 id） */
@@ -45,7 +53,9 @@ export interface TodoItem {
   completedAt?: string; // 完成时间 YYYY-MM-DD HH:mm（勾选完成时自动写入）
   priority?: PriorityLevel; // 优先级 1-4，undefined = 2（重要不紧急，默认）
   indent?: number;      // 层级：0/undefined=顶级任务，1=子任务
-  note?: string;        // 备注（计划详情里写，行内字段 [note::…]，单行）
+  note?: string;        // 备注（旧：行内字段 [note::…]，单行；读取兼容，新数据统一写入 desc）
+  desc?: string;        // 描述（任务行下方的缩进内容行，可多行、含 ![[图片]]/![[录音]] 嵌入）
+  blockId?: string;     // 块链接 id（任务行尾 ^id，Obsidian 块级引用；「复制链接」按需生成）
 }
 
 /** 优先级：1 重要且紧急 / 2 重要不紧急（默认）/ 3 不重要但紧急 / 4 不重要不紧急 */
@@ -194,10 +204,14 @@ export async function readAllJournalEntries(
 
 /**
  * 解析单个日记文件，提取所有条目
- * 结果按 路径|mtime|筛选|章节签名 缓存：搜索输入等高频刷新场景下文件未变时直接复用，
- * 配合 cachedRead 避免反复读盘解析
+ * 缓存键 = 路径|筛选|章节签名，命中后再用原文全等校验才复用（cachedRead 走内存，
+ * 便宜的读取换掉昂贵的重复解析）。
+ *
+ * 旧实现把「列目录时快照的 stat.mtime」拼进键里，但内容是在之后的 await 才读的：
+ * 连续保存 / 外部同步时会出现「键是旧的、内容是新」的错位缓存，
+ * 之后同长度（如 [x]→[ ]）或同 mtime 的读取都会拿到过期条目。
  */
-const parseCache = new Map<string, JournalEntry[]>();
+const parseCache = new Map<string, { content: string; entries: JournalEntry[] }>();
 
 async function parseJournalFile(
   app: App,
@@ -206,11 +220,11 @@ async function parseJournalFile(
   filterTypes?: Set<string>,
   configSig = ""
 ): Promise<JournalEntry[]> {
-  const cacheKey = `${file.path}|${file.stat.mtime}|${filterTypes ? [...filterTypes].sort().join(",") : ""}|${configSig}`;
-  const cached = parseCache.get(cacheKey);
-  if (cached) return cached;
-
   const content = await app.vault.cachedRead(file);
+  const cacheKey = `${file.path}|${filterTypes ? [...filterTypes].sort().join(",") : ""}|${configSig}`;
+  const cached = parseCache.get(cacheKey);
+  if (cached && cached.content === content) return cached.entries;
+
   const lines = content.split("\n");
   const entries: JournalEntry[] = [];
 
@@ -326,7 +340,7 @@ async function parseJournalFile(
     return (a.time ?? "00:00").localeCompare(b.time ?? "00:00") * -1;
   });
 
-  parseCache.set(cacheKey, entries);
+  parseCache.set(cacheKey, { content, entries });
   if (parseCache.size > 500) {
     const firstKey = parseCache.keys().next().value as string;
     parseCache.delete(firstKey);
@@ -356,6 +370,7 @@ export function parsePlanSection(
   settings: DaybookSettings
 ) {
   let currentTodos: TodoItem[] = [];
+  let currentDesc: string[] = [];        // 当前任务条目「描述」内容行（任务行下方的非任务正文）
   let currentTime: string | undefined;   // 继承自旧格式时间标题（新格式任务无时间）
   let blockEntries: JournalEntry[] = []; // 自上一个时间标题以来的任务条目（旧块字段行的作用域）
   let lastLineIndex = -1;
@@ -365,6 +380,10 @@ export function parsePlanSection(
   const flush = () => {
     if (currentTodos.length === 0) return;
     const parent = currentTodos[0];
+    // 描述：任务条目正文下方的缩进内容行（挂在父任务上，可多行 / 含图片录音嵌入）
+    const descText = currentDesc.join("\n").trim();
+    if (descText) parent.desc = descText;
+    currentDesc = [];
     // 从所有 todo 文本中收集标签
     const allTodoText = currentTodos.map(t => t.text).join(" ");
     const planTags = extractInlineTags(allTodoText);
@@ -489,6 +508,14 @@ export function parsePlanSection(
         todoText = todoText.replace(noteMatch[0], "");
       }
 
+      // 解析块链接 id（行尾 ^abc123，Obsidian 块级引用；「复制链接」按需写入）
+      let blockId: string | undefined;
+      const blockMatch = todoText.match(/\s+\^([A-Za-z0-9]{4,12})\s*$/);
+      if (blockMatch) {
+        blockId = blockMatch[1];
+        todoText = todoText.slice(0, blockMatch.index);
+      }
+
       // 层级判定：缩进比本组父任务更深 = 子任务（同级缩进的多条子任务都挂在同一父任务下）
       const leadingWs = text.match(/^[ \t]*/)?.[0] ?? "";
       const ws = leadingWs.replace(/\t/g, "    ").length;
@@ -507,12 +534,14 @@ export function parsePlanSection(
         createdAt: createdAtVal ?? date,
         indent: isChild ? 1 : undefined,
         note,
+        blockId,
       });
       lastLineIndex = lineIndex;
       return;
     }
 
-    // 非任务内容行（旧格式块内的说明文字）：忽略内容，但纳入条目行范围
+    // 非任务内容行：属于当前任务条目的「描述」（挂在父任务下）；无当前任务时（章节顶部说明）忽略
+    if (currentTodos.length > 0) currentDesc.push(trimmed);
     lastLineIndex = lineIndex;
   });
   flush();
@@ -739,4 +768,66 @@ export function appendTodoCompletionInfo(
   const row = textEl.createDiv({ cls });
   if (info.duration) row.createSpan({ cls: `${cls}-item duration`, text: `⏱ ${info.duration}` });
   if (info.time) row.createSpan({ cls: `${cls}-item time`, text: `✅ ${info.time}` });
+}
+
+/* ════════════════════════════════════════════════════════
+   任务序列化 / 截止日期展示（TodayPanel 与任务详情页共用）
+   ════════════════════════════════════════════════════════ */
+
+/** 单条任务行文本（顶格任务、子任务缩进 4 空格；属性全部 Dataview 行内字段，块 id 追加行尾） */
+export function planTaskLine(t: TodoItem, completedField: string): string {
+  const indent = t.indent ? "    " : "";
+  let line = `${indent}- [${t.done ? "x" : " "}] ${t.text}`;
+  if (t.priority && t.priority !== "2") line += ` [priority::${t.priority}]`;
+  if (t.dueDate) line += ` [due::${t.dueDate}]`;
+  if (t.createdAt) line += ` [createdAt::${t.createdAt}]`;
+  if (t.done && t.completedAt) line += ` [${completedField}::${t.completedAt}]`;
+  // 旧行内备注：仅在尚未迁移到 desc 时保留（详情页保存描述会写 desc 并清空 note）
+  if (t.note && !t.desc) line += ` [note::${t.note.replace(/[\r\n\]]+/g, " ")}]`;
+  if (t.blockId) line += ` ^${t.blockId}`;
+  return line;
+}
+
+/**
+ * 一个任务条目的全部行：父任务 → 描述内容行（缩进 4 空格）→ 子任务。
+ * rewriteTaskEntry 用它整体重建条目块，保证描述随任务一起落盘。
+ * 描述必须紧跟父任务行：解析时内容行归属于「当前条目」，写在子任务之后会被挂到最后一条任务下。
+ */
+export function planTaskBlockLines(todos: TodoItem[], completedField: string): string[] {
+  const lines: string[] = [];
+  todos.forEach((t, i) => {
+    lines.push(planTaskLine(t, completedField));
+    if (i !== 0) return;
+    const desc = (t.desc ?? "").trim();
+    if (!desc) return;
+    for (const raw of desc.split("\n")) {
+      const s = raw.trim();
+      if (s) lines.push("    " + s);
+    }
+  });
+  return lines;
+}
+
+/** 生成 Obsidian 块 id（6 位小写字母数字） */
+export function genBlockId(): string {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let s = "";
+  for (let i = 0; i < 6; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+
+/** 格式化截止日期为友好显示（今天/明天/N天后/N天前/M月D日） */
+export function formatTodoDue(dateStr: string): string {
+  const due = moment(dateStr).startOf("day");
+  const diff = due.diff(moment().startOf("day"), "day");
+  if (diff === 0) return "今天";
+  if (diff === 1) return "明天";
+  if (diff < 0) return `${Math.abs(diff)}天前`;
+  if (diff <= 7) return `${diff}天后`;
+  return `${due.month() + 1}月${due.date()}日`;
+}
+
+/** 判断待办是否过期（截止日期早于今天） */
+export function isTodoOverdue(dateStr: string): boolean {
+  return moment(dateStr).isBefore(moment(), "day");
 }

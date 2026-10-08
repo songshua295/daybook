@@ -35,19 +35,31 @@ import {
   appendTodoCompletionInfo,
   createPriorityBadge,
   getCompletedFieldName,
-  effectivePriority,
   shouldShowPriorityBadge,
   planTodoProgress,
-  PRIORITY_META,
+  planTaskLine,
+  planTaskBlockLines,
+  formatTodoDue,
+  isTodoOverdue,
   type PriorityLevel,
   type JournalEntry,
   type TodoItem,
   formatDateLabel,
+  extractInlineTags,
+  stripInlineTags,
 } from "./fileReader";
-import { getAllSections, type SectionConfig } from "./settings";
-import { isFilterActive, matchEntry, type SectionFilter } from "./filters";
+import { getAllSections, type SectionConfig, type PlanGroupBy } from "./settings";
+import { isFilterActive, matchEntry, planDone, type SectionFilter } from "./filters";
 import { openDateSelect } from "./dateSelect";
-import { collectPlanTasks, collectAllPlanTasks, groupPlanTasks, childTodosOfParent, type PlanGroupMode, type PlanTaskGroup } from "./planOverview";
+import { openTaskDetail } from "./taskDetail";
+import { collectPlanTasks, collectAllPlanTasks, groupPlanTasks, childTodosOfParent, planTaskDone, sortPlanTasks, type PlanGroupMode, type PlanTaskGroup } from "./planOverview";
+
+/** 视图层的「分组」取值 → planOverview 的聚合分组模式 */
+const PLAN_GROUP_MODE: Record<Exclude<PlanGroupBy, "created">, PlanGroupMode> = {
+  due: "date",
+  priority: "priority",
+  tag: "tag",
+};
 
 /** 删除等危险操作确认弹窗 */
 export class ConfirmModal extends Modal {
@@ -80,219 +92,6 @@ export class ConfirmModal extends Modal {
   }
 }
 
-/** 任务编辑弹窗（替代旧"计划块编辑"+"计划详情"两个弹窗）：标题/优先级/截止日/备注/子任务一体编辑，保存才整条回写 */
-class TaskEditModal extends Modal {
-  private todos: TodoItem[];
-
-  constructor(
-    app: App,
-    private plugin: DaybookPlugin,
-    entry: JournalEntry,
-    private persist: (todos: TodoItem[]) => Promise<void>
-  ) {
-    super(app);
-    // 浅拷贝：取消即丢弃全部改动，只有「保存」才落盘
-    this.todos = (entry.todos ?? []).map(t => ({ ...t }));
-  }
-
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.addClass("db-plan-detail-modal");
-    contentEl.createEl("h3", { text: "编辑任务" });
-
-    const parent = this.todos[0];
-
-    // 任务标题（原生标签 #工作 等随文本一起编辑）
-    contentEl.createDiv({ cls: "db-plan-detail-label", text: "任务" });
-    const titleInput = contentEl.createEl("input", {
-      cls: "db-plan-detail-title",
-      attr: { type: "text", placeholder: "任务内容", "aria-label": "任务内容" },
-    });
-    titleInput.value = parent.text;
-
-    // 属性行：优先级 + 截止日期
-    const propRow = contentEl.createDiv({ cls: "db-plan-detail-props" });
-    const prioritySelect = propRow.createEl("select", {
-      cls: "db-plan-edit-priority",
-      attr: { "aria-label": "优先级" },
-    });
-    (["1", "2", "3", "4"] as PriorityLevel[]).forEach(lv => {
-      const meta = PRIORITY_META[lv];
-      const opt = prioritySelect.createEl("option", { value: lv, text: `${meta.numeral} ${meta.label}` });
-      if (effectivePriority(parent.priority) === lv) opt.setAttribute("selected", "selected");
-    });
-    const dueInput = propRow.createEl("input", {
-      cls: "db-plan-edit-due",
-      attr: { type: "text", placeholder: "截止 YYYY-MM-DD", "aria-label": "截止日期" },
-    });
-    dueInput.value = parent.dueDate ?? "";
-    const dueHint = propRow.createSpan({ cls: "db-plan-detail-due" });
-    const refreshDueHint = () => {
-      const v = dueInput.value.trim();
-      const valid = !!v && moment(v, "YYYY-MM-DD", true).isValid();
-      dueHint.setText(valid ? (isTodoOverdue(v) ? "⚠️过期" : `📅 ${formatTodoDue(v)}`) : "");
-      dueHint.toggleClass("overdue", valid && isTodoOverdue(v));
-    };
-    refreshDueHint();
-    dueInput.addEventListener("input", refreshDueHint);
-
-    // 日历图按钮：弹月历选择，回填输入框（也可手动键入）
-    const dueCalBtn = propRow.createEl("button", {
-      cls: "db-plan-detail-cal",
-      attr: { type: "button", "aria-label": "打开日历选择截止日期" },
-    });
-    setIcon(dueCalBtn, "calendar");
-    dueCalBtn.addEventListener("click", () => {
-      openDateSelect(this.plugin.app, {
-        value: dueInput.value.trim() || undefined,
-        onPick: (d) => {
-          dueInput.value = d ?? "";
-          refreshDueHint();
-        },
-      });
-    });
-
-    // 备注
-    contentEl.createDiv({ cls: "db-plan-detail-label", text: "备注" });
-    const noteInput = contentEl.createEl("textarea", {
-      cls: "db-plan-detail-note",
-      attr: { placeholder: "写点背景、思路、要点…（保存后随任务存储）", "aria-label": "任务备注", rows: "4" },
-    });
-    noteInput.value = parent.note ?? "";
-
-    // 子任务
-    contentEl.createDiv({ cls: "db-plan-detail-label", text: "子任务" });
-    const subList = contentEl.createDiv({ cls: "db-plan-detail-subs" });
-
-    /** 顶级任务的连续子任务区间 [start, end) */
-    const childRange = () => {
-      const start = 1;
-      let end = start;
-      while (end < this.todos.length && this.todos[end].indent) end++;
-      return { start, end };
-    };
-
-    const renderSubs = () => {
-      subList.empty();
-      const { start, end } = childRange();
-      if (start === end) {
-        subList.createDiv({ cls: "db-plan-detail-subs-empty", text: "还没有子任务，在下方输入添加～" });
-        return;
-      }
-      for (let i = start; i < end; i++) {
-        const sub = this.todos[i];
-        const row = subList.createDiv({ cls: `db-plan-detail-sub ${sub.done ? "done" : ""}` });
-        const cb = row.createDiv({
-          cls: `db-plan-detail-sub-check ${sub.done ? "checked" : ""}`,
-          attr: { role: "checkbox", tabindex: "0", "aria-checked": String(sub.done), "aria-label": sub.done ? "取消完成" : "标记完成" },
-        });
-        const toggleSub = () => {
-          const done = !sub.done;
-          if (done) this.plugin.feedback.notify();
-          const stamp = moment().format("YYYY-MM-DD HH:mm");
-          sub.done = done;
-          sub.completedAt = done ? stamp : undefined;
-          // 子任务全部完成 → 顶级任务自动完成；有未完成 → 顶级恢复未完成
-          const rng = childRange();
-          const kids = this.todos.slice(rng.start, rng.end);
-          if (kids.length > 0) {
-            const all = kids.every(k => k.done);
-            parent.done = all;
-            parent.completedAt = all ? (parent.completedAt ?? stamp) : undefined;
-          }
-          renderSubs();
-        };
-        cb.addEventListener("click", toggleSub);
-        cb.addEventListener("keydown", (e) => {
-          if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); toggleSub(); }
-        });
-        row.createSpan({ cls: "db-plan-detail-sub-text", text: sub.text });
-        const del = row.createDiv({ cls: "db-plan-detail-sub-del", text: "×", attr: { role: "button", tabindex: "0", "aria-label": "删除子任务" } });
-        del.addEventListener("click", () => { this.todos.splice(i, 1); renderSubs(); });
-      }
-    };
-    renderSubs();
-
-    // 添加子任务
-    const addRow = contentEl.createDiv({ cls: "db-plan-detail-add-row" });
-    const addInput = addRow.createEl("input", {
-      cls: "db-plan-detail-add-input",
-      attr: { type: "text", placeholder: "输入子任务，回车添加", "aria-label": "添加子任务" },
-    });
-    const addBtn = addRow.createEl("button", { text: "添加", cls: "db-plan-detail-add-btn" });
-    const addSub = () => {
-      const t = addInput.value.trim();
-      if (!t) return;
-      this.todos.splice(childRange().end, 0, {
-        text: t,
-        done: false,
-        lineIndex: -1,
-        indent: 1,
-        createdAt: moment().format("YYYY-MM-DD HH:mm"),
-      });
-      addInput.value = "";
-      renderSubs();
-      addInput.focus();
-    };
-    addBtn.addEventListener("click", addSub);
-    addInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.repeat) { e.preventDefault(); addSub(); }
-    });
-
-    // 底部按钮
-    const btns = contentEl.createDiv({ cls: "db-mood-modal-btns" });
-    const cancel = btns.createEl("button", { text: "取消" });
-    cancel.addEventListener("click", () => this.close());
-    const save = btns.createEl("button", { text: "保存", cls: "mod-cta" });
-    save.addEventListener("click", () => {
-      const title = titleInput.value.trim();
-      if (!title) { new Notice("任务内容不能为空～"); return; }
-      const due = dueInput.value.trim();
-      parent.text = title;
-      const prio = prioritySelect.value as PriorityLevel;
-      parent.priority = prio === "2" ? undefined : prio;
-      parent.dueDate = due && moment(due, "YYYY-MM-DD", true).isValid() ? due : undefined;
-      parent.note = noteInput.value.replace(/[\r\n\]]+/g, " ").trim() || undefined;
-      save.disabled = true;
-      this.persist(this.todos).then(() => this.close()).catch(() => { save.disabled = false; });
-    });
-
-    activeWindow.setTimeout(() => titleInput.focus(), 50);
-  }
-
-  onClose(): void {
-    this.contentEl.empty();
-  }
-}
-
-/** 任务行生成器（新格式：顶格任务、子任务缩进4空格；属性全部 Dataview 行内字段，标签留在文本里） */
-function planTaskLine(t: TodoItem, completedField: string): string {
-  const indent = t.indent ? "    " : "";
-  let line = `${indent}- [${t.done ? "x" : " "}] ${t.text}`;
-  if (t.priority && t.priority !== "2") line += ` [priority::${t.priority}]`;
-  if (t.dueDate) line += ` [due::${t.dueDate}]`;
-  if (t.createdAt) line += ` [createdAt::${t.createdAt}]`;
-  if (t.done && t.completedAt) line += ` [${completedField}::${t.completedAt}]`;
-  if (t.note) line += ` [note::${t.note.replace(/[\r\n\]]+/g, " ")}]`;
-  return line;
-}
-
-/** 格式化截止日期为友好显示 */
-function formatTodoDue(dateStr: string): string {
-  const due = moment(dateStr).startOf("day");
-  const diff = due.diff(moment().startOf("day"), "day");
-  if (diff === 0) return "今天";
-  if (diff === 1) return "明天";
-  if (diff < 0) return `${Math.abs(diff)}天前`;
-  if (diff <= 7) return `${diff}天后`;
-  return `${due.month() + 1}月${due.date()}日`;
-}
-
-/** 判断待办是否过期 */
-function isTodoOverdue(dateStr: string): boolean {
-  return moment(dateStr).isBefore(moment(), "day");
-}
 
 /** 今日某章节的记录流：只读渲染 + 行内操作（勾选/置顶/编辑/归档/删除） */
 export class TodayPanel {
@@ -310,10 +109,13 @@ export class TodayPanel {
   onResult: ((count: number, days: number, filtering: boolean) => void) | null = null;
   /** 点击记录上的标签 → 切换该标签到章节筛选（由视图注入；再点一次取消，可叠加多个） */
   onToggleTag: ((tag: string) => void) | null = null;
-  /** 计划分组方式（由视图注入，读 reviewState.planGroupBy；"none" = 平铺展示今日记录流） */
-  planGroupBy: (() => PlanGroupMode | "none") | null = null;
-  /** 用户切换分组方式 → 视图持久化 */
-  onPlanGroupByChange: ((mode: PlanGroupMode | "none") => void) | null = null;
+  /**
+   * 计划视图偏好（分组 / 排序 / 已完成与详细的显隐）直接读 settings：
+   * 顶栏「···」和排序面板改的就是同一份对象，不需要再经视图层中转。
+   */
+  private get planView(): DaybookPlugin["settings"]["reviewState"] {
+    return this.plugin.settings.reviewState;
+  }
   /** 刷新序号：连续触发刷新（如勾选后多处联动）时，只有最后一次允许落笔，避免重复渲染 */
   private refreshSeq = 0;
   /** 筛选结果分页状态（跨日期筛选模式专用） */
@@ -350,19 +152,17 @@ export class TodayPanel {
     this.liveEditors.clear();
   }
 
-  /** 重新加载并渲染指定章节的记录（无筛选=今天；有筛选=按条件跨日期查询；计划章节可按优先级/日期分组） */
+  /** 重新加载并渲染指定章节的记录（无筛选=今天；有筛选=按条件跨日期查询；计划章节可按日期/截止日/优先级/标签分组） */
   async refresh(sectionId: string): Promise<void> {
     this.destroyEditors();
-    // 先移除旧的分组切换控件：仅计划章节的非筛选视图会重新渲染它，
-    // 否则切到筛选结果或其他章节时按钮残留、错位
-    this.headEl?.querySelector(".db-plan-seg")?.remove();
     const seq = ++this.refreshSeq;
     const app = this.plugin.app;
     const today = moment().format("YYYY-MM-DD");
     const filter = this.filter;
     const filtering = !!filter && isFilterActive(filter);
     const section = getAllSections(this.plugin.settings).find(s => s.id === sectionId);
-    const groupMode = section?.type === "plans" ? (this.planGroupBy?.() ?? "none") : "none";
+    // 计划章节的分组方式；非计划章节为 null，走通用记录流
+    const planGroupBy: PlanGroupBy | null = section?.type === "plans" ? this.planView.planGroupBy : null;
     let entries: JournalEntry[] = [];
     const labels = new Map<string, string>();
     let allPlanEntries: JournalEntry[] = [];
@@ -387,9 +187,9 @@ export class TodayPanel {
               // 默认内容为未归档的；已归档的追加到底部弱化展示，不与正常记录混排
               return [...todayEntries.filter(e => !e.archived), ...todayEntries.filter(e => e.archived)];
             })();
-      // 计划分组：聚合计划条目（分组视图只列未完成任务，已放弃的除外）；
-      // 筛选态下直接取筛选命中的条目，分组模式对筛选结果同样生效
-      if (groupMode !== "none") {
+      // 按截止日 / 优先级 / 标签分组：跨条目聚合任务（已放弃的块不参与）；
+      // 筛选态下直接取筛选命中的条目，分组方式对筛选结果同样生效
+      if (planGroupBy && planGroupBy !== "created") {
         const source = filtering ? entries : groups.flatMap(g => g.entries);
         allPlanEntries = source
           .filter(e => e.renderType === "plans" && !e.archived && !e.abandoned && (e.todos?.length ?? 0) > 0);
@@ -412,22 +212,27 @@ export class TodayPanel {
       }
     }
 
-    // ── 计划分组视图：滴答清单式，同组任务合并进一张原样卡片 ──
-    // 筛选态下同样生效：按筛选命中的任务分组（含已完成，勾选/取消后仍在筛选结果内）
-    if (groupMode !== "none" && section) {
-      this.renderGroupedPlans(section, allPlanEntries, groupMode as PlanGroupMode, today, filtering);
+    // ── 计划 · 按截止日 / 优先级 / 标签分组：滴答清单式，同组任务合并进一张卡片 ──
+    // 筛选态下同样生效：按筛选命中的任务分组
+    if (planGroupBy && planGroupBy !== "created" && section) {
+      this.renderGroupedPlans(section, allPlanEntries, PLAN_GROUP_MODE[planGroupBy], today, filtering);
       return;
     }
 
-    // ── 计划平铺：按创建日期逆序分组，同一天的任务合并在一张卡片里（📌 置顶分组最前）──
+    // ── 计划 · 按日期（创建日期）分组：同一天的任务合并在一张卡片里（📌 置顶分组最前）──
     if (section?.type === "plans" && !filtering) {
+      const showDone = this.planView.planShowDone;
+      const tasksOf = (list: JournalEntry[]) => {
+        const t = collectAllPlanTasks(list);
+        return showDone ? t : t.filter(x => !planTaskDone(x.entry, x.todo));
+      };
       const all = groups.flatMap(g => g.entries)
         .filter(e => e.renderType === "plans" && !e.archived);
       const flatGroups: PlanTaskGroup[] = [];
 
       const pinnedEntries = all.filter(e => e.pinned);
       if (pinnedEntries.length > 0) {
-        flatGroups.push({ key: "__pinned__", label: "📌 置顶", tasks: collectAllPlanTasks(pinnedEntries) });
+        flatGroups.push({ key: "__pinned__", label: "📌 置顶", tasks: tasksOf(pinnedEntries) });
       }
       const rest = all.filter(e => !e.pinned);
       const byDate = new Map<string, JournalEntry[]>();
@@ -438,22 +243,33 @@ export class TodayPanel {
       });
       dates.sort((a, b) => b.localeCompare(a));   // 创建日期逆序（新→旧）
       dates.forEach(d => {
-        flatGroups.push({ key: d, label: labels.get(d) ?? d, tasks: collectAllPlanTasks(byDate.get(d)!) });
+        flatGroups.push({ key: d, label: labels.get(d) ?? d, tasks: tasksOf(byDate.get(d)!) });
       });
+      // 组内次序统一按排序键（组间次序固定：置顶最前，日期新→旧）
+      flatGroups.forEach(g => { g.tasks = sortPlanTasks(g.tasks, this.planView.planSortBy); });
+      const shown = flatGroups.reduce((n, g) => n + g.tasks.length, 0);
 
       this.listEl.empty();
       this.container.toggleClass("is-empty", all.length === 0);
-      this.setHead("全部任务", all.length);
-      if (this.headEl) this.headEl.toggleClass("is-hidden", false);
-      this.renderPlanSeg(section, "none");
-      this.onResult?.(all.length, flatGroups.length, false);
+      this.setHead("全部任务", shown);
+      if (this.headEl) this.headEl.toggleClass("is-hidden", all.length === 0);
+      this.onResult?.(shown, flatGroups.length, false);
 
       if (all.length === 0) {
         this.listEl.createDiv({ cls: "db-today-empty", text: "还没有任务，在上方添加一条吧～" });
         return;
       }
+      if (shown === 0) {
+        this.listEl.createDiv({ cls: "db-today-empty", text: "任务都完成了，点右上角「···」里的「显示已完成」可以回看。" });
+        return;
+      }
       this.renderPlanGroupCards(flatGroups, section.id);
       return;
+    }
+
+    // 通用记录流（计划章节的筛选态会走到这里）：「隐藏已完成」＝整块勾完的计划卡不出现
+    if (section?.type === "plans" && !this.planView.planShowDone) {
+      entries = entries.filter(e => e.renderType !== "plans" || !planDone(e.todos));
     }
 
     this.listEl.empty();
@@ -513,10 +329,6 @@ export class TodayPanel {
         const normal = list.filter(e => !e.pinned).reverse();
         list.splice(0, list.length, ...pinned, ...normal);
       });
-    }
-    // 计划章节筛选态（平铺）：同样保留分组切换入口（"平铺"高亮），与分组模式互切无障碍
-    if (section?.type === "plans") {
-      this.renderPlanSeg(section, "none");
     }
     this.disconnectPagerObserver();
     this.pager = { dates, rendered: 0, byDate, labels, observer: null };
@@ -588,54 +400,35 @@ export class TodayPanel {
   }
 
   /**
-   * 分组切换分段控件：挂在"今日记录"标题行尾部。
-   * 平铺（none）模式同样渲染（高亮"平铺"），保证任何模式下都能切回其他分组。
-   */
-  private renderPlanSeg(section: SectionConfig, mode: PlanGroupMode | "none") {
-    if (!this.headEl) return;
-    this.headEl.toggleClass("is-hidden", false);
-    this.headEl.querySelector(".db-plan-seg")?.remove();
-    const seg = this.headEl.createDiv({ cls: "db-plan-seg" });
-    ([["none", "平铺"], ["priority", "优先级"], ["date", "截止日"], ["tag", "标签"]] as [PlanGroupMode | "none", string][])
-      .forEach(([m, label]) => {
-        const tab = seg.createDiv({
-          cls: `db-plan-seg-btn${mode === m ? " active" : ""}`,
-          text: label,
-          attr: { role: "button", "aria-pressed": String(mode === m) },
-        });
-        tab.addEventListener("click", () => {
-          if (mode === m) return;
-          this.onPlanGroupByChange?.(m);
-          void this.refresh(section.id);
-        });
-      });
-  }
-
-  /**
-   * 计划分组视图：按优先级或截止日期把全部未完成任务合并进"原样"的计划卡片。
-   * 每组一张卡（组标题 + 计数 + 任务行，行样式与计划卡片内的任务一致）；
-   * 勾选走级联写回原文件，完成后从分组中消失。
+   * 计划分组视图（截止日 / 优先级 / 标签）：任务跨条目聚合成组，每组一张卡片。
+   * 组内次序取自视图偏好的排序键；「隐藏已完成」时整块勾完的任务不进组。
+   * 勾选走级联写回原文件，完成后按当前显隐设置决定要不要立刻消失。
    */
   private renderGroupedPlans(
     section: SectionConfig,
     allEntries: JournalEntry[],
     mode: PlanGroupMode,
     today: string,
-    includeDone = false
+    filtering = false
   ) {
-    const tasks = includeDone ? collectAllPlanTasks(allEntries) : collectPlanTasks(allEntries);
-    const groups = groupPlanTasks(tasks, mode, today);
+    const view = this.planView;
+    const tasks = view.planShowDone ? collectAllPlanTasks(allEntries) : collectPlanTasks(allEntries);
+    const groups = groupPlanTasks(tasks, mode, today, view.planSortBy);
 
     this.listEl.empty();
-    this.container.toggleClass("is-empty", tasks.length === 0);
-    this.setHead(includeDone ? "全部任务" : "未完成任务", tasks.length);
-    this.renderPlanSeg(section, mode);
-    this.onResult?.(tasks.length, 0, false);
+    this.container.toggleClass("is-empty", allEntries.length === 0);
+    this.setHead(view.planShowDone ? "全部任务" : "未完成任务", tasks.length);
+    this.headEl?.toggleClass("is-hidden", tasks.length === 0);
+    this.onResult?.(tasks.length, 0, filtering);
 
     if (tasks.length === 0) {
       this.listEl.createDiv({
         cls: "db-today-empty",
-        text: includeDone ? "没有符合筛选条件的任务，放宽筛选试试～" : "没有未完成的任务，在上方添加一条吧～",
+        text: allEntries.length > 0
+          ? "任务都完成了，点右上角「···」里的「显示已完成」可以回看。"
+          : filtering
+            ? "没有符合筛选条件的任务，放宽筛选试试～"
+            : "还没有任务，在上方添加一条吧～",
       });
       return;
     }
@@ -741,7 +534,9 @@ export class TodayPanel {
     if (shouldShowPriorityBadge(todo.priority, this.plugin.settings)) {
       createPriorityBadge(textEl, todo.priority);
     }
-    textEl.createSpan({ text: todo.text });
+    const detail = this.planView.planShowDetail;
+    // 标题只显示纯文字：行内 #标签 由下面的标签胶囊承担（「隐藏详细」时两者一起收起）
+    textEl.createSpan({ text: stripInlineTags(todo.text) });
     if (todo.dueDate) {
       const overdue = isTodoOverdue(todo.dueDate);
       textEl.createSpan({
@@ -749,12 +544,17 @@ export class TodayPanel {
         text: overdue ? "⚠️过期" : `📅 ${formatTodoDue(todo.dueDate)}`,
       });
     }
-    if (todo.note) {
+    if (detail && (todo.note || todo.desc)) {
       textEl.createSpan({
         cls: "db-entry-note-flag",
         text: "📝",
-        attr: { "aria-label": `备注：${todo.note}` },
+        attr: { "aria-label": `备注：${todo.desc || todo.note}` },
       });
+    }
+    // 标签随行展示（「隐藏详细」时连同上面的备注徽标一起收起）
+    if (detail) {
+      const tags = extractInlineTags(todo.text).filter(t => t !== "pinned" && t !== "abandoned");
+      if (tags.length > 0) this.renderTagChips(item.createDiv({ cls: "db-plan-group-tags" }), tags);
     }
 
     // 有子任务且已完成一部分 → 行最右侧显示 x/y（父任务全部完成时已是 ✓ 完成态，不再重复显示）
@@ -771,7 +571,7 @@ export class TodayPanel {
 
     textEl.addEventListener("click", () => {
       if (depth > 0) void toggleDone();
-      else this.openTaskEdit(entry);
+      else this.openTaskDetailPage(entry);
     });
 
     // 手机端：长按任务行 = 与卡片视图同一套操作菜单（延后 / 放弃 / 截止日期 / 归档 / 删除…）
@@ -780,6 +580,30 @@ export class TodayPanel {
 
     // 展开态：子任务紧跟父任务行渲染（只是视图状态，不改文件）
     if (expanded) kids.forEach(k => this.renderGroupTodoRow(list, entry, k, sectionId, 1));
+  }
+
+  /**
+   * 标签胶囊行（记录卡片与分组任务行共用）。
+   * 点击 = 叠加/移除该标签到章节筛选，再点一次取消；选中的高亮。
+   */
+  private renderTagChips(parent: HTMLElement, tags: string[]): void {
+    tags.forEach(tag => {
+      const active = this.filter?.tags?.includes(tag) ?? false;
+      const chip = parent.createSpan({
+        cls: `db-entry-tag${active ? " is-active" : ""}`,
+        text: `#${tag}`,
+        attr: {
+          role: "button", tabindex: "0",
+          "aria-label": active ? `取消筛选标签 ${tag}` : `筛选标签 ${tag}`,
+          "aria-pressed": String(active),
+        },
+      });
+      const toggle = () => this.onToggleTag?.(tag);
+      chip.addEventListener("click", toggle);
+      chip.addEventListener("keydown", (e: KeyboardEvent) => {
+        if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); toggle(); }
+      });
+    });
   }
 
   /** 单条记录块 */
@@ -837,26 +661,10 @@ export class TodayPanel {
       }).then(() => this.bindImageViewer(body));
     }
 
-    if (entry.tags && entry.tags.length > 0) {
-      const row = card.createDiv({ cls: "db-entry-tags" });
-      entry.tags.forEach(tag => {
-        // 点击标签 = 叠加到当前筛选（再点一次取消）；选中的标签高亮
-        const active = this.filter?.tags?.includes(tag) ?? false;
-        const chip = row.createSpan({
-          cls: `db-entry-tag${active ? " is-active" : ""}`,
-          text: `#${tag}`,
-          attr: {
-            role: "button", tabindex: "0",
-            "aria-label": active ? `取消筛选标签 ${tag}` : `筛选标签 ${tag}`,
-            "aria-pressed": String(active),
-          },
-        });
-        const toggle = () => this.onToggleTag?.(tag);
-        chip.addEventListener("click", toggle);
-        chip.addEventListener("keydown", (e: KeyboardEvent) => {
-          if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); toggle(); }
-        });
-      });
+    // 计划章节的标签属于「详细」内容，随顶栏「隐藏详细」一起收起；闪念不受该开关影响
+    const showTags = entry.renderType !== "plans" || this.planView.planShowDetail;
+    if (showTags && entry.tags && entry.tags.length > 0) {
+      this.renderTagChips(card.createDiv({ cls: "db-entry-tags" }), entry.tags);
     }
 
     // ⋯ 操作按钮：弹出菜单（键盘 Enter/Space 由 makeActivatable 处理）
@@ -991,7 +799,7 @@ export class TodayPanel {
 
     if (entry.renderType === "plans") {
       menu.addItem(item =>
-        item.setTitle("编辑").setIcon("pencil").onClick(() => this.openTaskEdit(entry))
+        item.setTitle("编辑").setIcon("pencil").onClick(() => this.openTaskDetailPage(entry))
       );
       if (entry.todos?.length) {
         menu.addItem(item =>
@@ -1057,28 +865,7 @@ export class TodayPanel {
       item
         .setTitle("删除")
         .setIcon("trash-2")
-        .onClick(() => {
-          new ConfirmModal(
-            this.plugin.app,
-            "删除这条记录？",
-            "将从日记文件中移除该记录的原文，此操作不可撤销。",
-            "删除",
-            async () => {
-              try {
-                await removeLineRange(
-                  this.plugin.app,
-                  entry.filePath,
-                  entry.rawLineIndex ?? 0,
-                  entry.endLineIndex ?? entry.rawLineIndex ?? 0
-                );
-                new Notice("🗑 已删除");
-                void this.refresh(entry.type);
-              } catch (e) {
-                new Notice("删除失败，请检查日记文件");
-              }
-            }
-          ).open();
-        })
+        .onClick(() => this.deleteEntryConfirmed(entry))
     );
 
     menu.showAtPosition(pos);
@@ -1208,21 +995,59 @@ export class TodayPanel {
     }
   }
 
-  /** 打开任务编辑弹窗（标题/优先级/截止日/备注/子任务一体），保存后整条回写 */
-  private openTaskEdit(entry: JournalEntry) {
-    new TaskEditModal(this.plugin.app, this.plugin, entry, async (todos) => {
-      this.busy = true;
-      try {
-        await this.rewriteTaskEntry(entry, todos);
-        new Notice("✎ 任务已保存");
-        void this.refresh(entry.type);
-      } catch (e) {
-        new Notice("保存失败，请检查日记文件");
-        throw e;
-      } finally {
-        this.busy = false;
+  /** 打开任务详情页（TickTick 风格全屏页：勾选 / 截止日 / 标题 / 子任务 / 描述 / 标签图片录音） */
+  private openTaskDetailPage(entry: JournalEntry) {
+    openTaskDetail(this.plugin.app, this.plugin, entry, {
+      applyChange: async (e, todos) => {
+        this.busy = true;
+        try {
+          await this.rewriteTaskEntry(e, todos);
+          await this.refresh(e.type);
+          // 父任务行号在本条编辑中稳定，用作身份锚点重取最新条目（endLineIndex 已随结构变化更新）
+          return await this.findEntryAt(e.filePath, e.rawLineIndex ?? 0, e.type);
+        } finally {
+          this.busy = false;
+        }
+      },
+      requestDelete: (e) => this.deleteEntryConfirmed(e),
+    });
+  }
+
+  /** 重取指定文件中某父任务行对应的最新条目（详情页提交后刷新自身用） */
+  private async findEntryAt(filePath: string, rawLineIndex: number, sectionId: string): Promise<JournalEntry | null> {
+    try {
+      const groups = await readAllJournalEntries(this.plugin.app, this.plugin.settings, new Set([sectionId]));
+      for (const g of groups) {
+        for (const e of g.entries) {
+          if (e.filePath === filePath && e.rawLineIndex === rawLineIndex) return e;
+        }
       }
-    }).open();
+    } catch { /* 读取失败时返回 null，调用方保留当前数据 */ }
+    return null;
+  }
+
+  /** 删除记录（确认后移除原文行并刷新）：详情页「更多 → 删除」与卡片菜单共用 */
+  private deleteEntryConfirmed(entry: JournalEntry): void {
+    new ConfirmModal(
+      this.plugin.app,
+      "删除这条记录？",
+      "将从日记文件中移除该记录的原文，此操作不可撤销。",
+      "删除",
+      async () => {
+        try {
+          await removeLineRange(
+            this.plugin.app,
+            entry.filePath,
+            entry.rawLineIndex ?? 0,
+            entry.endLineIndex ?? entry.rawLineIndex ?? 0
+          );
+          new Notice("🗑 已删除");
+          void this.refresh(entry.type);
+        } catch (e) {
+          new Notice("删除失败，请检查日记文件");
+        }
+      }
+    ).open();
   }
 
   /** 编辑：记录块切换为内联编辑态 */
@@ -1307,7 +1132,7 @@ export class TodayPanel {
     const block = await readLineRange(this.plugin.app, entry.filePath, start, end);
     const fieldLines = block.filter(l => /^\s*\[(pinned|archived)::.*\]\s*$/.test(l));
     const completedField = getCompletedFieldName(this.plugin.settings);
-    const lines = todos.map(t => planTaskLine(t, completedField));
+    const lines = planTaskBlockLines(todos, completedField);
     await replaceLineRange(this.plugin.app, entry.filePath, start, end, [...lines, ...fieldLines]);
   }
 
@@ -1361,11 +1186,12 @@ export class TodayPanel {
         void toggle();
       });
 
+      const detail = this.planView.planShowDetail;
       const textEl = item.createDiv({ cls: `db-entry-todo-text ${todo.done ? "done" : ""}` });
       if (shouldShowPriorityBadge(todo.priority, this.plugin.settings)) {
         createPriorityBadge(textEl, todo.priority);
       }
-      textEl.createSpan({ text: todo.text });
+      textEl.createSpan({ text: stripInlineTags(todo.text) });
       if (todo.dueDate) {
         const overdue = isTodoOverdue(todo.dueDate);
         textEl.createSpan({
@@ -1374,12 +1200,12 @@ export class TodayPanel {
         });
       }
       appendTodoCompletionInfo(textEl, todo, this.plugin.settings, true);
-      // 备注徽标：有备注时给个小标记，悬停可见内容
-      if (todo.note) {
+      // 备注徽标：有备注 / 描述时给个小标记，悬停可见内容（属「详细」，可整体收起）
+      if (detail && (todo.note || todo.desc)) {
         textEl.createSpan({
           cls: "db-entry-note-flag",
           text: "\u{1F4DD}",
-          attr: { "aria-label": `备注：${todo.note}`, "data-tooltip-text": todo.note, "data-tooltip-position": "top" },
+          attr: { "aria-label": `备注：${todo.desc || todo.note}`, "data-tooltip-text": todo.desc || todo.note || "", "data-tooltip-position": "top" },
         });
       }
 
@@ -1457,7 +1283,7 @@ export class TodayPanel {
         }
       };
 
-      // 点击文字：顶级任务 → 任务编辑（标题/优先级/截止日/备注/子任务）；子任务 → 直接勾选
+      // 点击文字：顶级任务 → 任务详情页（勾选/截止日/标题/子任务/描述）；子任务 → 直接勾选
       if (isSub) {
         textEl.addEventListener("click", () => { void toggle(); });
       } else {
@@ -1465,9 +1291,9 @@ export class TodayPanel {
         textEl.setAttribute("role", "button");
         textEl.setAttribute("tabindex", "0");
         textEl.setAttribute("aria-label", "打开任务编辑");
-        textEl.addEventListener("click", () => this.openTaskEdit(entry));
+        textEl.addEventListener("click", () => this.openTaskDetailPage(entry));
         textEl.addEventListener("keydown", (e) => {
-          if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); this.openTaskEdit(entry); }
+          if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); this.openTaskDetailPage(entry); }
         });
       }
 

@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, setIcon, moment } from "obsidian";
+import { ItemView, WorkspaceLeaf, setIcon, moment, Platform } from "obsidian";
 import type DaybookPlugin from "./main";
 import { readAllJournalEntries, formatDateLabel, planTodoProgress, type DayGroup, type JournalEntry } from "./fileReader";
 import { checkinState, isExecuteDay, loadHabits, type CheckinRow, type HabitConfig } from "./habitManager";
@@ -37,8 +37,33 @@ export class DashboardView extends ItemView {
     this.render();
     // 原生标题栏显隐/尺寸变化会改变与内容的重叠量（与闪念主页同方案）
     this.registerEvent(this.app.workspace.on("resize", () => this.applyHeaderInset()));
+    this.armAndroidBackClose();
   }
-  async onClose() { /* 无自定义清理 */ }
+  async onClose() {
+    // 未走返回键就关闭视图（点 ×、切走等）时，回收哨兵历史条目，
+    // 否则下一次按返回会被这条"空历史"吞掉一次
+    if (this.backSentinelArmed) {
+      this.backSentinelArmed = false;
+      window.history.back();
+    }
+  }
+
+  /**
+   * Android 返回键适配：自定义视图不产生原生可后退的历史，按返回键会直接退出应用。
+   * 打开时向 WebView 压入一条哨兵 history 条目；系统返回键弹出它并触发 popstate，
+   * 在回调里分离本视图的 leaf，效果即"返回上一个页面"。仅移动端启用。
+   */
+  private backSentinelArmed = false;
+  private armAndroidBackClose(): void {
+    if (!Platform.isMobileApp) return;
+    this.backSentinelArmed = true;
+    window.history.pushState({ daybookBack: VIEW_TYPE_DASHBOARD }, "");
+    this.registerDomEvent(window, "popstate", () => {
+      if (!this.backSentinelArmed) return; // onClose 主动回收时忽略这一次
+      this.backSentinelArmed = false;
+      void this.leaf.detach();
+    });
+  }
 
   /* ── 数据加载 ── */
   private async loadData() {

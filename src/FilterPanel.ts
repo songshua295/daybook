@@ -1,8 +1,9 @@
 /**
  * FilterPanel.ts — 章节内容筛选面板（顶栏「筛选」按钮下方挂出的托盘）
  *
- * 只渲染当前章节类型相关的维度：闪念=心情/标签/链接/附件，计划=完成度/优先级/逾期，
+ * 只渲染当前章节类型相关的维度：闪念=心情/标签/链接/附件，计划=优先级/逾期，
  * 习惯=今日打卡态/应打卡/期间有打卡。条件改动即时回调视图重跑筛选。
+ * （计划的「已完成 / 未完成」不在本面板：那是常驻视图开关，在顶栏「···」里。）
  *
  * 交互约定（全面板统一，别破例）：
  * - 一行＝一个维度，左侧导栏是维度名，右侧是可选值；导栏在生效时加 is-set（字色变实）。
@@ -299,11 +300,8 @@ export class FilterPanel {
   }
 
   private renderPlans(): void {
-    this.single("完成度", [
-      { value: "undone", label: "未完成", tip: "只看还有未勾选任务的" },
-      { value: "done", label: "已完成", tip: "只看全部勾选的" },
-    ], this.f.completion, "all", v => { this.f.completion = v as SectionFilter["completion"]; this.changed(); });
-
+    // 完成度不在这里：它是个常驻视图开关（默认只看未完成），
+    // 放在顶栏「···」的「显示 / 隐藏已完成」里，见 JournalView.renderTopBar
     this.multi("重要程度", (["1", "2", "3", "4"] as PriorityLevel[]).map(p => ({
       value: p,
       label: `${PRIORITY_EMOJI[p]} ${PRIORITY_META[p].numeral}`,

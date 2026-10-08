@@ -7,6 +7,7 @@
  */
 
 import type { DayGroup, JournalEntry, TodoItem } from "./fileReader";
+import type { PlanSortKey } from "./settings";
 
 /** 一条总览任务：任务本身 + 所属计划块条目（勾选级联与详情编辑需要） */
 export interface PlanOverviewTask {
@@ -42,9 +43,19 @@ export function childTodosOfParent(entry: JournalEntry, parent: TodoItem): TodoI
   return out;
 }
 
-/** 从计划条目里收集未完成的任务（总览分组默认口径） */
+/**
+ * 单条顶级任务是否算「已完成」：有子任务看子任务有没有全勾完，
+ * 没子任务看自身勾选。与 planTodoProgress 同口径（父行不重复计数），
+ * 「隐藏已完成」按这个粒度剔除任务，整块完成的任务卡片才消失。
+ */
+export function planTaskDone(entry: JournalEntry, todo: TodoItem): boolean {
+  const kids = childTodosOfParent(entry, todo);
+  return kids.length > 0 ? kids.every(k => k.done) : todo.done;
+}
+
+/** 从计划条目里收集未完成的任务（分组视图「隐藏已完成」口径） */
 export function collectPlanTasks(entries: JournalEntry[]): PlanOverviewTask[] {
-  return collectAllPlanTasks(entries).filter(t => !t.todo.done);
+  return collectAllPlanTasks(entries).filter(t => !planTaskDone(t.entry, t.todo));
 }
 
 export type PlanGroupMode = "priority" | "date" | "tag";
@@ -63,25 +74,61 @@ function addDays(today: string, n: number): string {
   return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
 }
 
-/** 组内排序：有截止日在前（升序），无截止日在后；同级按优先级、再按加入顺序 */
-function byDue(a: PlanOverviewTask, b: PlanOverviewTask): number {
-  const da = a.todo.dueDate ?? "9999-12-31";
-  const db = b.todo.dueDate ?? "9999-12-31";
-  if (da !== db) return da.localeCompare(db);
-  return (a.todo.priority ?? "2").localeCompare(b.todo.priority ?? "2");
+/** 无截止日排在最后：用哨兵日期代替 undefined 参与字符串比较 */
+const NO_DUE = "9999-12-31";
+
+/** 创建时间键：任务的 [createdAt::] 优先，缺失时退回所属日记块的日期时间 */
+function createdKey(t: PlanOverviewTask): string {
+  return t.todo.createdAt ?? `${t.entry.date} ${t.entry.time ?? "00:00"}`;
 }
+
+/** 优先级 Ⅰ→Ⅳ（未标注按 Ⅱ 处理，与 effectivePriority 一致） */
+function priorityKey(t: PlanOverviewTask): string {
+  return t.todo.priority ?? "2";
+}
+
+/**
+ * 组内排序比较器（方向固定，不单独提供升降序开关）：
+ * - created：新→旧
+ * - due：截止日升序，无截止日垫底
+ * - priority：Ⅰ 重要且紧急 → Ⅳ 不重要不紧急
+ * - title：任务文本中文升序
+ * 平手时交给 Array.sort 的稳定性保留文件原序（拖拽结果）。
+ */
+const SORTERS: Record<PlanSortKey, (a: PlanOverviewTask, b: PlanOverviewTask) => number> = {
+  created: (a, b) => createdKey(b).localeCompare(createdKey(a)),
+  due: (a, b) => (a.todo.dueDate ?? NO_DUE).localeCompare(b.todo.dueDate ?? NO_DUE)
+    || priorityKey(a).localeCompare(priorityKey(b)),
+  priority: (a, b) => priorityKey(a).localeCompare(priorityKey(b))
+    || (a.todo.dueDate ?? NO_DUE).localeCompare(b.todo.dueDate ?? NO_DUE),
+  title: (a, b) => a.todo.text.localeCompare(b.todo.text, "zh"),
+};
+
+/** 按指定键排好序返回新数组（不改入参） */
+export function sortPlanTasks(
+  tasks: PlanOverviewTask[],
+  key: PlanSortKey
+): PlanOverviewTask[] {
+  return tasks.slice().sort(SORTERS[key]);
+}
+
+/** 组内排序比较器（默认按截止日） */
+type Cmp = (a: PlanOverviewTask, b: PlanOverviewTask) => number;
 
 /**
  * 分组：
  * - priority：I 重要且紧急 → IV 不重要不紧急
  * - date：逾期 → 今天 → 明天 → 7 天内 → 以后 → 无截止日
  * - tag：按任务的第一个有效标签（排除 #pinned/#abandoned），无标签归入"未分类"
+ * @param sortKey 组内排序键，默认按截止日（保持旧调用行为）
  */
 export function groupPlanTasks(
   tasks: PlanOverviewTask[],
   mode: PlanGroupMode,
-  today: string
+  today: string,
+  sortKey: PlanSortKey = "due"
 ): PlanTaskGroup[] {
+  const by: Cmp = SORTERS[sortKey];
   if (mode === "priority") {
     const defs: [string, string][] = [
       ["1", "I 重要且紧急"],
@@ -92,7 +139,7 @@ export function groupPlanTasks(
     return defs.map(([key, label]) => ({
       key,
       label,
-      tasks: tasks.filter(t => (t.todo.priority ?? "2") === key).sort(byDue),
+      tasks: tasks.filter(t => (t.todo.priority ?? "2") === key).sort(by),
     }));
   }
 
@@ -109,13 +156,13 @@ export function groupPlanTasks(
     const groups: PlanTaskGroup[] = [];
     for (const [key, list] of buckets) {
       if (key !== "__none__") {
-        groups.push({ key, label: `#${key}`, tasks: list.sort(byDue) });
+        groups.push({ key, label: `#${key}`, tasks: list.sort(by) });
       }
     }
     groups.sort((a, b) => a.key.localeCompare(b.key, "zh"));
     const none = buckets.get("__none__");
     if (none && none.length > 0) {
-      groups.push({ key: "__none__", label: "未分类", tasks: none.sort(byDue) });
+      groups.push({ key: "__none__", label: "未分类", tasks: none.sort(by) });
     }
     return groups;
   }
@@ -142,7 +189,7 @@ export function groupPlanTasks(
     ["later", "以后"],
     ["none", "无截止日"],
   ];
-  return meta.map(([key, label]) => ({ key, label, tasks: buckets[key].sort(byDue) }));
+  return meta.map(([key, label]) => ({ key, label, tasks: buckets[key].sort(by) }));
 }
 
 /** 截止日的友好显示（逾期返回 null，由调用方用"逾期"徽标表达） */

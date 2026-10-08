@@ -65,20 +65,29 @@ export function getVisiblePanels(settings: DaybookSettings): PanelConfig[] {
   );
 }
 
-/** 阅读视图（含计划视图）的分组/排序/筛选/搜索状态（持久化保存） */
+/**
+ * 计划视图的分组方式：
+ * - created：按创建日期分天（新→旧），同一天的任务合进一张卡片
+ * - due：按截止日期分桶（逾期 / 今天 / 明天 / 7 天内 / 以后 / 无截止日）
+ * - priority：按优先级分四象限
+ * - tag：按第一个有效标签分组
+ */
+export type PlanGroupBy = "created" | "due" | "priority" | "tag";
+
+/** 计划视图的组内排序键（方向固定，不单独给开关） */
+export type PlanSortKey = "created" | "due" | "priority" | "title";
+
+/**
+ * 阅读视图（计划章节）的视图偏好，持久化保存。
+ * 只放真正接线的字段：筛选条件由 JournalView 按章节各自持有（视图内状态，不落盘）。
+ */
 export interface ReviewViewState {
-  groupVisible: boolean;                     // 分组面板是否展开（计划）
-  sortVisible: boolean;                      // 排序面板是否展开
-  planGroupBy: "none" | "priority" | "date" | "tag"; // 任务总览分组方式（priority/date/tag；none = 平铺，仅为兼容旧数据）
-  planGroupByDefaulted?: boolean;            // 遗留默认值已迁移为 priority（一次性）
-  activeInlineTag: string | null;            // 当前标签筛选
-  filterDateFrom: string;                    // 日期范围起
-  filterDateTo: string;                      // 日期范围止
-  filterPriorities: string[];                // 优先级筛选（"1"/"2"/"3"/"4"）
-  filterCompletion: "all" | "done" | "undone"; // 完成状态筛选
-  searchVisible: boolean;                    // 搜索面板是否展开（含搜索/标签/日期筛选）
-  searchQuery: string;                       // 搜索关键字
-  groupOrder: string[];                      // 分组自定义次序（拖拽产生，按分组 key）
+  planGroupBy: PlanGroupBy;
+  planSortBy: PlanSortKey;
+  /** false（默认）= 隐藏整块已完成的任务，由顶栏「···」里的显示/隐藏已完成切换 */
+  planShowDone: boolean;
+  /** true（默认）= 显示任务的描述徽标与 #标签，由顶栏「···」里的显示/隐藏详细切换 */
+  planShowDetail: boolean;
 }
 
 export interface DaybookSettings {
@@ -94,7 +103,7 @@ export interface DaybookSettings {
   todoCompletedField: string;               // 勾选完成时写入任务末尾的行内字段名（如 completedAt）
   todoCompletionDisplay: "duration" | "time" | "both"; // 已完成任务显示：耗时/完成时间/两者
   showMediumPriorityBadge: boolean;         // 是否显示普通等级（Ⅱ）徽标，默认隐藏
-  reviewState: ReviewViewState;             // 阅读视图状态（分组/排序/筛选/搜索）
+  reviewState: ReviewViewState;             // 计划视图偏好（分组 / 排序 / 已完成与详细的显隐）
   typeEnabled: TypeToggles;                 // 章节类型开关（闪念/待办计划/习惯打卡）
   habits?: LegacyHabitDef[];               // 仅作旧数据读取（v4.3 起习惯存 habits/*.md，迁移后清空）
   habitsMigratedV2?: boolean;              // 旧习惯数据已迁移为"每习惯一个 md 文件"
@@ -147,17 +156,10 @@ export const DEFAULT_SETTINGS: DaybookSettings = {
   todoCompletionDisplay: "both",
   showMediumPriorityBadge: false,
   reviewState: {
-    groupVisible: false,
-    sortVisible: false,
-    planGroupBy: "priority",
-    activeInlineTag: null,
-    filterDateFrom: "",
-    filterDateTo: "",
-    filterPriorities: [],
-    filterCompletion: "all",
-    searchVisible: false,
-    searchQuery: "",
-    groupOrder: [],
+    planGroupBy: "created",
+    planSortBy: "priority",
+    planShowDone: false,
+    planShowDetail: true,
   },
   typeEnabled: {
     memos: true,

@@ -3,7 +3,8 @@ import type DaybookPlugin from "./main";
 import { appendToSection, resolveSectionPath } from "./fileManager";
 import { createPriorityBadge, effectivePriority, PRIORITY_META, readAllJournalEntries, type PriorityLevel } from "./fileReader";
 import { openDateSelect } from "./dateSelect";
-import { getVisibleSections, type SectionConfig, type MoodOption } from "./settings";
+import { openPlanSortSheet } from "./planSortSheet";
+import { DEFAULT_SETTINGS, getVisibleSections, type SectionConfig, type MoodOption } from "./settings";
 import { ConfirmModal, TodayPanel } from "./TodayPanel";
 import { FilterPanel } from "./FilterPanel";
 import { MemoSearchModal } from "./memoSearch";
@@ -991,6 +992,8 @@ export class DaybookView extends ItemView {
   private topbarRightEl: HTMLElement | null = null;
   private topbarMoreEl: HTMLElement | null = null;
   private topbarActions: { icon: string; label: string; run: () => void; el?: HTMLElement }[] = [];
+  /** 「···」是否常驻：计划章节的视图开关挂在这里，无折叠项时也要留入口 */
+  private topbarMorePinned = false;
   // 习惯章节：筛选只作用于习惯列表，重渲染入口由 renderHabitsTab 登记
   private habitsRerender: (() => void) | null = null;
   /** 最近一次整页渲染的日期（YYYY-MM-DD）：切回标签页时用于检测跨天 */
@@ -1331,15 +1334,8 @@ export class DaybookView extends ItemView {
       // 筛选面板开着时重建，让标签选中态同步
       if (this.filterOpen) void this.openFilterPanel();
     };
-    // 计划分组方式（任务总览）注入 TodayPanel，切换时持久化
-    this.todayPanel.planGroupBy = () => {
-      const v = this.plugin.settings.reviewState.planGroupBy;
-      return v === "priority" || v === "date" || v === "tag" ? v : "none";
-    };
-    this.todayPanel.onPlanGroupByChange = (mode) => {
-      this.plugin.settings.reviewState.planGroupBy = mode;
-      void this.plugin.saveSettings();
-    };
+    // 计划视图偏好（分组 / 排序 / 已完成与详细的显隐）由 TodayPanel 直接读 settings，
+    // 顶栏「···」与排序面板改的是同一份对象，这里不需要再中转
     this.syncHabitStreamVisibility();
     void this.todayPanel.refresh(active.id);
 
@@ -1458,21 +1454,17 @@ export class DaybookView extends ItemView {
       menu.showAtPosition({ x: rect.left + 10, y: rect.bottom + 4 });
     });
 
-    /* ── 右区：快捷操作（真实 <button>；宽度不足时由 fitTopbar 折叠） ── */
+    /* ── 右区：快捷操作（真实 <button>；宽度不足时由 fitTopbar 折叠） ──
+       不放「打开设置」：章节开关、完成时间显示这些都是低频配置，
+       Obsidian 设置面板里就有，常驻顶栏只会挤掉常用按钮的位置。 */
     const right = bar.createDiv({ cls: "db-topbar-zone db-topbar-actions" });
     this.topbarRightEl = right;
+    const isPlans = active?.type === "plans";
     const specs: { icon: string; label: string; run: () => void; el?: HTMLElement }[] = [
       ...(active?.type === "memos" ? [{
         icon: "search", label: "搜索闪念", run: () => this.openMemoSearch(active),
       }] : []),
-      { icon: "file-text", label: "打开今日日记原文", run: () => this.revealTodayFile() },
       { icon: "layout-dashboard", label: "打开统计面板", run: () => void this.plugin.activateDashboard() },
-      {
-        icon: "settings", label: "打开设置", run: () => {
-          const setting = (this.app as unknown as { setting?: { open(): void; openTabById(id: string): void } }).setting;
-          if (setting) { setting.open(); setting.openTabById(this.plugin.manifest.id); }
-        },
-      },
     ];
     specs.forEach(a => {
       const el = right.createEl("button", {
@@ -1485,14 +1477,54 @@ export class DaybookView extends ItemView {
     });
     this.topbarActions = specs;
 
+    // 计划章节专属：分组 / 排序底部面板入口（不参与折叠，是这一章的主操作）
+    if (isPlans) {
+      const sortBtn = right.createEl("button", {
+        cls: "db-topbar-btn db-plan-sort-toggle",
+        attr: {
+          type: "button", "aria-label": "分组与排序", "aria-haspopup": "dialog",
+          title: "分组与排序",
+        },
+      });
+      setIcon(sortBtn, "arrow-down-up");
+      sortBtn.addEventListener("click", e => {
+        e.stopPropagation();
+        this.openPlanSortPanel();
+      });
+    }
+
     const moreBtn = right.createEl("button", {
-      cls: "db-topbar-btn db-topbar-more is-folded",
-      attr: { type: "button", "aria-label": "更多操作", title: "更多操作" },
+      // 计划章节常驻（视图开关在这里）；其余章节只在有折叠项时出现
+      cls: "db-topbar-btn db-topbar-more" + (isPlans ? "" : " is-folded"),
+      attr: {
+        type: "button", "aria-label": "更多操作", "aria-haspopup": "menu", title: "更多操作",
+      },
     });
     setIcon(moreBtn, "more-horizontal");
     moreBtn.addEventListener("click", e => {
       e.stopPropagation();
       const menu = new Menu();
+      if (isPlans && active) {
+        const rs = this.plugin.settings.reviewState;
+        // 文案即状态即动作：显示「显示已完成」时当前是隐藏态，点一下切换（不再打勾避免歧义）
+        const toggleView = (label: string, on: boolean, set: (v: boolean) => void) => {
+          menu.addItem(item => {
+            item.setTitle(label);
+            item.onClick(() => {
+              set(!on);
+              void this.plugin.saveSettings();
+              void this.todayPanel?.refresh(active.id);
+            });
+          });
+        };
+        // 「隐藏已完成 / 显示已完成」＝旧筛选面板里的完成度筛选，默认只看未完成
+        toggleView(rs.planShowDone ? "隐藏已完成" : "显示已完成", rs.planShowDone,
+          v => { rs.planShowDone = v; });
+        // 「隐藏详细 / 显示详细」＝任务行里的描述徽标与 #标签
+        toggleView(rs.planShowDetail ? "隐藏详细" : "显示详细", rs.planShowDetail,
+          v => { rs.planShowDetail = v; });
+        menu.addSeparator();
+      }
       this.topbarActions.forEach(a => {
         if (a.el?.hasClass("is-folded") && a.el !== moreBtn) {
           menu.addItem(item => item.setTitle(a.label).setIcon(a.icon).onClick(() => a.run()));
@@ -1502,6 +1534,7 @@ export class DaybookView extends ItemView {
       menu.showAtPosition({ x: Math.max(8, rect.right - 180), y: rect.bottom + 4 });
     });
     this.topbarMoreEl = moreBtn;
+    this.topbarMorePinned = !!isPlans;
 
     this.fitTopbar();
     this.applyTopbarInset();
@@ -1578,10 +1611,33 @@ export class DaybookView extends ItemView {
       last.el!.removeClass("is-folded");
       if (need() > right.clientWidth + 1) { last.el!.addClass("is-folded"); break; }
     }
-    more.toggleClass("is-folded", foldedCount() === 0);
+    // 计划章节的「···」装着视图开关（已完成 / 详细），没有折叠项也得留着
+    more.toggleClass("is-folded", foldedCount() === 0 && !this.topbarMorePinned);
   }
 
   /* ── 内容筛选 ── */
+
+  /** 顶栏「排序」：弹出分组 / 排序底部面板，点选即时生效并持久化 */
+  private openPlanSortPanel(): void {
+    const section = this._currentSection;
+    if (!section || section.type !== "plans") return;
+    const rs = this.plugin.settings.reviewState;
+    const apply = () => {
+      void this.plugin.saveSettings();
+      void this.todayPanel?.refresh(section.id);
+    };
+    openPlanSortSheet(this.app, {
+      getGroupBy: () => rs.planGroupBy,
+      getSortBy: () => rs.planSortBy,
+      onGroupBy: v => { rs.planGroupBy = v; apply(); },
+      onSortBy: v => { rs.planSortBy = v; apply(); },
+      onReset: () => {
+        rs.planGroupBy = DEFAULT_SETTINGS.reviewState.planGroupBy;
+        rs.planSortBy = DEFAULT_SETTINGS.reviewState.planSortBy;
+        apply();
+      },
+    });
+  }
 
   /** 取该章节的筛选条件（首次访问时建一份空条件；按章节各自保留） */
   getFilter(sectionId: string): SectionFilter {
@@ -1673,21 +1729,6 @@ export class DaybookView extends ItemView {
     const hide = this._currentSection?.type === "habits";
     this.todayHeadEl?.toggleClass("is-hidden", hide);
     this.todayHostEl?.toggleClass("is-hidden", hide);
-  }
-
-  /** 打开今日章节对应的日记文件 */
-  private revealTodayFile() {
-    try {
-      const path = resolveSectionPath(this.plugin.settings, this._currentSection);
-      const af = this.app.vault.getAbstractFileByPath(path);
-      if (af instanceof TFile) {
-        void this.app.workspace.getLeaf("tab").openFile(af);
-      } else {
-        new Notice("今日文件还未创建，先写一条记录吧～");
-      }
-    } catch (e) {
-      new Notice("无法打开今日文件");
-    }
   }
 
   /** 保存后局部刷新今日记录流（不重建输入区，保留草稿与滚动位置） */

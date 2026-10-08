@@ -751,171 +751,6 @@ body,
   color: var(--interactive-accent);
 }
 
-/* ── 计划详情弹窗（备注 + 子计划） ── */
-.db-plan-detail-modal h3 {
-  margin: 0 0 10px;
-}
-.db-plan-detail-task {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding-bottom: 4px;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-normal);
-}
-.db-plan-detail-title {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--background-modifier-border);
-  background: var(--background-primary);
-  color: var(--text-normal);
-  font-size: 14px;
-  font-weight: 600;
-}
-.db-plan-detail-props {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
-}
-/* 已放弃的任务：灰色淡化 + 斜体（区别于完成态的删除线） */
-.db-entry.abandoned .db-entry-todo-text > span {
-  font-style: italic;
-}
-.db-entry.abandoned .db-entry-todo-item,
-.db-entry.abandoned .db-entry-tags {
-  opacity: 0.5;
-}
-.db-entry.abandoned .db-entry-checkbox {
-  opacity: 0.5;
-}
-.db-plan-detail-due {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-muted);
-}
-.db-plan-detail-due.overdue { color: var(--color-red, #e74c3c); }
-.db-plan-detail-label {
-  margin: 14px 0 6px;
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-}
-.db-plan-detail-note {
-  width: 100%;
-  box-sizing: border-box;
-  resize: vertical;
-  min-height: 84px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--background-modifier-border);
-  background: var(--background-primary);
-  color: var(--text-normal);
-  font-size: 14px;
-  line-height: 1.5;
-}
-.db-plan-detail-note:focus-visible,
-.db-plan-detail-add-input:focus-visible {
-  outline: 2px solid var(--interactive-accent);
-  outline-offset: 1px;
-}
-.db-plan-detail-subs {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.db-plan-detail-subs-empty {
-  font-size: 13px;
-  color: var(--text-faint);
-  padding: 2px 0;
-}
-.db-plan-detail-sub {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  background: var(--background-secondary);
-}
-.db-plan-detail-sub.done { opacity: 0.6; }
-.db-plan-detail-sub.done .db-plan-detail-sub-text { text-decoration: line-through; }
-.db-plan-detail-sub-check {
-  flex-shrink: 0;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  border: 2px solid color-mix(in srgb, var(--interactive-accent) 55%, transparent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-.db-plan-detail-sub-check.checked {
-  background: var(--interactive-accent);
-  border-color: var(--interactive-accent);
-}
-.db-plan-detail-sub-check.checked::after {
-  content: "✓";
-  color: var(--text-on-accent);
-  font-size: 11px;
-  font-weight: 800;
-}
-.db-plan-detail-sub-check:focus-visible {
-  outline: 2px solid var(--interactive-accent);
-  outline-offset: 2px;
-}
-.db-plan-detail-sub-text {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 14px;
-  color: var(--text-normal);
-}
-.db-plan-detail-sub-del {
-  flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  font-size: 18px;
-  color: var(--text-faint);
-  cursor: pointer;
-  user-select: none;
-  -webkit-user-select: none;
-}
-.db-plan-detail-sub-del:hover {
-  color: var(--color-red, #e74c3c);
-  background: color-mix(in srgb, var(--color-red, #e74c3c) 12%, transparent);
-}
-.db-plan-detail-add-row {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-}
-.db-plan-detail-add-input {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--background-modifier-border);
-  background: var(--background-primary);
-  color: var(--text-normal);
-  font-size: 14px;
-}
-.db-plan-detail-add-btn {
-  flex-shrink: 0;
-}
-.is-phone .db-plan-detail-sub { padding: 10px 8px; }
-.is-phone .db-plan-detail-sub-del { width: 44px; height: 44px; }
-.is-phone .db-plan-detail-sub-check { width: 24px; height: 24px; }
-.is-phone .db-plan-detail-add-btn { min-height: 44px; }
-
 /* ── 闪念编辑器：格式化工具栏 ── */
 .db-memo-toolbar-slot:empty {
   display: none;
@@ -4407,30 +4242,8 @@ body .db-journal-root .db-filter-q:focus {
 
 /* ════════════════════════════════════════════════════════
    计划分组视图（滴答清单式：同组任务合并进一张原样计划卡片）
+   分组方式的切换入口已移到顶栏「排序」按钮（见文末底部面板样式）
    ════════════════════════════════════════════════════════ */
-.db-plan-seg {
-  display: flex;
-  flex-direction: row;
-  gap: 2px;
-  margin-left: auto;
-  padding: 2px;
-  border-radius: 8px;
-  background: var(--db-surface2);
-}
-.db-plan-seg-btn {
-  padding: 3px 10px;
-  border-radius: 6px;
-  font-size: 11px;
-  color: var(--db-text-muted);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.db-plan-seg-btn.active {
-  background: var(--db-surface);
-  color: var(--db-text);
-  font-weight: 700;
-  box-shadow: var(--db-shadow-sm);
-}
 .db-plan-group-card {
   margin-bottom: 10px;
 }
@@ -4454,6 +4267,16 @@ body .db-journal-root .db-filter-q:focus {
   border-bottom: 1px solid color-mix(in srgb, var(--db-border) 55%, transparent);
 }
 .db-plan-group-list .db-plan-group-row:last-child { border-bottom: none; }
+/* 随行标签：紧凑版胶囊，宽度受限，长任务文字让位给省略号 */
+.db-plan-group-tags {
+  display: flex;
+  flex-direction: row;
+  flex-shrink: 0;
+  gap: 4px;
+  max-width: 42%;
+  overflow: hidden;
+}
+.db-plan-group-tags .db-entry-tag { font-size: 10.5px; padding: 1px 7px; }
 /* 展开后的子任务行：缩进挂在父任务下面 */
 .db-plan-group-row.sub { padding-left: 30px; }
 .db-plan-group-row.sub .db-entry-checkbox { width: 16px; height: 16px; margin-top: 0; }
@@ -4488,7 +4311,6 @@ body .db-journal-root .db-filter-q:focus {
 .is-phone .db-plan-group-row.sub .db-entry-checkbox { width: 19px; height: 19px; }
 .is-phone .db-plan-group-row.sub .db-entry-todo-text { font-size: 13px; }
 .is-phone .db-plan-group-progress { font-size: 12px; padding: 4px 8px; }
-.is-phone .db-plan-seg-btn { padding: 7px 12px; font-size: 12px; }
 .is-phone .db-date-select-day { height: 42px; }
 
 /* ════════════════════════════════════════════════════════
@@ -4960,19 +4782,24 @@ body .db-journal-root .db-filter-q:focus {
 
 /* ════════════════════════════════════════════════════════
    桌面端编辑器卡片(flomo 桌面式, Phase 9)
+   ── 2026-10 风格对齐：参照计划输入条（无边框），去掉卡片外框、
+      内部编辑器边框与工具行分隔线，只保留一片干净的输入区域 ──
    ════════════════════════════════════════════════════════ */
 .db-editor-card {
-  background: var(--db-surface);
-  border: 1.5px solid var(--db-border);
+  background: transparent;
+  border: none;
   border-radius: 14px;
   padding: 12px 16px 10px;
   margin-bottom: 4px;
-  box-shadow: var(--db-shadow-sm);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: none;
 }
-.db-editor-card:focus-within {
-  border-color: var(--interactive-accent);
-  box-shadow: 0 0 0 2px var(--db-accent-soft);
+/* 编辑器外壳同计划一样去边框/去聚焦光圈 */
+.db-editor-card .db-live-editor,
+.db-editor-card .db-live-editor:focus-within {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 .db-editor-card .db-input-wrap { min-height: 120px; }
 .db-editor-card .cm-content,
@@ -4987,8 +4814,7 @@ body .db-journal-root .db-filter-q:focus {
   justify-content: space-between;
   gap: 8px;
   margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid color-mix(in srgb, var(--db-border) 60%, transparent);
+  padding-top: 4px;
 }
 .db-editor-tools {
   display: flex;
@@ -5078,27 +4904,6 @@ body .db-journal-root .db-filter-q:focus {
   font-weight: 700;
   color: var(--color-red, #e93147);
   font-variant-numeric: tabular-nums;
-}
-
-/* ══════════════════════════════════════════════════════
-   手机端：计划分组切换独占一行
-   （标题行放不下四个分段按钮，窄屏换行铺满，保证移动端可切换分组）
-   ══════════════════════════════════════════════════════ */
-@media (max-width: 600px) {
-  .db-today-head {
-    flex-wrap: wrap;
-    row-gap: 6px;
-  }
-  .db-today-head .db-plan-seg {
-    margin-left: 0;
-    width: 100%;
-  }
-  .db-today-head .db-plan-seg-btn {
-    flex: 1;
-    text-align: center;
-    padding: 6px 0;
-    font-size: 12px;
-  }
 }
 
 /* ══════════════════════════════════════════════════════
@@ -5205,19 +5010,628 @@ body .db-journal-root .db-filter-q:focus {
   white-space: nowrap;
 }
 
-/* 任务编辑弹窗：截止日期行的日历按钮 */
-.db-plan-detail-cal {
-  width: 34px;
-  height: 32px;
+/* ════════════════════════════════════════════════════════
+   任务详情页（TickTick 式：顶栏 + 勾选/日期 + 标题 + 子任务 + 描述 + 底部媒体栏）
+   桌面＝居中大卡片；移动端/安卓＝整屏抽屉页（自带收起按钮，避让状态栏安全区）
+   ════════════════════════════════════════════════════════ */
+.modal.db-task-detail-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(620px, 94vw);
+  max-height: min(88vh, 800px);
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--db-radius-lg);
+  background: var(--db-bg);
+}
+/* 用页面自带的收起按钮，隐藏 Obsidian 默认标题栏与右上角 × */
+.db-task-detail-modal .modal-header,
+.db-task-detail-modal .modal-close-button {
+  display: none;
+}
+.modal-content.db-task-detail {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: 0;
+  background: var(--db-bg);
+  color: var(--db-text);
+}
+
+/* ── 顶栏：左「收起」· 中「所属清单」· 右「更多」 ── */
+.db-td-head {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: center;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  background: var(--background-primary);
-  color: var(--text-muted);
-  cursor: pointer;
+  justify-content: space-between;
+  gap: 8px;
+  /* 移动端不顶状态栏/刘海：优先用原生层注入的 --safe-area-inset-top */
+  padding: calc(8px + var(--safe-area-inset-top, env(safe-area-inset-top, 0px))) 8px 8px;
+  border-bottom: 1px solid var(--db-border);
 }
-.db-plan-detail-cal:hover { color: var(--interactive-accent); }
-.db-plan-detail-cal svg { width: 17px; height: 17px; }
+.db-td-head-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--db-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.db-td-head-btn {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  color: var(--db-text-muted);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.db-td-head-btn:hover { background: var(--db-bg-hover); color: var(--db-text); }
+.db-td-head-btn:active { transform: scale(0.92); }
+.db-td-head-btn svg { width: 18px; height: 18px; stroke-width: 1.9; }
+.db-td-head-btn:focus-visible,
+.db-td-check:focus-visible,
+.db-td-due:focus-visible,
+.db-td-sub-check:focus-visible,
+.db-td-sub-handle:focus-visible,
+.db-td-foot-btn:focus-visible,
+.db-td-sheet-row:focus-visible,
+.db-td-sheet-icon:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+/* ── 更多弹层：遮罩 + 底部动作面板（置顶/放弃/删除 图标 + 添加子任务/复制链接 横版） ── */
+.db-td-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: color-mix(in srgb, var(--background-modifier-cover, #000) 55%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+.db-td-scrim.is-open { opacity: 1; pointer-events: auto; }
+.db-td-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 21;
+  padding: 6px 0 calc(8px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  background: var(--db-surface);
+  border-top: 1px solid var(--db-border);
+  border-radius: var(--db-radius-lg) var(--db-radius-lg) 0 0;
+  box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.12);
+  transform: translateY(105%);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease;
+  will-change: transform;
+}
+.db-td-sheet.is-open { transform: translateY(0); opacity: 1; pointer-events: auto; }
+.db-td-sheet-icons {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 8px 12px 12px;
+  border-bottom: 1px solid var(--db-border);
+}
+.db-td-sheet-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  min-width: 56px;
+  padding: 6px 4px;
+  border-radius: 10px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease, transform 0.1s ease;
+}
+.db-td-sheet-icon:hover { background: var(--db-bg-hover); }
+.db-td-sheet-icon:active { transform: scale(0.94); }
+.db-td-sheet-icon-glyph {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--db-text-muted) 45%, transparent);
+  color: var(--db-text-secondary);
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+.db-td-sheet-icon-glyph svg { width: 16px; height: 16px; stroke-width: 1.9; }
+.db-td-sheet-icon-label { font-size: 11.5px; color: var(--db-text-muted); }
+/* 已置顶 / 已放弃：图标点亮 */
+.db-td-sheet-icon.is-active .db-td-sheet-icon-glyph {
+  border-color: var(--db-accent);
+  color: var(--db-accent);
+  background: var(--db-accent-soft);
+}
+.db-td-sheet-icon.is-active .db-td-sheet-icon-label { color: var(--db-accent); font-weight: 600; }
+.db-td-sheet-icon.td-delete:hover .db-td-sheet-icon-glyph {
+  border-color: var(--color-red, #e74c3c);
+  color: var(--color-red, #e74c3c);
+}
+.db-td-sheet-icon.td-delete:hover .db-td-sheet-icon-label { color: var(--color-red, #e74c3c); }
+.db-td-sheet-list { padding: 4px 0 2px; }
+.db-td-sheet-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 18px;
+  font-size: 14px;
+  color: var(--db-text);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.12s ease;
+}
+.db-td-sheet-row:hover { background: var(--db-bg-hover); }
+.db-td-sheet-row-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  color: var(--db-text-muted);
+}
+.db-td-sheet-row-icon svg { width: 16px; height: 16px; stroke-width: 1.9; }
+.db-td-sheet-row-label { flex: 1 1 auto; min-width: 0; }
+
+/* ── 正文（可滚动） ── */
+.db-td-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 20px 20px;
+}
+.db-td-hrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+/* 父任务勾选框：沿用列表的勾选语言（圆形＝普通；有子任务且未完成＝圆角方块 + 列表图标） */
+.db-td-check {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--db-accent) 55%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+.db-td-check:active { transform: scale(0.9); }
+.db-td-check.checked { background: var(--db-accent); border-color: var(--db-accent); }
+.db-td-check.checked::after {
+  content: "✓";
+  color: var(--text-on-accent);
+  font-size: 13px;
+  font-weight: 800;
+}
+.db-td-check.has-kids:not(.checked) {
+  border-radius: 7px;
+  border-color: color-mix(in srgb, var(--db-text-muted) 70%, transparent);
+  color: var(--db-text-muted);
+}
+.db-td-check.has-kids:not(.checked):hover { border-color: var(--db-accent); color: var(--db-accent); }
+.db-td-check.has-kids svg { width: 14px; height: 14px; stroke-width: 2.2; }
+
+/* 截止日期三态：未设置（日历图标 + 提示）/ 正常 / 逾期（红） */
+.db-td-due {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--db-text-muted);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.db-td-due:hover { background: var(--db-bg-hover); }
+.db-td-due-cal { display: flex; align-items: center; }
+.db-td-due-cal svg { width: 14px; height: 14px; stroke-width: 1.9; }
+.db-td-due-wd { font-weight: 600; color: var(--db-text-sub); }
+.db-td-due-date { font-variant-numeric: tabular-nums; }
+.db-td-due.is-set { color: var(--db-text-secondary); }
+.db-td-due.is-set .db-td-due-wd { color: var(--db-text-muted); }
+.db-td-due.is-overdue {
+  color: var(--color-red, #e74c3c);
+  background: color-mix(in srgb, var(--color-red, #e74c3c) 10%, transparent);
+}
+.db-td-due.is-overdue .db-td-due-wd { color: var(--color-red, #e74c3c); opacity: 0.8; }
+.db-td-due-flag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--color-red, #e74c3c) 22%, transparent);
+}
+
+/* 任务主题（选择器带上元素名，压过 Obsidian 对 input[type=text] 的默认边框/底色） */
+.db-td-body input.db-td-title {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  margin: 12px 0 0;
+  padding: 2px 0 6px;
+  border: none;
+  border-bottom: 1.5px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--db-text);
+}
+.db-td-body input.db-td-title::placeholder { color: var(--db-text-sub); font-weight: 500; }
+.db-td-body input.db-td-title:hover { border-bottom-color: var(--db-border); }
+.db-td-body input.db-td-title:focus {
+  border-bottom-color: var(--interactive-accent);
+  outline: none;
+  box-shadow: none;
+}
+
+.db-td-label {
+  margin: 18px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--db-text-sub);
+}
+
+/* 子任务：勾选 + 文本 + 右侧拖拽把手 */
+.db-td-subs { display: flex; flex-direction: column; }
+.db-td-sub {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 2px;
+  border-radius: 8px;
+  transition: background-color 0.12s ease, box-shadow 0.12s ease;
+}
+.db-td-sub:hover { background: var(--db-bg-hover); }
+.db-td-sub:hover .db-td-sub-handle { opacity: 1; }
+.db-td-sub.dragging {
+  z-index: 5;
+  background: var(--db-surface);
+  box-shadow: var(--db-shadow-md);
+  opacity: 0.96;
+}
+.db-td-sub-check {
+  flex-shrink: 0;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--db-accent) 55%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.db-td-sub-check.checked { background: var(--db-accent); border-color: var(--db-accent); }
+.db-td-sub-check.checked::after {
+  content: "✓";
+  color: var(--text-on-accent);
+  font-size: 11px;
+  font-weight: 800;
+}
+.db-td-sub > input.db-td-sub-text {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: auto;
+  padding: 2px 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--db-text);
+}
+.db-td-sub > input.db-td-sub-text:focus { outline: none; box-shadow: none; }
+.db-td-sub.done input.db-td-sub-text {
+  color: var(--db-text-sub);
+  text-decoration: line-through;
+  opacity: 0.78;
+}
+.db-td-sub-handle {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--db-text-sub);
+  opacity: 0.35;
+  cursor: grab;
+  /* 触屏拖动必须关闭浏览器手势，否则手指按住会变成滚动 */
+  touch-action: none;
+  user-select: none;
+}
+.db-td-sub-handle:active { cursor: grabbing; opacity: 1; }
+.db-td-sub-handle svg { width: 15px; height: 15px; stroke-width: 2; }
+
+/* 添加子任务 */
+.db-td-sub-add { display: flex; align-items: center; gap: 8px; padding: 4px 0 0; }
+.db-td-sub-add > input.db-td-sub-add-input {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: auto;
+  padding: 7px 10px;
+  border: 1px dashed var(--db-border);
+  border-radius: 9px;
+  background: transparent;
+  font-size: 13.5px;
+  color: var(--db-text);
+}
+.db-td-sub-add > input.db-td-sub-add-input::placeholder { color: var(--db-text-sub); }
+.db-td-sub-add > input.db-td-sub-add-input:focus {
+  outline: none;
+  border-style: solid;
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 3px var(--db-accent-soft);
+}
+.db-td-sub-add-btn {
+  flex-shrink: 0;
+  padding: 7px 14px;
+  border: none;
+  border-radius: 9px;
+  background: var(--db-accent);
+  color: var(--text-on-accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: none;
+  transition: background-color 0.15s ease, transform 0.1s ease;
+}
+.db-td-sub-add-btn:hover { background: var(--db-accent-hover); }
+.db-td-sub-add-btn:active { transform: scale(0.96); }
+
+/* 描述：扁平、无边框（图片 / 录音嵌入都写在这里）
+   降级方案（移动端）外壳是 .db-live-editor-fallback、内层 textarea 是 .db-live-textarea；
+   桌面 CM6 走 .cm-editor —— 两种都要抹平边框与内边距 */
+.db-td-desc { margin-top: 2px; }
+.db-td-desc .db-live-editor {
+  width: 100%;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+.db-td-desc .db-live-editor .cm-editor,
+.db-td-desc .db-live-textarea {
+  padding: 0;
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--db-text-secondary);
+}
+.db-td-desc .db-live-textarea {
+  min-height: 72px;
+  border-radius: 0;
+  resize: vertical;
+}
+.db-td-desc .db-live-editor .cm-content { min-height: 44px; }
+.db-td-desc .db-live-editor:focus-within { border: none; box-shadow: none; }
+.db-td-desc .db-live-textarea:focus { outline: none; box-shadow: none; }
+.db-td-desc .db-live-editor .cm-content img {
+  max-width: 100%;
+  border-radius: var(--db-radius-sm);
+}
+
+/* ── 底栏：标签 / 图片 / 录音 ── */
+.db-td-foot {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px calc(8px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  border-top: 1px solid var(--db-border);
+  background: var(--db-surface);
+}
+.db-td-foot-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  color: var(--db-text-muted);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+.db-td-foot-btn:hover {
+  background: var(--db-accent-soft);
+  color: var(--db-accent);
+}
+.db-td-foot-btn:active { transform: scale(0.92); }
+.db-td-foot-btn svg { width: 17px; height: 17px; stroke-width: 1.9; }
+.db-td-foot-btn.recording {
+  color: var(--color-red, #ef4444);
+  background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
+  animation: db-pulse 1.2s ease-in-out infinite;
+}
+
+/* ══ 移动端 / 安卓：整屏抽屉页（靠页内收起按钮返回，不遮盖系统状态栏） ══ */
+.is-phone .modal-container:has(.db-task-detail-modal) {
+  padding: 0;
+}
+.is-phone .modal.db-task-detail-modal {
+  width: 100vw;
+  max-width: 100vw;
+  height: 100vh;
+  max-height: 100vh;
+  margin: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+@supports (height: 100dvh) {
+  .is-phone .modal.db-task-detail-modal {
+    height: 100dvh;
+    max-height: 100dvh;
+  }
+}
+.is-phone .db-td-head {
+  padding: calc(10px + var(--safe-area-inset-top, env(safe-area-inset-top, 0px))) 8px 10px;
+}
+.is-phone .db-td-head-btn { width: 40px; height: 40px; border-radius: 12px; }
+.is-phone .db-td-head-btn svg { width: 20px; height: 20px; }
+.is-phone .db-td-head-title { font-size: 14px; }
+.is-phone .db-td-body { padding: 18px 16px 24px; }
+.is-phone .db-td-hrow { gap: 10px; }
+.is-phone .db-td-check { width: 27px; height: 27px; }
+.is-phone .db-td-check.checked::after { font-size: 14px; }
+.is-phone .db-td-check.has-kids svg { width: 15px; height: 15px; }
+.is-phone .db-td-due { padding: 7px 11px; font-size: 13.5px; }
+.is-phone .db-td-body input.db-td-title { font-size: 20px; margin-top: 14px; }
+.is-phone .db-td-label { margin-top: 22px; font-size: 12.5px; }
+/* 拇指热区：子任务整行 ≥44px，把手放大到可按住拖动 */
+.is-phone .db-td-sub { padding: 11px 4px; gap: 12px; }
+.is-phone .db-td-sub-check { width: 22px; height: 22px; }
+.is-phone .db-td-sub-check.checked::after { font-size: 12px; }
+.is-phone .db-td-sub > input.db-td-sub-text { font-size: 15px; }
+.is-phone .db-td-sub-handle { width: 40px; height: 40px; opacity: 0.5; }
+.is-phone .db-td-sub-handle svg { width: 18px; height: 18px; }
+.is-phone .db-td-sub-add { gap: 10px; padding-top: 8px; }
+.is-phone .db-td-sub-add > input.db-td-sub-add-input { padding: 11px 12px; font-size: 14px; }
+.is-phone .db-td-sub-add-btn { padding: 11px 16px; font-size: 14px; }
+.is-phone .db-td-desc .db-live-editor .cm-editor,
+.is-phone .db-td-desc .db-live-textarea { font-size: 14.5px; line-height: 1.8; }
+.is-phone .db-td-foot { gap: 4px; padding: 8px 10px calc(8px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))); }
+.is-phone .db-td-foot-btn { width: 44px; height: 44px; border-radius: 12px; }
+.is-phone .db-td-foot-btn svg { width: 20px; height: 20px; }
+.is-phone .db-td-sheet { padding-bottom: calc(10px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))); }
+.is-phone .db-td-sheet-icons { padding: 10px 14px 14px; gap: 6px; }
+.is-phone .db-td-sheet-icon { min-width: 62px; padding: 8px 4px; }
+.is-phone .db-td-sheet-icon-glyph { width: 40px; height: 40px; }
+.is-phone .db-td-sheet-icon-glyph svg { width: 19px; height: 19px; }
+.is-phone .db-td-sheet-icon-label { font-size: 12px; }
+.is-phone .db-td-sheet-row { padding: 14px 18px; font-size: 15px; gap: 14px; }
+.is-phone .db-td-sheet-row-icon svg { width: 18px; height: 18px; }
+
+/* ════════════════════════════════════════════════════════
+   计划「分组 / 排序」底部面板（顶栏排序按钮弹出，约 1/3 屏高）
+   ════════════════════════════════════════════════════════ */
+/* 贴底：不用 Obsidian 默认的居中弹窗盒型，fixed 直接锚视口，
+   桌面/安卓表现一致，也不依赖 .modal-container 的对齐方式 */
+.modal.db-plan-sort-modal {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, 100vw);
+  max-height: 42vh;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--db-border);
+  border-bottom: none;
+  border-radius: var(--db-radius-lg) var(--db-radius-lg) 0 0;
+  background: var(--db-surface);
+  box-shadow: var(--db-shadow-md);
+  animation: db-plan-sort-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes db-plan-sort-in {
+  from { transform: translate(-50%, 14px); opacity: 0; }
+  to { transform: translate(-50%, 0); opacity: 1; }
+}
+/* 面板自带「点外面 / Esc」关闭，不需要原生标题栏与 × */
+.db-plan-sort-modal .modal-header,
+.db-plan-sort-modal .modal-close-button { display: none; }
+.modal-content.db-plan-sort {
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px 6px;
+  overflow-y: auto;
+  background: transparent;
+  color: var(--db-text);
+}
+.db-plan-sort-label {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--db-text-sub);
+}
+.db-plan-sort-values {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.db-plan-sort-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 5px 16px;
+  border-radius: 999px;
+  background: var(--db-surface2);
+  color: var(--db-text);
+  font-size: 13px;
+  line-height: 1.2;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+.db-plan-sort-chip:hover { background: var(--db-bg-hover); }
+.db-plan-sort-chip:active { transform: scale(0.96); }
+.db-plan-sort-chip.active {
+  background: var(--db-accent);
+  color: var(--text-on-accent);
+  font-weight: 700;
+}
+.db-plan-sort-chip:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+.db-plan-sort-reset {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 10px 0 calc(8px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  margin: 0 -16px;
+  border-top: 1px solid color-mix(in srgb, var(--db-border) 55%, transparent);
+  color: var(--db-text-sub);
+  font-size: 12.5px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.db-plan-sort-reset:hover { background: var(--db-bg-hover); color: var(--db-text); }
+.db-plan-sort-reset:active { transform: scale(0.99); }
+.db-plan-sort-reset-icon { display: inline-flex; }
+.db-plan-sort-reset-icon svg { width: 13px; height: 13px; stroke-width: 2; }
+
+/* 手机端：胶囊按拇指热区放大，两行选项不至于挤成一团 */
+.is-phone .modal.db-plan-sort-modal { width: 100vw; max-height: 46vh; }
+.is-phone .db-plan-sort-chip { min-height: 40px; padding: 8px 18px; font-size: 14px; }
+.is-phone .db-plan-sort-label { font-size: 12.5px; }
+.is-phone .db-plan-sort-reset { padding: 14px 0 calc(12px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))); font-size: 13px; }

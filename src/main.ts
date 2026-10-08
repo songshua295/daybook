@@ -6,6 +6,9 @@ import {
   DaybookSettingTab,
   DEFAULT_SETTINGS,
   type PanelConfig,
+  type PlanGroupBy,
+  type PlanSortKey,
+  type ReviewViewState,
 } from "./settings";
 import { migrateLegacyHabits } from "./habitManager";
 import { CompletionFeedback } from "./feedback";
@@ -127,14 +130,27 @@ export default class DaybookPlugin extends Plugin {
     }
     if (dirty) await this.saveSettings();
 
-    // 迁移：任务总览分组方式是从未接线的遗留默认值（"none"），一次性切到"按优先级"；
-    // 之后用户在面板里切换会正常持久化，不再被覆盖
-    const rs = this.settings.reviewState;
-    if (!rs.planGroupByDefaulted) {
-      if (rs.planGroupBy === "none") rs.planGroupBy = "priority";
-      rs.planGroupByDefaulted = true;
-      await this.saveSettings();
-    }
+    // 计划视图偏好：浅合并会让旧的 reviewState 整体覆盖新默认值（新字段变 undefined），
+    // 所以这里单独深合并一份，再把旧版本的分组/排序取值映射过来。
+    // 顺带清掉从未接线的遗留键（groupVisible / filterCompletion / groupOrder …）。
+    const rawRs = (loaded?.reviewState ?? {}) as unknown as Record<string, unknown>;
+    // 旧「平铺」＝按创建日期分天；旧「date」＝按截止日期分桶
+    const groupMap: Record<string, PlanGroupBy> = {
+      none: "created", date: "due", priority: "priority", tag: "tag",
+      created: "created",
+    };
+    const sortMap: Record<string, PlanSortKey> = {
+      time: "created", created: "created", due: "due", priority: "priority", title: "title",
+    };
+    const dft = DEFAULT_SETTINGS.reviewState;
+    const migrated: ReviewViewState = {
+      planGroupBy: groupMap[String(rawRs.planGroupBy ?? "")] ?? dft.planGroupBy,
+      planSortBy: sortMap[String(rawRs.planSortBy ?? "")] ?? dft.planSortBy,
+      planShowDone: typeof rawRs.planShowDone === "boolean" ? rawRs.planShowDone : dft.planShowDone,
+      planShowDetail: typeof rawRs.planShowDetail === "boolean" ? rawRs.planShowDetail : dft.planShowDetail,
+    };
+    this.settings.reviewState = migrated;
+    if (JSON.stringify(rawRs) !== JSON.stringify(migrated)) await this.saveSettings();
   }
 
   async saveSettings() {
