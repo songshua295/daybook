@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, setIcon, moment, Platform } from "obsidian";
+import { App, Component, ItemView, WorkspaceLeaf, setIcon, moment } from "obsidian";
 import type DaybookPlugin from "./main";
 import { readAllJournalEntries, formatDateLabel, planTodoProgress, type DayGroup, type JournalEntry } from "./fileReader";
 import { checkinState, isExecuteDay, loadHabits, type CheckinRow, type HabitConfig } from "./habitManager";
@@ -10,14 +10,26 @@ export const VIEW_TYPE_DASHBOARD = "daybook-dashboard-view";
    DashboardView — Apple HIG × Obsidian Native
    零依赖 · 纯 DOM API · setIcon(Lucide)
    所有统计均来自真实日记数据，控制项直接读写插件设置
+
+   DashboardPage：可嵌入的面板组件，由闪念视图作为"页内新页面"渲染；
+   DashboardView：独立标签页兼容壳（旧 workspace 布局恢复时用），内部复用 DashboardPage。
    ════════════════════════════════════════════════════════ */
 
 interface SegmentTab { id: string; label: string; icon: string; }
 interface StatCard { icon: string; label: string; value: string; sublabel?: string; accent?: boolean; }
 interface ToggleConfig { icon: string; title: string; subtitle: string; enabled: boolean; onToggle: (v: boolean) => void; }
 
-export class DashboardView extends ItemView {
+export class DashboardPage extends Component {
+  app: App;
   plugin: DaybookPlugin;
+  /** 渲染宿主：由调用方创建并负责移除；本组件只负责填充 */
+  private hostEl: HTMLElement;
+  /** 原生 .view-header 所在的查询范围（叶子容器） */
+  private scopeEl: HTMLElement;
+  /** 宿主追加类名（页内新页面样式），与 db-root 并存 */
+  private extraClass: string;
+  /** 页内嵌入时的"返回"回调：标题栏显示返回箭头；独立标签页模式不传 */
+  private onBack: (() => void) | null;
   private activeTab = "overview";
   private rootEl!: HTMLElement;
   private compactView = false;
@@ -27,43 +39,25 @@ export class DashboardView extends ItemView {
   private loaded = false;
   private loading = false;
 
-  constructor(leaf: WorkspaceLeaf, plugin: DaybookPlugin) { super(leaf); this.plugin = plugin; }
-  getViewType(): string { return VIEW_TYPE_DASHBOARD; }
-  getDisplayText(): string { return "Daybook Dashboard"; }
-  getIcon(): string { return "layout-dashboard"; }
+  constructor(app: App, plugin: DaybookPlugin, hostEl: HTMLElement, scopeEl: HTMLElement, extraClass = "", onBack?: () => void) {
+    super();
+    this.app = app;
+    this.plugin = plugin;
+    this.hostEl = hostEl;
+    this.scopeEl = scopeEl;
+    this.extraClass = extraClass;
+    this.onBack = onBack ?? null;
+  }
 
-  async onOpen() {
+  /** 挂载 + 加载 + 渲染（宿主页面或 ItemView 壳调用） */
+  async open(): Promise<void> {
+    this.load();
     await this.loadData();
     this.render();
     // 原生标题栏显隐/尺寸变化会改变与内容的重叠量（与闪念主页同方案）
     this.registerEvent(this.app.workspace.on("resize", () => this.applyHeaderInset()));
-    this.armAndroidBackClose();
   }
-  async onClose() {
-    // 未走返回键就关闭视图（点 ×、切走等）时，回收哨兵历史条目，
-    // 否则下一次按返回会被这条"空历史"吞掉一次
-    if (this.backSentinelArmed) {
-      this.backSentinelArmed = false;
-      window.history.back();
-    }
-  }
-
-  /**
-   * Android 返回键适配：自定义视图不产生原生可后退的历史，按返回键会直接退出应用。
-   * 打开时向 WebView 压入一条哨兵 history 条目；系统返回键弹出它并触发 popstate，
-   * 在回调里分离本视图的 leaf，效果即"返回上一个页面"。仅移动端启用。
-   */
-  private backSentinelArmed = false;
-  private armAndroidBackClose(): void {
-    if (!Platform.isMobileApp) return;
-    this.backSentinelArmed = true;
-    window.history.pushState({ daybookBack: VIEW_TYPE_DASHBOARD }, "");
-    this.registerDomEvent(window, "popstate", () => {
-      if (!this.backSentinelArmed) return; // onClose 主动回收时忽略这一次
-      this.backSentinelArmed = false;
-      void this.leaf.detach();
-    });
-  }
+  close(): void { this.unload(); }
 
   /* ── 数据加载 ── */
   private async loadData() {
@@ -84,8 +78,9 @@ export class DashboardView extends ItemView {
 
   /* ── 主渲染 ── */
   render() {
-    const root = this.containerEl.children[1] as HTMLElement;
-    root.empty(); root.setAttribute("class", "db-root" + (this.compactView ? " db-compact" : ""));
+    const root = this.hostEl;
+    root.empty();
+    root.setAttribute("class", ["db-root", this.extraClass, this.compactView ? "db-compact" : ""].filter(Boolean).join(" "));
     this.rootEl = root;
     this.buildHeader(root);
     this.buildSegmentedControl(root);
@@ -99,7 +94,7 @@ export class DashboardView extends ItemView {
   private applyHeaderInset(): void {
     const header = this.rootEl?.querySelector(".db-header") as HTMLElement | null;
     if (!header) return;
-    const native = this.containerEl.querySelector(".view-header") as HTMLElement | null;
+    const native = this.scopeEl.querySelector(".view-header") as HTMLElement | null;
     let inset = 0;
     if (native && native.offsetHeight > 0) {
       const nBottom = native.getBoundingClientRect().bottom;
@@ -115,7 +110,20 @@ export class DashboardView extends ItemView {
   /* ═══ 1. Header Bar ═══ */
   private buildHeader(root: HTMLElement) {
     const header = root.createDiv({ cls: "db-header" });
-    const titleGroup = header.createDiv({ cls: "db-header-title-group" });
+    // 页内新页面：标题左侧加返回箭头，点按揭开本页回到闪念
+    let titleGroup: HTMLElement;
+    if (this.onBack) {
+      const left = header.createDiv({ cls: "db-header-left" });
+      const backBtn = left.createDiv({ cls: "db-icon-btn db-header-back", attr: { "aria-label": "返回", role: "button", tabindex: "0" } });
+      setIcon(backBtn, "chevron-left");
+      backBtn.addEventListener("click", () => this.onBack?.());
+      backBtn.addEventListener("keydown", (e) => {
+        if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); this.onBack?.(); }
+      });
+      titleGroup = left.createDiv({ cls: "db-header-title-group" });
+    } else {
+      titleGroup = header.createDiv({ cls: "db-header-title-group" });
+    }
     const title = titleGroup.createDiv({ cls: "db-header-title" });
     setIcon(title, "book-open");
     title.createSpan({ text: "Daybook", cls: "db-header-title-text" });
@@ -380,5 +388,25 @@ export class DashboardView extends ItemView {
       { icon: "hash", label: "标签使用", value: String(tags.size), sublabel: "个不同标签" },
       { icon: "droplets", label: "本周打卡", value: String(weekCheckins), sublabel: "次" },
     ];
+  }
+}
+
+/** 兼容壳：旧 workspace 布局里恢复的独立标签页视图类型，内容复用 DashboardPage */
+export class DashboardView extends ItemView {
+  plugin: DaybookPlugin;
+  private page: DashboardPage | null = null;
+
+  constructor(leaf: WorkspaceLeaf, plugin: DaybookPlugin) { super(leaf); this.plugin = plugin; }
+  getViewType(): string { return VIEW_TYPE_DASHBOARD; }
+  getDisplayText(): string { return "Daybook Dashboard"; }
+  getIcon(): string { return "layout-dashboard"; }
+
+  async onOpen() {
+    this.page = new DashboardPage(this.app, this.plugin, this.containerEl.children[1] as HTMLElement, this.containerEl);
+    await this.page.open();
+  }
+  async onClose() {
+    this.page?.close();
+    this.page = null;
   }
 }

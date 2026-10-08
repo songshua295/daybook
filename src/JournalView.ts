@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Notice, moment, TFile, Modal, Menu, setIcon, debounce } from "obsidian";
+import { ItemView, WorkspaceLeaf, Notice, moment, TFile, Modal, Menu, setIcon, debounce, Platform } from "obsidian";
 import type DaybookPlugin from "./main";
 import { appendToSection, resolveSectionPath } from "./fileManager";
 import { createPriorityBadge, effectivePriority, PRIORITY_META, readAllJournalEntries, type PriorityLevel } from "./fileReader";
@@ -19,6 +19,7 @@ import {
   type StatusFilter,
 } from "./filters";
 import { attachMemoEditor } from "./memoEditor";
+import { DashboardPage } from "./DashboardView";
 import { createLiveEditor, type LiveEditor, type LiveEditorOptions } from "./liveEditor";
 import {
   loadHabits,
@@ -998,6 +999,11 @@ export class DaybookView extends ItemView {
   private habitsRerender: (() => void) | null = null;
   /** 最近一次整页渲染的日期（YYYY-MM-DD）：切回标签页时用于检测跨天 */
   private renderedDate = moment().format("YYYY-MM-DD");
+  /* ── 页内新页面：Dashboard 在本视图内部渲染（不走标签页系统），硬件返回键揭开 ── */
+  private dashEl: HTMLElement | null = null;
+  private dashPage: DashboardPage | null = null;
+  private dashHiddenEls: HTMLElement[] = [];
+  private dashSentinelArmed = false;
 
   constructor(leaf: WorkspaceLeaf, plugin: DaybookPlugin) {
     super(leaf);
@@ -1013,6 +1019,13 @@ export class DaybookView extends ItemView {
     this.activeSectionId = this.plugin.settings.lastSectionId || this.activeSectionId;
     this.buildUI();
     this.setupViewportAdapter();
+    // Android 返回键哨兵弹出（Dashboard 新页打开期间 armed）：揭开新页而不是退出应用
+    this.registerDomEvent(window, "popstate", () => {
+      if (this.dashSentinelArmed) {
+        this.dashSentinelArmed = false;
+        this.closeDashboard(false);
+      }
+    });
   }
 
   async onClose() {
@@ -1269,6 +1282,8 @@ export class DaybookView extends ItemView {
   }
 
   buildUI() {
+    // 整页重建会清空 DOM：先揭开并释放 Dashboard 新页，避免残留死引用与哨兵历史
+    this.closeDashboard();
     const root = this.containerEl.children[1] as HTMLElement;
     this.renderedDate = moment().format("YYYY-MM-DD");
     this.destroyLiveEditors();
@@ -1729,6 +1744,55 @@ export class DaybookView extends ItemView {
     const hide = this._currentSection?.type === "habits";
     this.todayHeadEl?.toggleClass("is-hidden", hide);
     this.todayHostEl?.toggleClass("is-hidden", hide);
+  }
+
+  /* ── 页内新页面：Dashboard ──
+     闪念本体只隐藏不销毁（滚动位置、草稿、选中态全保留），
+     Dashboard 作为文档流里的"下一页"填充视图；安卓返回键通过
+     WebView 哨兵历史揭开本页。不用绝对定位覆盖，原生头部层级不受影响。 */
+  openDashboard(): void {
+    if (this.dashEl) return;
+    const root = this.containerEl.children[1] as HTMLElement;
+    const candidates = [
+      root.querySelector(".db-topbar"),
+      this.filterHostEl,
+      root.querySelector(".db-scroll"),
+    ];
+    this.dashHiddenEls = candidates.filter(
+      (el): el is HTMLElement => el instanceof HTMLElement && el.style.display !== "none"
+    );
+    this.dashHiddenEls.forEach(el => {
+      el.dataset.dbPrevDisplay = el.style.display;
+      el.style.display = "none";
+    });
+    const host = root.createDiv({ cls: "db-page-dashboard" });
+    this.dashEl = host;
+    this.dashPage = new DashboardPage(this.app, this.plugin, host, this.containerEl, "db-page-dashboard", () => this.closeDashboard());
+    void this.dashPage.open();
+    // 哨兵历史条目：返回键弹出它 → popstate 揭开新页；没有条目时返回键会直接退出应用
+    if (Platform.isMobileApp) {
+      this.dashSentinelArmed = true;
+      window.history.pushState({ daybookBack: "dashboard-page" }, "");
+    }
+  }
+
+  closeDashboard(reclaimSentinel = true): void {
+    if (!this.dashEl) return;
+    const armed = this.dashSentinelArmed;
+    this.dashSentinelArmed = false;
+    // 非返回键路径关闭（切章节、关视图等）：回收未消费的哨兵，避免吞掉下一次返回
+    if (reclaimSentinel && armed) window.history.back();
+    this.dashPage?.close();
+    this.dashPage = null;
+    this.dashEl.remove();
+    this.dashEl = null;
+    this.dashHiddenEls.forEach(el => {
+      el.style.display = el.dataset.dbPrevDisplay || "";
+      delete el.dataset.dbPrevDisplay;
+    });
+    this.dashHiddenEls = [];
+    // 顶栏刚从 display:none 恢复，重测折叠布局
+    this.fitTopbar();
   }
 
   /** 保存后局部刷新今日记录流（不重建输入区，保留草稿与滚动位置） */

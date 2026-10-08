@@ -188,14 +188,21 @@ export default class DaybookPlugin extends Plugin {
     workspace.revealLeaf(leaf);
   }
 
-  /** 激活 Dashboard 视图 */
+  /** Dashboard：在日记视图内部以"下一页"形式打开（不新建标签页/leaf），
+   *  日记页只隐藏不销毁，滚动位置与草稿原样保留；返回键揭开本页 */
   async activateDashboard() {
     const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD)[0];
-    if (!leaf) {
-      leaf = workspace.getLeaf(true);
-      await leaf.setViewState({ type: VIEW_TYPE_DASHBOARD, active: true });
+    // 旧版独立 Dashboard 标签页（恢复的工作区里可能存在）：直接聚焦展示
+    const legacy = workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD)[0];
+    if (legacy) {
+      workspace.revealLeaf(legacy);
+      return;
     }
-    workspace.revealLeaf(leaf);
+    let view = this.getJournalView();
+    if (!view) {
+      await this.activateView();
+      view = this.getJournalView();
+    }
+    view?.openDashboard();
   }
 }

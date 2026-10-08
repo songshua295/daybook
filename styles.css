@@ -1575,6 +1575,22 @@ body,
 }
 .db-root * { box-sizing: border-box; }
 
+/* ── 页内新页面：Dashboard 嵌在闪念视图 .db-root 内，随文档流占满剩余高度 ──
+   （覆盖 .db-root 的 height:100%：flex 子项用 flex 撑满，min-height:0 让内部滚动生效） */
+.db-root.db-page-dashboard {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  animation: db-page-push 0.18s ease-out;
+}
+@keyframes db-page-push {
+  from { transform: translateX(18%); opacity: 0.3; }
+  to   { transform: none; opacity: 1; }
+}
+/* 页内模式的返回箭头：与标题紧凑排列 */
+.db-header-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.db-header-back { flex: 0 0 auto; }
+
 /* ════════════════════════════════════════════════════════
    1. Header Bar
    ════════════════════════════════════════════════════════ */
