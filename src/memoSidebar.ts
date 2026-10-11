@@ -42,15 +42,15 @@ export class MemoSidebar {
     const drawer = overlay.createDiv({ cls: "db-memo-sidebar" });
     drawer.addEventListener("click", e => e.stopPropagation());
 
-    // 头部：标题 + 关闭
+    // 头部：关闭 + 标题（✕ 在左好点，标题靠右；与筛选抽屉同布局）
     const head = drawer.createDiv({ cls: "db-memo-sidebar-head" });
-    head.createSpan({ cls: "db-memo-sidebar-title", text: this.opts.section.label });
     const closeBtn = head.createDiv({
       cls: "db-memo-sidebar-close",
       attr: { role: "button", "aria-label": "关闭" },
     });
     setIcon(closeBtn, "x");
     closeBtn.addEventListener("click", () => this.close());
+    head.createSpan({ cls: "db-memo-sidebar-title", text: this.opts.section.label });
 
     const body = drawer.createDiv({ cls: "db-memo-sidebar-body" });
     const loading = body.createDiv({ cls: "db-memo-sidebar-loading", text: "统计中…" });

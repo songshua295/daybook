@@ -985,16 +985,14 @@ export class DaybookView extends ItemView {
   private sectionFilters: Record<string, SectionFilter> = {};
   private filterPanel: FilterPanel | null = null;
   private filterOpen = false;
-  private filterHostEl: HTMLElement | null = null;
+  /** 筛选抽屉浮层（与闪念统计抽屉同呈现：左侧滑出 + 遮罩） */
+  private filterOverlayEl: HTMLElement | null = null;
   private filterBtnEl: HTMLElement | null = null;
   private todayHeadEl: HTMLElement | null = null;
-  // 顶栏（memos 式三区）：右区操作按钮 + 「＋」溢出菜单，窄屏由 fitTopbar 折叠
+  // 顶栏（memos 式三区）：右区操作按钮 + 常驻「···」菜单，窄屏由 fitTopbar 折叠
   private topbarEl: HTMLElement | null = null;
   private topbarRightEl: HTMLElement | null = null;
-  private topbarMoreEl: HTMLElement | null = null;
   private topbarActions: { icon: string; label: string; run: () => void; el?: HTMLElement }[] = [];
-  /** 「···」是否常驻：计划章节的视图开关挂在这里，无折叠项时也要留入口 */
-  private topbarMorePinned = false;
   // 习惯章节：筛选只作用于习惯列表，重渲染入口由 renderHabitsTab 登记
   private habitsRerender: (() => void) | null = null;
   /** 最近一次整页渲染的日期（YYYY-MM-DD）：切回标签页时用于检测跨天 */
@@ -1290,6 +1288,8 @@ export class DaybookView extends ItemView {
     this.todayPanel?.destroy();
     this.todayPanel = null;
     root.empty();
+    // root.empty() 已移除筛选抽屉浮层，重建前清掉旧引用
+    this.filterOverlayEl = null;
     root.setAttribute("class", "db-journal-root db-notion");
     root.style.height = "";
     root.style.maxHeight = "";
@@ -1304,10 +1304,9 @@ export class DaybookView extends ItemView {
     // 顶栏：左上角章节下拉 + 筛选 + 右侧操作
     this.renderTopBar(root, sections, active);
 
-    // 筛选面板宿主（顶栏与正文之间，就地展开）
+    // 筛选面板改为浮层抽屉（见 openFilterPanel），不再占文档流
     this.filterPanel = null;
     this.habitsRerender = null;
-    this.filterHostEl = root.createDiv({ cls: "db-filter-host" });
 
     // 单列页面：输入区 → 今日记录流
     const scroll = root.createDiv({ cls: "db-scroll" });
@@ -1372,7 +1371,7 @@ export class DaybookView extends ItemView {
         cls: "db-topbar-btn",
         attr: { type: "button", "aria-label": "闪念统计与标签", title: "统计与标签" },
       });
-      setIcon(drawerBtn, "layout-grid"); // 四宫格：呼应抽屉里的热力图统计
+      setIcon(drawerBtn, "flame"); // 火焰：呼应抽屉里的记录热力图
       drawerBtn.addEventListener("click", () => {
         new MemoSidebar({
           plugin: this.plugin,
@@ -1469,18 +1468,16 @@ export class DaybookView extends ItemView {
       menu.showAtPosition({ x: rect.left + 10, y: rect.bottom + 4 });
     });
 
-    /* ── 右区：快捷操作（真实 <button>；宽度不足时由 fitTopbar 折叠） ──
-       不放「打开设置」：章节开关、完成时间显示这些都是低频配置，
-       Obsidian 设置面板里就有，常驻顶栏只会挤掉常用按钮的位置。 */
+    /* ── 右区：快捷操作（真实 <button>；宽度不足时由 fitTopbar 折进「···」） ──
+       按钮预算：每章最多 2 个（闪念＝搜索 + ···，其余＝仅 ···）。
+       统计面板、分组排序都是二级操作，常驻顶栏会在窄屏把标题胶囊挤出去。 */
     const right = bar.createDiv({ cls: "db-topbar-zone db-topbar-actions" });
     this.topbarRightEl = right;
     const isPlans = active?.type === "plans";
-    const specs: { icon: string; label: string; run: () => void; el?: HTMLElement }[] = [
-      ...(active?.type === "memos" ? [{
-        icon: "search", label: "搜索闪念", run: () => this.openMemoSearch(active),
-      }] : []),
-      { icon: "layout-dashboard", label: "打开统计面板", run: () => void this.plugin.activateDashboard() },
-    ];
+    const specs: { icon: string; label: string; run: () => void; el?: HTMLElement }[] =
+      active?.type === "memos"
+        ? [{ icon: "search", label: "搜索闪念", run: () => this.openMemoSearch(active) }]
+        : [];
     specs.forEach(a => {
       const el = right.createEl("button", {
         cls: "db-topbar-btn",
@@ -1492,25 +1489,9 @@ export class DaybookView extends ItemView {
     });
     this.topbarActions = specs;
 
-    // 计划章节专属：分组 / 排序底部面板入口（不参与折叠，是这一章的主操作）
-    if (isPlans) {
-      const sortBtn = right.createEl("button", {
-        cls: "db-topbar-btn db-plan-sort-toggle",
-        attr: {
-          type: "button", "aria-label": "分组与排序", "aria-haspopup": "dialog",
-          title: "分组与排序",
-        },
-      });
-      setIcon(sortBtn, "arrow-down-up");
-      sortBtn.addEventListener("click", e => {
-        e.stopPropagation();
-        this.openPlanSortPanel();
-      });
-    }
-
     const moreBtn = right.createEl("button", {
-      // 计划章节常驻（视图开关在这里）；其余章节只在有折叠项时出现
-      cls: "db-topbar-btn db-topbar-more" + (isPlans ? "" : " is-folded"),
+      // 常驻：本章主操作与统计面板都在这里，折起来就没地方点了
+      cls: "db-topbar-btn db-topbar-more",
       attr: {
         type: "button", "aria-label": "更多操作", "aria-haspopup": "menu", title: "更多操作",
       },
@@ -1519,8 +1500,14 @@ export class DaybookView extends ItemView {
     moreBtn.addEventListener("click", e => {
       e.stopPropagation();
       const menu = new Menu();
+      let grouped = false;
       if (isPlans && active) {
         const rs = this.plugin.settings.reviewState;
+        // 本章主操作置顶
+        menu.addItem(item => {
+          item.setTitle("分组与排序").setIcon("arrow-down-up");
+          item.onClick(() => this.openPlanSortPanel());
+        });
         // 文案即状态即动作：显示「显示已完成」时当前是隐藏态，点一下切换（不再打勾避免歧义）
         const toggleView = (label: string, on: boolean, set: (v: boolean) => void) => {
           menu.addItem(item => {
@@ -1538,19 +1525,21 @@ export class DaybookView extends ItemView {
         // 「隐藏详细 / 显示详细」＝任务行里的描述徽标与 #标签
         toggleView(rs.planShowDetail ? "隐藏详细" : "显示详细", rs.planShowDetail,
           v => { rs.planShowDetail = v; });
-        menu.addSeparator();
+        grouped = true;
       }
       this.topbarActions.forEach(a => {
-        if (a.el?.hasClass("is-folded") && a.el !== moreBtn) {
-          menu.addItem(item => item.setTitle(a.label).setIcon(a.icon).onClick(() => a.run()));
-        }
+        if (!a.el?.hasClass("is-folded")) return;
+        menu.addItem(item => item.setTitle(a.label).setIcon(a.icon).onClick(() => a.run()));
+        grouped = true;
+      });
+      if (grouped) menu.addSeparator();
+      menu.addItem(item => {
+        item.setTitle("打开统计面板").setIcon("layout-dashboard");
+        item.onClick(() => void this.plugin.activateDashboard());
       });
       const rect = moreBtn.getBoundingClientRect();
       menu.showAtPosition({ x: Math.max(8, rect.right - 180), y: rect.bottom + 4 });
     });
-    this.topbarMoreEl = moreBtn;
-    this.topbarMorePinned = !!isPlans;
-
     this.fitTopbar();
     this.applyTopbarInset();
     activeWindow.requestAnimationFrame(() => {
@@ -1580,54 +1569,36 @@ export class DaybookView extends ItemView {
     bar.toggleClass("is-inset", on);
     bar.style.top = on ? `${inset}px` : "";
     bar.style.marginTop = on ? `${inset}px` : "";
-    this.syncFilterStickyTop();
-  }
-
-  /** 筛选托盘悬浮位置：吸附在顶栏下缘（顶栏高度/避让量变化后需重设） */
-  private syncFilterStickyTop(): void {
-    const host = this.filterHostEl;
-    const bar = this.topbarEl;
-    if (!host || !bar) return;
-    const inset = bar.hasClass("is-inset") ? (parseFloat(bar.style.top) || 0) : 0;
-    host.style.top = `${Math.round(inset + bar.offsetHeight)}px`;
+    bar.style.setProperty("--db-topbar-overlap", on ? `${inset}px` : "");
   }
 
   /**
-   * 右区宽度不足时，将操作按钮从左到右折入「＋」溢出菜单。
+   * 右区宽度不足时，将操作按钮从左到右折入常驻的「···」菜单。
    * 与 memos 的「窄屏隐藏按钮」不同：折叠保留功能入口，安卓竖屏也能全部点到。
+   * 判定用真实渲染结果（内容宽 scrollWidth 是否越过分区可视宽），不按 44px 估算：
+   * 估算一旦和实际按钮宽度对不上，多出的按钮就会压到中区标题上。
    */
   private fitTopbar(): void {
     const right = this.topbarRightEl;
-    const more = this.topbarMoreEl;
-    if (!right || !more) return;
-    const gap = 6;
+    if (!right) return;
     const visible = () => this.topbarActions.filter(a => a.el && !a.el.hasClass("is-folded"));
-    const foldedCount = () => this.topbarActions.length - visible().length;
-    const unit = () => {
-      const w = visible()[0]?.el?.offsetWidth ?? 0;
-      // 尚未布局（offsetWidth=0）时按 44px 保守估算，rAF 复测会纠正
-      return w > 0 ? w : 44;
-    };
-    const need = () => {
-      const items = visible().length + (foldedCount() > 0 ? 1 : 0);
-      return items === 0 ? 0 : items * unit() + (items - 1) * gap;
-    };
+    const folded = () => this.topbarActions.filter(a => a.el?.hasClass("is-folded"));
+    const overflows = () => right.scrollWidth > right.clientWidth + 1;
     let guard = 8;
-    while (guard-- > 0 && need() > right.clientWidth + 1) {
+    while (guard-- > 0 && overflows()) {
       const next = visible()[0];
       if (!next?.el) break;
       next.el.addClass("is-folded");
     }
+    // 腾出空间后逐个试放回来，能放下就少一层菜单
     guard = 8;
     while (guard-- > 0) {
-      const folded = this.topbarActions.filter(a => a.el?.hasClass("is-folded"));
-      if (!folded.length) break;
-      const last = folded[folded.length - 1];
+      const list = folded();
+      if (!list.length) break;
+      const last = list[list.length - 1];
       last.el!.removeClass("is-folded");
-      if (need() > right.clientWidth + 1) { last.el!.addClass("is-folded"); break; }
+      if (overflows()) { last.el!.addClass("is-folded"); break; }
     }
-    // 计划章节的「···」装着视图开关（已完成 / 详细），没有折叠项也得留着
-    more.toggleClass("is-folded", foldedCount() === 0 && !this.topbarMorePinned);
   }
 
   /* ── 内容筛选 ── */
@@ -1669,29 +1640,48 @@ export class DaybookView extends ItemView {
     this.filterOpen = false;
     this.filterPanel?.destroy();
     this.filterPanel = null;
-    this.filterHostEl?.empty();
+    this.filterOverlayEl?.remove();
+    this.filterOverlayEl = null;
     this.updateFilterBadge();
   }
 
-  /** 就地展开筛选面板：先取该章节的标签/分类候选，再渲染 */
+  /** 打开筛选抽屉：与闪念统计（flame）抽屉同呈现——遮罩 + 左侧滑出，面板挂在抽屉体内 */
   private async openFilterPanel(): Promise<void> {
     const section = this._currentSection;
-    const host = this.filterHostEl;
-    if (!section || !host) return;
+    if (!section) return;
     this.filterOpen = true;
-    this.filterPanel = null;
-    host.empty();
 
     let tags: { tag: string; count: number }[] = [];
     try {
       const groups = await readAllJournalEntries(this.app, this.plugin.settings, new Set([section.id]));
       tags = collectTags(groups.flatMap(g => g.entries));
     } catch { /* 读不到历史时只给静态维度（心情/优先级等仍可用） */ }
-    if (!this.filterOpen || !host.isConnected) return;
+    // 取数期间面板可能已关闭 / 视图已重建
+    if (!this.filterOpen) return;
+    const root = this.containerEl.children[1] as HTMLElement | undefined;
+    if (!root || !root.isConnected) return;
+    this.filterOverlayEl?.remove();
+    this.filterPanel?.destroy();
+    this.filterPanel = null;
 
-    host.empty();
+    const overlay = root.createDiv({ cls: "db-drawer-overlay" });
+    this.filterOverlayEl = overlay;
+    overlay.addEventListener("click", () => this.closeFilterPanel());
+    const drawer = overlay.createDiv({ cls: "db-drawer" });
+    drawer.addEventListener("click", e => e.stopPropagation());
+    const head = drawer.createDiv({ cls: "db-drawer-head" });
+    // ✕ 放最左（与筛选按钮同侧，点开即点关），标题靠右
+    const closeBtn = head.createDiv({
+      cls: "db-drawer-close",
+      attr: { role: "button", "aria-label": "关闭筛选" },
+    });
+    setIcon(closeBtn, "x");
+    closeBtn.addEventListener("click", () => this.closeFilterPanel());
+    head.createSpan({ cls: "db-drawer-title", text: "筛选" });
+    const bodyEl = drawer.createDiv({ cls: "db-drawer-body" });
+
     this.filterPanel = new FilterPanel({
-      host,
+      host: bodyEl,
       plugin: this.plugin,
       section,
       filter: this.getFilter(section.id),
@@ -1700,7 +1690,6 @@ export class DaybookView extends ItemView {
       onRequestClose: () => this.closeFilterPanel(),
     });
     this.updateFilterBadge();
-    this.syncFilterStickyTop();
     // 习惯章节重渲染列表以回填结果数；其余章节重跑记录流刷新计数
     if (section.type === "habits") this.habitsRerender?.();
     else void this.todayPanel?.refresh(section.id);
@@ -1753,9 +1742,10 @@ export class DaybookView extends ItemView {
   openDashboard(): void {
     if (this.dashEl) return;
     const root = this.containerEl.children[1] as HTMLElement;
+    // 筛选抽屉现为浮层：进 Dashboard 前先收起，避免浮在面板上
+    this.closeFilterPanel();
     const candidates = [
       root.querySelector(".db-topbar"),
-      this.filterHostEl,
       root.querySelector(".db-scroll"),
     ];
     this.dashHiddenEls = candidates.filter(

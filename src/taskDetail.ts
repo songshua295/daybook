@@ -17,6 +17,10 @@ import { openDateSelect } from "./dateSelect";
 import {
   genBlockId,
   isTodoOverdue,
+  createPriorityBadge,
+  effectivePriority,
+  PRIORITY_META,
+  type PriorityLevel,
   type JournalEntry,
   type TodoItem,
 } from "./fileReader";
@@ -80,6 +84,9 @@ export class TaskDetailModal extends Modal {
   private descEditor!: LiveEditor;
   private sheet!: HTMLElement;
   private scrim!: HTMLElement;
+  // 优先级弹出层（挂在标题行里，renderHeaderRow 每次重建，先摘掉文档级关闭监听）
+  private priPop: HTMLElement | null = null;
+  private priDocClose: (() => void) | null = null;
 
   // 录音
   private mediaRecorder: MediaRecorder | null = null;
@@ -215,6 +222,7 @@ export class TaskDetailModal extends Modal {
   }
 
   onClose(): void {
+    this.closePriorityPopover();
     try { this.descEditor?.destroy(); } catch { /* ignore */ }
     if (this.isRecording) { try { this.mediaRecorder?.stop(); } catch { /* ignore */ } }
     this.contentEl.empty();
@@ -269,6 +277,7 @@ export class TaskDetailModal extends Modal {
 
   private renderHeaderRow(): void {
     this.headerRow.empty();
+    this.closePriorityPopover();
     const parent = this.todos[0];
     const kids = this.childTodos();
 
@@ -305,6 +314,75 @@ export class TaskDetailModal extends Modal {
     };
     due.addEventListener("click", pickDue);
     makeActivatable(due);
+
+    this.renderPriorityControl(parent);
+  }
+
+  /**
+   * 优先级：色块徽标 + 罗马数字的小胶囊，点开四级弹出层（与输入条同一套类名）。
+   * 选中即落盘（详情页的直接提交风格），弹出层随本次提交的重渲染一起关闭。
+   */
+  private renderPriorityControl(parent: TodoItem): void {
+    const meta = PRIORITY_META[effectivePriority(parent.priority)];
+    const btn = this.headerRow.createDiv({
+      cls: `db-td-pri${parent.priority ? ` priority-${parent.priority}` : ""}`,
+      attr: {
+        role: "button", tabindex: "0", "aria-haspopup": "true", title: "优先级",
+        "aria-label": `优先级：${meta.label}，点击修改`,
+      },
+    });
+    createPriorityBadge(btn, parent.priority);
+    btn.createSpan({ cls: "db-td-pri-label", text: meta.label });
+
+    const pop = this.headerRow.createDiv({ cls: "db-priority-popover db-td-pri-popover" });
+    pop.style.display = "none";
+    this.priPop = pop;
+    (["1", "2", "3", "4"] as PriorityLevel[]).forEach(lv => {
+      const opt = pop.createDiv({ cls: `db-priority-option level-${lv}` });
+      createPriorityBadge(opt, lv);
+      opt.createSpan({ text: `${lv} ${PRIORITY_META[lv].label}` });
+      if (effectivePriority(parent.priority) === lv) opt.addClass("active");
+      opt.addEventListener("click", () => {
+        this.closePriorityPopover();
+        parent.priority = lv;
+        void this.commit();
+      });
+    });
+    const clearOpt = pop.createDiv({ cls: "db-priority-option clear" });
+    clearOpt.createSpan({ text: "\u{274C}" });
+    clearOpt.createSpan({ text: "恢复默认（2 重要不紧急）" });
+    if (!parent.priority) clearOpt.addClass("active");
+    clearOpt.addEventListener("click", () => {
+      this.closePriorityPopover();
+      parent.priority = undefined;
+      void this.commit();
+    });
+
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (pop.style.display === "none") {
+        pop.style.display = "block";
+        btn.addClass("open");
+        // 点别处收起：延后挂监听，避免这次点击立刻把自己关掉
+        const handler = () => this.closePriorityPopover();
+        this.priDocClose = handler;
+        activeWindow.setTimeout(() => activeDocument.addEventListener("click", handler), 0);
+      } else this.closePriorityPopover();
+    });
+    pop.addEventListener("click", (e) => e.stopPropagation());
+    makeActivatable(btn);
+  }
+
+  private closePriorityPopover(): void {
+    if (this.priDocClose) {
+      activeDocument.removeEventListener("click", this.priDocClose);
+      this.priDocClose = null;
+    }
+    if (this.priPop) {
+      this.priPop.style.display = "none";
+      this.priPop = null;
+    }
+    this.headerRow?.querySelector(".db-td-pri")?.removeClass("open");
   }
 
   private renderSubs(): void {
@@ -373,8 +451,9 @@ export class TaskDetailModal extends Modal {
   private addSubtask(text: string): void {
     let end = 1;
     while (end < this.todos.length && this.todos[end].indent) end++;
+    const parentWs = this.todos[0].ws ?? (this.todos[0].indent ? 4 : 0);
     this.todos.splice(end, 0, {
-      text, done: false, lineIndex: -1, indent: 1,
+      text, done: false, lineIndex: -1, indent: 1, ws: parentWs + 4,
       createdAt: moment().format("YYYY-MM-DD HH:mm"),
     });
     void this.commit();

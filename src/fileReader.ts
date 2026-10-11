@@ -53,6 +53,7 @@ export interface TodoItem {
   completedAt?: string; // 完成时间 YYYY-MM-DD HH:mm（勾选完成时自动写入）
   priority?: PriorityLevel; // 优先级 1-4，undefined = 2（重要不紧急，默认）
   indent?: number;      // 层级：0/undefined=顶级任务，1=子任务
+  ws?: number;          // 原始行首缩进（空格当量，Tab 记 4）：单行回写时保持原层级，避免子任务掉成兄弟
   note?: string;        // 备注（旧：行内字段 [note::…]，单行；读取兼容，新数据统一写入 desc）
   desc?: string;        // 描述（任务行下方的缩进内容行，可多行、含 ![[图片]]/![[录音]] 嵌入）
   blockId?: string;     // 块链接 id（任务行尾 ^id，Obsidian 块级引用；「复制链接」按需生成）
@@ -121,7 +122,7 @@ export function planTodoProgress(todos: TodoItem[]): { done: number; total: numb
  * - after=true：插入到目标位置之后（否则之前），拖动项保持自身层级
  * 目标在被拖动子树内部时忽略（避免拖到自己子孙下面形成环）
  */
-export function moveTodoSubtree<T extends { indent?: number }>(
+export function moveTodoSubtree<T extends { indent?: number; ws?: number }>(
   items: T[],
   from: number,
   target: number,
@@ -138,7 +139,10 @@ export function moveTodoSubtree<T extends { indent?: number }>(
   let at = target > from ? target - count : target;
 
   if (asChild) {
-    moved.forEach(m => (m.indent = 1));
+    // 缩进跟着新父任务走（旧格式父任务本身缩进 4 时，子任务要落到 8 才认得出层级）
+    const parent = items[at];
+    const parentWs = parent?.ws ?? (parent?.indent ? 4 : 0);
+    moved.forEach(m => { m.indent = 1; m.ws = parentWs + 4; });
     let sub = at + 1;
     while (sub < items.length && items[sub].indent) sub++;
     at = sub;
@@ -533,6 +537,7 @@ export function parsePlanSection(
         completedAt,
         createdAt: createdAtVal ?? date,
         indent: isChild ? 1 : undefined,
+        ws,
         note,
         blockId,
       });
@@ -776,7 +781,10 @@ export function appendTodoCompletionInfo(
 
 /** 单条任务行文本（顶格任务、子任务缩进 4 空格；属性全部 Dataview 行内字段，块 id 追加行尾） */
 export function planTaskLine(t: TodoItem, completedField: string): string {
-  const indent = t.indent ? "    " : "";
+  // 缩进沿用该行原本的行首宽度（旧格式整块缩进 4 空格的任务，子任务在 8 空格）；
+  // 新建任务没有 ws，按 indent 回落到 0 / 4
+  const ws = t.ws ?? (t.indent ? 4 : 0);
+  const indent = " ".repeat(Math.max(0, ws));
   let line = `${indent}- [${t.done ? "x" : " "}] ${t.text}`;
   if (t.priority && t.priority !== "2") line += ` [priority::${t.priority}]`;
   if (t.dueDate) line += ` [due::${t.dueDate}]`;
@@ -800,9 +808,10 @@ export function planTaskBlockLines(todos: TodoItem[], completedField: string): s
     if (i !== 0) return;
     const desc = (t.desc ?? "").trim();
     if (!desc) return;
+    const descWs = " ".repeat(Math.max(0, (t.ws ?? 0) + 4));
     for (const raw of desc.split("\n")) {
       const s = raw.trim();
-      if (s) lines.push("    " + s);
+      if (s) lines.push(descWs + s);
     }
   });
   return lines;

@@ -2550,6 +2550,27 @@ body,
   padding-top: 8px;
 }
 
+/* 避让模式穿透带：顶栏吸附在 inset 下缘，0..inset 这段带处在原生半透明头部之下，
+   上滑内容会从这里透出。用顶栏同色背景条向上补齐（高度 = JS 实测的
+   --db-topbar-overlap）。手机端原生头部已整体隐藏（见下方规则），此带仅作
+   头部仍可见时（如弹出窗口）的兜底。 */
+.db-journal-root .db-topbar.is-inset::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: var(--db-topbar-overlap, 0px);
+  background: var(--db-surface);
+}
+
+/* 手机端：隐藏原生 view-header（⋮/× 那一栏），Daybook 顶栏直接贴顶，
+   状态栏安全区由顶栏自身的 padding-top 消化。
+   原生关闭入口没了：返回用系统返回键/手势，关叶用左滑抽屉。 */
+.is-phone .workspace-leaf-content[data-type="daybook-view"] > .view-header {
+  display: none;
+}
+
 /* 三区布局：左右等分收缩权重，中区标题天然居中（memos 版式） */
 .db-journal-root .db-topbar-zone {
   display: flex;
@@ -2579,7 +2600,9 @@ body,
   box-shadow: none;
 }
 
-/* 章节切换触发按钮（emoji + 名称 + 下拉箭头，横向胶囊） */
+/* 章节切换触发按钮（emoji + 名称 + 下拉箭头）：
+   无边框幽灵样式——顶栏已有一条底部分隔线，再描边框会一行三种线框感；
+   与两侧无边框图标按钮同一语言，可点性由下拉箭头 + 悬停/按下底色表达 */
 .db-journal-root .db-section-trigger {
   display: inline-flex;
   flex-direction: row;
@@ -2589,15 +2612,16 @@ body,
   max-width: 100%;
   padding: 6px 12px;
   border-radius: 999px;
-  background: var(--db-surface2);
-  border: 1px solid var(--db-border);
+  background: transparent;
+  border: none;
   color: var(--db-text);
   font-size: 14px;
   font-weight: 600;
   line-height: 1.2;
   cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+  transition: background-color 0.15s ease, transform 0.1s ease;
 }
+.db-journal-root .db-section-trigger:hover { background: var(--db-bg-hover); }
 .db-journal-root .db-section-trigger:active { transform: scale(0.97); }
 .db-journal-root .db-section-trigger-emoji {
   font-size: 16px;
@@ -2680,19 +2704,7 @@ body,
   box-sizing: border-box;
 }
 
-/* ── 页面骨架：筛选宿主 / 滚动列 / 单页 / 今日记录标题 ── */
-/* 筛选托盘：随页面上滑时悬浮吸附在顶栏下缘（top 由 JS 按顶栏高度同步），
-   超高时面板内部滚动，需主动关闭托盘（筛选条件保留） */
-.db-filter-host {
-  flex-shrink: 0;
-  position: sticky;
-  top: 0;                 /* 由 JournalView.syncFilterStickyTop() 内联覆盖 */
-  z-index: 19;            /* 低于顶栏(20)，滚动叠放时顶栏压托盘 */
-  max-height: 62vh;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  background: var(--db-bg);
-}
+/* ── 页面骨架：滚动列 / 单页 / 今日记录标题 ── */
 
 .db-scroll {
   flex: 1 1 auto;
@@ -3129,7 +3141,7 @@ body,
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 11px 14px;
+  padding: 12px 16px;
   background: var(--db-surface);
   border-bottom: 1px solid var(--db-border);
 }
@@ -3141,21 +3153,23 @@ body,
   min-width: 0;
 }
 .db-filter-count-num {
-  font-size: 22px;
-  font-weight: 800;
+  font-size: 20px;
+  font-weight: 700;
   color: var(--db-accent);
-  line-height: 1.1;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
   font-variant-numeric: tabular-nums;
 }
 .db-filter-count-unit {
-  font-size: 12px;
-  color: var(--db-text-muted);
+  font-size: 11px;
+  color: var(--db-text-sub);
 }
 .db-filter-count-span { color: var(--db-text-sub); }
 .db-filter-reset {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.05em;
   color: var(--db-accent);
   padding: 5px 10px;
   border-radius: 8px;
@@ -3166,7 +3180,7 @@ body,
 .db-filter-body {
   display: flex;
   flex-direction: column;
-  padding: 4px 14px 12px;
+  padding: 4px 16px 16px;
 }
 
 /* 一行 = 一个维度：导栏 | 值区 */
@@ -3182,13 +3196,14 @@ body,
 .db-filter-row-label {
   flex-shrink: 0;
   width: 62px;
-  padding-top: 6px;
-  font-size: 13px;
+  padding-top: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
   color: var(--db-text-sub);
 }
 .db-filter-row.is-set .db-filter-row-label {
   color: var(--db-text);
-  font-weight: 700;
 }
 .db-filter-row-main {
   flex: 1 1 auto;
@@ -3223,11 +3238,10 @@ body,
   border-color: var(--db-accent);
   background: var(--db-accent-soft);
   color: var(--db-accent);
-  font-weight: 700;
 }
 .db-filter-chip-n {
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 500;
   opacity: 0.65;
   font-variant-numeric: tabular-nums;
 }
@@ -3322,7 +3336,7 @@ body .db-journal-root .db-filter-q:focus {
   border-radius: var(--db-radius-sm);
   background: var(--db-surface2);
   color: var(--db-text);
-  font-size: 13px;
+  font-size: 14px;
 }
 .db-filter-num { width: 84px; }
 .db-filter-date:focus,
@@ -4462,7 +4476,8 @@ body .db-journal-root .db-filter-q:focus {
 /* ════════════════════════════════════════════════════════
    闪念侧边抽屉（统计 3 格 + 热力图 + 标签树）
    ════════════════════════════════════════════════════════ */
-.db-memo-sidebar-overlay {
+.db-memo-sidebar-overlay,
+.db-drawer-overlay {
   position: absolute;
   inset: 0;
   z-index: 60;
@@ -4471,7 +4486,8 @@ body .db-journal-root .db-filter-q:focus {
   flex-direction: row;
   align-items: stretch;
 }
-.db-memo-sidebar {
+.db-memo-sidebar,
+.db-drawer {
   width: min(78vw, 300px);
   height: 100%;
   background: var(--db-surface);
@@ -4485,20 +4501,38 @@ body .db-journal-root .db-filter-q:focus {
   from { transform: translateX(-100%); }
   to { transform: translateX(0); }
 }
-.db-memo-sidebar-head {
+.db-memo-sidebar-head,
+.db-drawer-head {
   display: flex;
   flex-direction: row;
   align-items: center;
   gap: 6px;
-  padding: 12px 14px;
+  /* 抽屉铺到屏幕最顶：安卓状态栏安全区由头部上内边距消化 */
+  padding: calc(12px + var(--safe-area-inset-top, env(safe-area-inset-top, 0px))) 14px 12px;
   border-bottom: 1px solid var(--db-border);
 }
-.db-memo-sidebar-title {
-  font-size: 15px;
-  font-weight: 700;
-  margin-right: auto;
+/* ════════════════════════════════════════════════════════
+   侧栏抽屉版式系统（统计抽屉 + 筛选抽屉共用）
+   极简主义 × 瑞士国际主义：层级靠尺寸/字重/色彩建立，不靠装饰；
+   抽屉内唯一强调元素 = 大号结果数字（Display 级）
+   字阶（抽屉内只允许这 6 级）：
+     Title   13px / 600 / 字距 0.05em   抽屉标题
+     Display 20px / 700 / accent        关键数字（结果条数、统计值），tabular-nums
+     Section 11px / 600 / 字距 0.1em    分组标题与维度导栏（text-sub）
+     Body    13px / 400                 胶囊、标签行、列表项、输入外文本
+     Meta    11px / 400                 单位、计数、提示、月份标注
+     Input   14px                       搜索/日期输入框
+   栅格：左右内边距统一 16px；分组间距 16px；细分隔线只用于行分组
+   ════════════════════════════════════════════════════════ */
+.db-memo-sidebar-title,
+.db-drawer-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  margin-left: auto; /* 两个抽屉同布局：✕ 在左、标题靠右 */
 }
-.db-memo-sidebar-close {
+.db-memo-sidebar-close,
+.db-drawer-close {
   width: 28px;
   height: 28px;
   display: flex;
@@ -4508,17 +4542,31 @@ body .db-journal-root .db-filter-q:focus {
   color: var(--db-text-muted);
   cursor: pointer;
 }
-.db-memo-sidebar-close:hover { background: var(--db-bg-hover); color: var(--db-text); }
-.db-memo-sidebar-close svg { width: 16px; height: 16px; }
-.db-memo-sidebar-body {
+.db-memo-sidebar-close:hover,
+.db-drawer-close:hover { background: var(--db-bg-hover); color: var(--db-text); }
+.db-memo-sidebar-close svg,
+.db-drawer-close svg { width: 16px; height: 16px; }
+.db-memo-sidebar-body,
+.db-drawer-body {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: 12px 14px 20px;
+  overscroll-behavior: contain;
+  /* 底部预留 = 基础留白 + 主视图同款底部让位（导航栏/手势条/键盘，--db-bottom-inset
+     由 applyViewportSize 实时写入）：上滑到底时最后一行能完整露出，不被原生工具栏压住 */
+  padding: 14px 16px calc(24px + var(--db-bottom-inset, 0px));
+}
+/* 筛选抽屉：面板平铺进抽屉，去掉托盘时代的卡片外框 */
+.db-drawer-body { padding: 0 0 calc(24px + var(--db-bottom-inset, 0px)); }
+.db-drawer-body .db-filter-panel {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 .db-memo-sidebar-loading {
   padding: 20px 0;
   text-align: center;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--db-text-sub);
 }
 .db-memo-stats {
@@ -4537,21 +4585,25 @@ body .db-journal-root .db-filter-q:focus {
   background: var(--db-surface2);
 }
 .db-memo-stat-num {
-  font-size: 18px;
-  font-weight: 800;
+  font-size: 20px;
+  font-weight: 700;
   color: var(--db-accent);
+  line-height: 1.2;
+  letter-spacing: 0.01em;
   font-variant-numeric: tabular-nums;
 }
 .db-memo-stat-label {
-  font-size: 10px;
+  font-size: 11px;
+  letter-spacing: 0.05em;
   color: var(--db-text-sub);
 }
 .db-memo-heatmap { margin-bottom: 16px; }
 .db-memo-heatmap-title,
 .db-memo-tags-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--db-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--db-text-sub);
   margin-bottom: 8px;
 }
 /* 格子按抽屉宽度均分铺满，不留右侧空白 */
@@ -4584,9 +4636,9 @@ body .db-journal-root .db-filter-q:focus {
 .db-memo-heatmap-month {
   flex: 1 1 0;
   min-width: 0;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.2;
-  color: var(--db-text-muted);
+  color: var(--db-text-sub);
   white-space: nowrap;
   overflow: visible;
 }
@@ -4598,7 +4650,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-memo-heatmap-cell.clickable { cursor: pointer; }
 .db-memo-heatmap-cell.clickable:hover { box-shadow: 0 0 0 1.5px var(--db-text); border-radius: 3px; }
 .db-memo-tags-empty {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--db-text-sub);
   padding: 4px 0;
 }
@@ -4629,7 +4681,7 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-memo-tag-count {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--db-text-sub);
   font-variant-numeric: tabular-nums;
 }
@@ -4716,7 +4768,7 @@ body .db-journal-root .db-filter-q:focus {
   border-radius: 10px;
   cursor: pointer;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 400;
   color: var(--db-text);
 }
 .db-memo-nav-item:hover { background: var(--db-bg-hover); }
@@ -5225,6 +5277,7 @@ body .db-journal-root .db-filter-q:focus {
   padding: 16px 20px 20px;
 }
 .db-td-hrow {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -5292,6 +5345,34 @@ body .db-journal-root .db-filter-q:focus {
   font-weight: 700;
   color: var(--text-normal);
   background: color-mix(in srgb, var(--color-red, #e74c3c) 22%, transparent);
+}
+
+/* 优先级胶囊：点开四级弹出层（沿用输入条那套 .db-priority-popover / -option） */
+.db-td-pri {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--db-text-muted);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease;
+}
+.db-td-pri:hover,
+.db-td-pri.open { background: var(--db-bg-hover); }
+.db-td-pri .db-priority-badge-svg { margin-right: 0; vertical-align: 0; }
+.db-td-pri-label { white-space: nowrap; }
+.db-td-pri-popover {
+  top: 100%;
+  left: 0;
+  margin: 6px 0 0;
+  min-width: 240px;
+}
+.db-td-pri-popover .db-priority-option span:last-child {
+  white-space: nowrap;
 }
 
 /* 任务主题（选择器带上元素名，压过 Obsidian 对 input[type=text] 的默认边框/底色） */
@@ -5537,6 +5618,8 @@ body .db-journal-root .db-filter-q:focus {
 .is-phone .db-td-check.checked::after { font-size: 14px; }
 .is-phone .db-td-check.has-kids svg { width: 15px; height: 15px; }
 .is-phone .db-td-due { padding: 7px 11px; font-size: 13.5px; }
+.is-phone .db-td-pri { padding: 7px 11px; font-size: 13.5px; }
+.is-phone .db-td-pri-popover .db-priority-option { padding: 9px 12px; font-size: 13.5px; }
 .is-phone .db-td-body input.db-td-title { font-size: 20px; margin-top: 14px; }
 .is-phone .db-td-label { margin-top: 22px; font-size: 12.5px; }
 /* 拇指热区：子任务整行 ≥44px，把手放大到可按住拖动 */
