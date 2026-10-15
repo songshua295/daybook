@@ -1176,66 +1176,103 @@ body,
 
 
 
-/* ── 设置页心情管理（补充） ── */
+/* ── 设置页心情管理（v2：与 db-set 字段同款外观，保证可编辑感） ── */
 .db-mood-editor {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-bottom: 10px;
+  gap: 8px;
+  margin: 2px 0 4px;
 }
 
 .db-mood-edit-row {
-  display: flex;
+  /* grid 固定列：input 固有宽度再大也挤不爆行（flex 下含义框会把行撑出屏幕） */
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 32px;
   align-items: center;
   gap: 8px;
 }
 
 .db-mood-edit-emoji {
-  width: 48px;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
   text-align: center;
   font-size: 18px;
   padding: 4px 6px;
   border: 1px solid var(--background-modifier-border);
-  border-radius: 6px;
-  background: var(--background-secondary);
+  border-radius: 8px;
+  background: var(--background-primary);
+  color: var(--text-normal);
 }
 
 .db-mood-edit-label {
-  flex: 1;
-  padding: 4px 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 10px;
   border: 1px solid var(--background-modifier-border);
-  border-radius: 6px;
-  background: var(--background-secondary);
+  border-radius: 8px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 13px;
+}
+
+.db-mood-edit-emoji:focus,
+.db-mood-edit-label:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}
+
+/* 手机端主题/WebView 常把 input 的 -webkit-text-fill-color 覆盖成透明，
+   导致表情/含义文字整框空白（PC 端不复现）。这里锁定文字与底色。 */
+.db-settings-v2 .db-mood-edit-emoji,
+.db-settings-v2 .db-mood-edit-label {
+  color: var(--text-normal) !important;
+  -webkit-text-fill-color: currentColor !important;
+  background-color: var(--background-primary) !important;
+  font-size: 14px;
+  caret-color: var(--interactive-accent);
+  box-sizing: border-box;
+}
+
+.db-settings-v2 .db-mood-edit-emoji::placeholder,
+.db-settings-v2 .db-mood-edit-label::placeholder {
+  color: var(--text-faint);
+  opacity: 1;
+  -webkit-text-fill-color: currentColor;
 }
 
 .db-mood-edit-del {
-  width: 28px;
-  height: 28px;
+  width: 100%;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-  color: var(--text-muted);
+  border-radius: 8px;
+  color: var(--color-red, #ef4444);
+  background: color-mix(in srgb, var(--color-red, #ef4444) 10%, transparent);
   cursor: pointer;
   font-size: 18px;
   line-height: 1;
-  transition: all 0.15s ease;
+  transition: transform 0.12s ease, background 0.12s ease;
 }
 
 .db-mood-edit-del:hover {
-  color: #ef4444;
-  background: rgba(239,68,68,0.1);
+  background: color-mix(in srgb, var(--color-red, #ef4444) 18%, transparent);
 }
 
 .db-mood-add-btn {
-  padding: 6px 12px;
-  border-radius: 6px;
-  border: 1px dashed var(--background-modifier-border);
+  align-self: flex-start;
+  min-height: 40px;
+  padding: 8px 16px;
+  border-radius: 10px;
+  border: 1.5px dashed var(--background-modifier-border);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
   font-size: 13px;
-  transition: all 0.15s ease;
+  font-weight: 600;
+  transition: transform 0.12s ease;
 }
 
 .db-mood-add-btn:hover {
@@ -1250,28 +1287,111 @@ body,
 }
 
 /* ════════════════════════════════════════════════════════
-   v3.3 章节管理 · 设置页样式
+   设置页 v2 · iOS 分组式（db-set-*）
    ═══════════════════════════════════════════════════════ */
 
-/* ── 章节编辑器（卡片式） ── */
+/* ── 分组容器 ── */
 
-.db-section-card {
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 10px;
-  background: var(--background-secondary);
-  overflow: hidden;
+.db-set-root {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-bottom: 24px;
 }
 
-.db-section-card-head {
+.db-set-group-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--background-modifier-border);
-  background: var(--background-secondary-alt, var(--background-secondary));
+  padding: 0 2px 8px;
 }
 
-.db-section-card-num {
+.db-set-group-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent, #fff);
+}
+
+.db-set-group-icon svg { width: 14px; height: 14px; }
+
+.db-set-group-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-normal);
+}
+
+.db-set-group-body {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 14px;
+  background: var(--background-secondary);
+  overflow: hidden;
+  padding: 4px 0;
+}
+
+/* 分组内的原生 Setting 行：去掉默认分隔，相邻行之间用发丝线 */
+.db-set-group-body > .setting-item {
+  border-top: none;
+  border-bottom: none;
+  box-shadow: none;
+  padding: 10px 16px;
+}
+
+.db-set-group-body > .setting-item + .setting-item {
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.db-set-group-body > .db-settings-hint { padding: 6px 16px 10px; }
+.db-set-group-body > .db-mood-editor { padding: 0 16px; }
+.db-set-group-body > .db-mood-add-btn { margin: 4px 16px 10px; }
+
+/* ── 手风琴条目（版块 / 章节） ── */
+
+.db-set-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 12px 12px;
+}
+
+.db-set-sublist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.db-set-item {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  background: var(--background-primary);
+  overflow: hidden;
+}
+
+.db-set-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 12px;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.db-set-item-head:hover { background: var(--background-modifier-hover); }
+
+.db-set-item-head:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+
+.db-set-num {
   width: 22px;
   height: 22px;
   flex-shrink: 0;
@@ -1279,183 +1399,249 @@ body,
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: var(--interactive-accent);
-  color: var(--text-on-accent, #fff);
+  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+  color: var(--interactive-accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.db-set-emoji { font-size: 16px; flex-shrink: 0; line-height: 1; }
+
+.db-set-item-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-normal);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-set-item-sub {
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.db-set-item-chev {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.db-set-item-chev svg { width: 16px; height: 16px; }
+
+.db-set-item-body {
+  display: none;
+  padding: 2px 14px 14px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.db-set-item.is-open > .db-set-item-body { display: block; }
+
+/* ── 胶囊按钮（可见/隐藏、默认展开/收起） ── */
+
+.db-set-pill {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
-.db-section-move-group {
-  display: flex;
-  gap: 2px;
-  margin-left: auto;
+.db-set-pill.on {
+  background: color-mix(in srgb, var(--color-green, #22c55e) 16%, transparent);
+  color: color-mix(in srgb, var(--color-green, #22c55e) 75%, var(--text-normal));
 }
 
-.db-section-move-btn {
-  width: 26px;
-  height: 26px;
+.db-set-pill.off {
+  background: color-mix(in srgb, var(--text-faint) 20%, transparent);
+  color: var(--text-muted);
+}
+
+/* ── 图标工具行（上移 / 下移 / 删除） ── */
+
+.db-set-tools { display: flex; gap: 8px; margin-top: 14px; }
+
+.db-set-tool {
+  width: 40px;
+  height: 40px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 15px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  background: var(--background-secondary);
   color: var(--text-muted);
-  transition: all 0.15s ease;
-  -webkit-user-select: none;
-  user-select: none;
+  cursor: pointer;
 }
 
-.db-section-move-btn:hover {
+.db-set-tool svg { width: 16px; height: 16px; }
+
+.db-set-tool:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
 
-.db-section-move-btn.disabled {
-  opacity: 0.25;
-  cursor: not-allowed;
-  pointer-events: none;
+.db-set-tool.danger {
+  margin-left: auto;
+  color: var(--color-red, #ef4444);
+  border-color: color-mix(in srgb, var(--color-red, #ef4444) 35%, transparent);
+  background: color-mix(in srgb, var(--color-red, #ef4444) 8%, transparent);
 }
 
-.db-section-toggle {
-  padding: 3px 10px;
-  border-radius: 999px;
-  font-size: 11px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  -webkit-user-select: none;
-  user-select: none;
-  flex-shrink: 0;
+.db-set-tool.danger:hover {
+  background: color-mix(in srgb, var(--color-red, #ef4444) 16%, transparent);
 }
 
-.db-section-toggle.enabled {
-  background: rgba(34,197,94,0.15);
-  color: #16a34a;
+.db-set-tool.is-disabled { opacity: 0.3; }
+
+/* ── 竖排字段：小标签 + 全宽控件 ── */
+
+.db-set-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+  min-width: 0;
 }
 
-.db-journal-root .db-section-toggle.enabled {
-  color: color-mix(in srgb, #22c55e 70%, var(--text-normal));
-}
+.db-set-field-row { display: flex; gap: 10px; }
+.db-set-field-row > .db-set-field { flex: 1 1 0; }
+.db-set-field-row > .db-set-field:nth-child(2) { flex: 0 0 84px; }
 
-.db-section-toggle:not(.enabled) {
-  background: rgba(156,163,175,0.15);
+.db-set-field-label {
+  font-size: 11.5px;
+  font-weight: 600;
   color: var(--text-muted);
 }
 
-.db-section-del-btn {
-  padding: 3px 10px;
-  border-radius: 999px;
+.db-set-field-ctl { min-width: 0; }
+
+.db-set-field-hint {
   font-size: 11px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  -webkit-user-select: none;
-  user-select: none;
-  flex-shrink: 0;
-  background: rgba(239,68,68,0.12);
-  color: #ef4444;
+  color: var(--text-faint);
+  line-height: 1.45;
 }
 
-.db-section-del-btn:hover {
-  background: rgba(239,68,68,0.22);
-}
-
-.db-section-card-body {
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.db-section-field-row {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.db-section-field {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  flex: 1;
-  min-width: 80px;
-}
-
-.db-section-field-wide {
-  flex: 2;
-  min-width: 200px;
-}
-
-.db-section-field-label {
-  font-size: 11px;
-  color: var(--text-muted);
-  font-weight: 500;
-}
-
-.db-section-edit-emoji {
+.db-set-input {
   width: 100%;
-  text-align: center;
-  font-size: 16px;
-  padding: 5px 4px;
+  min-height: 40px;
+  padding: 8px 10px;
   border: 1px solid var(--background-modifier-border);
-  border-radius: 5px;
+  border-radius: 8px;
   background: var(--background-primary);
-}
-
-.db-section-edit-label {
-  width: 100%;
-  padding: 5px 8px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 5px;
-  background: var(--background-primary);
+  color: var(--text-normal);
   font-size: 13px;
 }
 
-.db-section-edit-type {
-  width: 100%;
-  padding: 5px 6px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 5px;
-  background: var(--background-primary);
+select.db-set-input { cursor: pointer; }
+
+.db-set-input:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}
+
+.db-set-input-mono {
+  font-family: var(--font-monospace, monospace);
   font-size: 12px;
-  cursor: pointer;
 }
 
-.db-section-edit-placeholder {
-  width: 100%;
-  padding: 5px 8px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 5px;
-  background: var(--background-primary);
-  font-size: 13px;
-}
+/* ── 虚线添加按钮 ── */
 
-
-.db-section-add-btn {
+.db-set-add {
   display: block;
   width: 100%;
+  min-height: 40px;
+  margin-top: 12px;
   padding: 10px;
-  border-radius: 8px;
-  border: 2px dashed var(--background-modifier-border);
+  border: 1.5px dashed var(--background-modifier-border);
+  border-radius: 10px;
   background: transparent;
   color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  transition: all 0.15s ease;
-  margin-bottom: 16px;
 }
 
-.db-section-add-btn:hover {
+.db-set-add:hover {
   border-color: var(--interactive-accent);
   color: var(--interactive-accent);
-  background: var(--background-modifier-hover);
 }
 
-.db-section-add-btn.is-disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  pointer-events: none;
+.db-set-add.is-disabled { opacity: 0.45; }
+
+.db-set-add-outer {
+  width: calc(100% - 24px);
+  margin: 6px 12px 8px;
+}
+
+/* ── 删除确认弹窗 ── */
+
+.db-set-confirm h3 { margin: 0 0 8px; font-size: 16px; }
+
+.db-set-confirm p {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.db-set-confirm-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ── 触控：可点目标 ≥ 44px（手机端） ── */
+
+@media (hover: none) {
+  .db-set-tool { width: 44px; height: 44px; }
+  .db-set-pill { min-height: 34px; padding: 6px 12px; }
+  .db-set-input { min-height: 44px; }
+  .db-set-add { min-height: 44px; }
+  .db-mood-edit-row { grid-template-columns: 60px minmax(0, 1fr) 40px; }
+  .db-mood-edit-emoji, .db-mood-edit-label { min-height: 44px; }
+  .db-mood-edit-del { height: 40px; }
+  .db-mood-add-btn { min-height: 44px; }
+}
+
+/* ── 手机 / 窄窗：Setting 行自动竖排、控件全宽（开关行保持标题左、开关右） ── */
+
+@media (max-width: 620px) {
+  .db-set-group-body > .setting-item:not(:has(.checkbox-container)) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .db-set-group-body > .setting-item:not(:has(.checkbox-container)) .setting-item-control {
+    width: 100%;
+    justify-content: flex-start;
+    flex: 0 0 auto;
+  }
+
+  .db-set-group-body > .setting-item:not(:has(.checkbox-container)) .setting-item-control input,
+  .db-set-group-body > .setting-item:not(:has(.checkbox-container)) .setting-item-control select {
+    width: 100%;
+    min-height: 44px;
+    flex: 1 1 auto;
+  }
+}
+
+/* ── PC 宽屏：内容列限宽居中 ── */
+
+@media (min-width: 621px) {
+  .db-set-root {
+    max-width: 640px;
+    margin: 0 auto;
+  }
 }
 
 
@@ -2049,261 +2235,6 @@ body,
 .db-toggle-icon svg          { width: 20px; height: 20px; }
 .db-activity-icon svg        { width: 16px; height: 16px; }
 
-
-/* ════════════════════════════════════════════════════════
-   11. Settings — iOS Grouped Cards
-   ════════════════════════════════════════════════════════ */
-
-/* Remove default Obsidian setting heading styling when grouped */
-.db-settings-grouped > h3 { display: none; }
-
-/* Card container */
-.db-settings-card {
-  margin-bottom: 16px;
-  border-radius: 10px;
-  border: 1px solid var(--background-modifier-border);
-  background: var(--background-secondary);
-  overflow: hidden;
-}
-
-/* Card header */
-.db-settings-card-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px 10px;
-  border-bottom: 1px solid var(--background-modifier-border);
-  background: var(--background-secondary-alt);
-}
-
-.db-settings-card-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  flex-shrink: 0;
-}
-
-.db-settings-card-icon svg {
-  width: 16px;
-  height: 16px;
-}
-
-.db-settings-card-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-normal);
-}
-
-/* Card body */
-.db-settings-card-body {
-  padding: 4px 0;
-}
-
-/* Settings inside cards: tighter spacing, no extra borders */
-.db-settings-card-body > .setting-item {
-  border-bottom: none;
-  padding: 10px 16px;
-}
-
-.db-settings-card-body > .setting-item:last-child {
-  padding-bottom: 14px;
-}
-
-/* Hint text inside cards */
-.db-settings-card-body > .db-settings-hint {
-  padding: 8px 16px 4px;
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-faint);
-  line-height: 1.5;
-}
-
-
-/* Add button inside cards */
-.db-settings-card-body > .db-section-add-btn,
-.db-settings-card-body > .db-mood-add-btn {
-  margin: 8px 16px 12px;
-}
-
-/* Mood editor inside cards */
-.db-settings-card-body > .db-mood-editor {
-  padding: 0 16px;
-}
-
-/* Responsive: wider cards on larger screens */
-@media (min-width: 600px) {
-  .db-settings-grouped {
-    max-width: 640px;
-  }
-}
-
-
-/* ════════════════════════════════════════════════════════
-   12. Settings — Panel Editor (two-level: panel → sections)
-   ════════════════════════════════════════════════════════ */
-
-/* Panel editor container */
-.db-panel-editor {
-  padding: 0 16px;
-  margin-top: 8px;
-}
-
-/* Panel card (outer level) */
-.db-panel-card {
-  border-radius: 8px;
-  border: 1px solid var(--background-modifier-border);
-  background: var(--background-primary);
-  margin-bottom: 12px;
-  overflow: hidden;
-}
-
-/* Panel card header */
-.db-panel-card-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: var(--background-secondary-alt);
-  border-bottom: 1px solid var(--background-modifier-border);
-}
-
-/* Panel name input */
-.db-panel-name-input {
-  flex: 1;
-  min-width: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-normal);
-  background: var(--background-primary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 6px;
-  padding: 4px 8px;
-}
-
-.db-panel-name-input:focus {
-  outline: none;
-  border-color: var(--interactive-accent);
-}
-
-/* Panel section count hint */
-.db-panel-section-hint {
-  font-size: 11px;
-  color: var(--text-faint);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-/* Sections list inside panel */
-.db-panel-sections {
-  padding: 8px 12px 4px;
-}
-
-/* Nested section card (smaller, indented) */
-.db-section-card-nested {
-  margin-bottom: 8px;
-  border-radius: 6px;
-}
-
-.db-section-card-nested .db-section-card-head {
-  padding: 8px 10px;
-  background: var(--background-secondary);
-}
-
-.db-section-card-nested .db-section-card-body {
-  padding: 8px 10px 10px;
-}
-
-/* Small add button (inside panel) */
-.db-section-add-btn-sm {
-  width: 100%;
-  margin: 4px 0 8px;
-  padding: 6px;
-  font-size: 12px;
-}
-
-
-
-
-/* ════════════════════════════════════════════════════════
-   13. Settings — Collapsible Cards
-   ════════════════════════════════════════════════════════ */
-
-/* Card header: clickable cursor */
-.db-settings-card-header {
-  cursor: pointer;
-  user-select: none;
-}
-
-/* Chevron icon */
-.db-settings-card-chevron {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  opacity: 0.5;
-  flex-shrink: 0;
-}
-
-.db-settings-card-chevron svg {
-  width: 16px;
-  height: 16px;
-}
-
-/* Collapsed card: hide body */
-.db-card-collapsed > .db-settings-card-body {
-  display: none;
-}
-
-/* Panel card collapse */
-.db-panel-card-head {
-  cursor: pointer;
-  user-select: none;
-}
-
-.db-panel-chevron {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  opacity: 0.5;
-  flex-shrink: 0;
-}
-
-.db-panel-chevron svg {
-  width: 14px;
-  height: 14px;
-}
-
-/* Collapsed panel: hide sections list */
-.db-panel-collapsed > .db-panel-sections {
-  display: none;
-}
-
-/* Section file path input */
-.db-section-edit-filepath {
-  width: 100%;
-  padding: 5px 8px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 5px;
-  background: var(--background-primary);
-  font-size: 12px;
-  font-family: var(--font-monospace, monospace);
-}
-.db-section-field-hint {
-  font-size: 11px;
-  color: var(--text-faint);
-  margin-top: 2px;
-  line-height: 1.4;
-}
-.db-section-field-hint {
-  font-size: 11px;
-  color: var(--text-faint);
-  margin-top: 2px;
-  line-height: 1.4;
-}
 
 
 

@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting, setIcon } from "obsidian";
+import { App, Modal, Notice, PluginSettingTab, Setting, setIcon } from "obsidian";
 import type DaybookPlugin from "./main";
 import { VIEW_TYPE_JOURNAL } from "./JournalView";
 import type { LegacyHabitDef } from "./habitManager";
@@ -183,8 +183,40 @@ export const SECTION_TYPE_INFO: Record<SectionType, { label: string; emoji: stri
   habits: { label: "习惯打卡", emoji: "\u{1F4A7}", desc: "每习惯一个 md（<日记目录>/habits/，可手动编辑）· 详情页含活跃度热力图 + 周/月/年趋势图" },
 };
 
+/** 删除确认弹窗（设置页自带轻量版，避免与 TodayPanel 形成循环导入） */
+class SettingsConfirmModal extends Modal {
+  constructor(
+    app: App,
+    private title: string,
+    private message: string,
+    private confirmText: string,
+    private onConfirm: () => void
+  ) {
+    super(app);
+  }
 
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.addClass("db-set-confirm");
+    contentEl.createEl("h3", { text: this.title });
+    contentEl.createEl("p", { text: this.message });
+    const btns = contentEl.createDiv({ cls: "db-set-confirm-btns" });
+    btns.createEl("button", { text: "取消", attr: { type: "button" } })
+      .addEventListener("click", () => this.close());
+    btns.createEl("button", { text: this.confirmText, cls: "mod-warning", attr: { type: "button" } })
+      .addEventListener("click", () => { this.close(); this.onConfirm(); });
+  }
 
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
+/**
+ * 设置页 v2：iOS 分组式（Settings.app 的语言）。
+ * 4 个常显分组，不再「藏进可折叠卡片」；版块/章节用两级手风琴就地编辑；
+ * 窄屏（手机）下所有 Setting 行自动竖排、控件全宽（CSS @media ≤620px）。
+ */
 export class DaybookSettingTab extends PluginSettingTab {
   plugin: DaybookPlugin;
 
@@ -193,42 +225,100 @@ export class DaybookSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
-  /** 创建 iOS 风格分组卡片（可折叠） */
-  private createSettingsCard(parent: HTMLElement, title: string, icon: string): HTMLElement {
-    const card = parent.createDiv({ cls: "db-settings-card" });
-    const header = card.createDiv({ cls: "db-settings-card-header" });
-    const iconEl = header.createDiv({ cls: "db-settings-card-icon" });
-    setIcon(iconEl, icon);
-    header.createEl("span", { text: title, cls: "db-settings-card-title" });
-    const chevron = header.createDiv({ cls: "db-settings-card-chevron" });
-    setIcon(chevron, "chevron-down");
-    const body = card.createDiv({ cls: "db-settings-card-body" });
-    header.addEventListener("click", (e) => {
-      // 不拦截卡片内部交互（输入、按钮等）
-      if ((e.target as HTMLElement).closest("input, button, select, textarea, .db-section-toggle, .db-section-move-btn, .db-section-del-btn")) return;
-      card.toggleClass("db-card-collapsed", !card.hasClass("db-card-collapsed"));
-      setIcon(chevron, card.hasClass("db-card-collapsed") ? "chevron-right" : "chevron-down");
+  /* ── 通用构件 ── */
+
+  /** 分组：图标 + 标题 + 圆角容器；返回内容区 */
+  private group(parent: HTMLElement, title: string, icon: string): HTMLElement {
+    const g = parent.createDiv({ cls: "db-set-group" });
+    const head = g.createDiv({ cls: "db-set-group-head" });
+    const ic = head.createDiv({ cls: "db-set-group-icon" });
+    setIcon(ic, icon);
+    head.createSpan({ cls: "db-set-group-title", text: title });
+    return g.createDiv({ cls: "db-set-group-body" });
+  }
+
+  /** 手风琴行：buildHead 填头部内容，chevron 自动追加在末尾；返回内容区 */
+  private accordion(parent: HTMLElement, cls: string, buildHead: (head: HTMLElement) => void): HTMLElement {
+    const item = parent.createDiv({ cls: `db-set-item ${cls}` });
+    const head = item.createDiv({
+      cls: "db-set-item-head",
+      attr: { role: "button", tabindex: "0", "aria-expanded": "false" },
+    });
+    buildHead(head);
+    const chev = head.createDiv({ cls: "db-set-item-chev" });
+    setIcon(chev, "chevron-right");
+    const body = item.createDiv({ cls: "db-set-item-body" });
+    const setOpen = (v: boolean) => {
+      item.toggleClass("is-open", v);
+      head.setAttribute("aria-expanded", String(v));
+      setIcon(chev, v ? "chevron-down" : "chevron-right");
+    };
+    head.addEventListener("click", e => {
+      if ((e.target as HTMLElement).closest("input, button, select, textarea, .db-set-pill")) return;
+      setOpen(!item.hasClass("is-open"));
+    });
+    head.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen(!item.hasClass("is-open")); }
     });
     return body;
+  }
+
+  /** 胶囊开关按钮（可见/隐藏、展开/收起）；点击不触发所在手风琴 */
+  private pill(parent: HTMLElement, text: string, on: boolean, onClick: () => void): HTMLElement {
+    const p = parent.createEl("button", {
+      cls: `db-set-pill ${on ? "on" : "off"}`,
+      text, attr: { type: "button" },
+    });
+    p.addEventListener("click", e => { e.stopPropagation(); onClick(); });
+    return p;
+  }
+
+  /** 方形图标按钮（上移 / 下移 / 删除） */
+  private tool(
+    parent: HTMLElement, icon: string, label: string,
+    opts: { danger?: boolean; disabled?: boolean }, onClick: () => void
+  ): void {
+    const b = parent.createEl("button", {
+      cls: "db-set-tool" + (opts.danger ? " danger" : "") + (opts.disabled ? " is-disabled" : ""),
+      attr: { type: "button", "aria-label": label, title: label },
+    });
+    setIcon(b, icon);
+    if (opts.disabled) { b.disabled = true; return; }
+    b.addEventListener("click", e => { e.stopPropagation(); onClick(); });
+  }
+
+  /** 竖排字段：小标签 + 全宽控件（+ 可选提示）；返回控件容器 */
+  private field(parent: HTMLElement, label: string, hint?: string): HTMLElement {
+    const f = parent.createDiv({ cls: "db-set-field" });
+    f.createEl("label", { cls: "db-set-field-label", text: label });
+    const ctl = f.createDiv({ cls: "db-set-field-ctl" });
+    if (hint) f.createDiv({ cls: "db-set-field-hint", text: hint });
+    return ctl;
   }
 
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.addClass("db-settings-grouped");
+    containerEl.addClass("db-settings-v2");
+    const root = containerEl.createDiv({ cls: "db-set-root" });
 
-    // ══ 卡片 1: 通用 ════════════════════════════════
-    const card1 = this.createSettingsCard(containerEl, "通用", "settings");
-
+    const save = () => this.plugin.saveSettings();
+    const refreshView = () => {
+      const view = this.plugin.getJournalView();
+      if (view) view.buildUI();
+    };
     const reopenView = async () => {
-      await this.plugin.saveSettings();
-      const { workspace } = this.plugin.app;
-      const existing = workspace.getLeavesOfType(VIEW_TYPE_JOURNAL)[0];
+      await save();
+      const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_JOURNAL)[0];
       if (existing) { existing.detach(); await this.plugin.activateView(); }
     };
-    new Setting(card1)
+
+    /* ══ 分组 1：通用 ══ */
+    const gGeneral = this.group(root, "通用", "settings");
+
+    new Setting(gGeneral)
       .setName("桌面端打开位置")
-      .setDesc("桌面端默认打开位置")
+      .setDesc("仅桌面端；手机端固定为主窗口")
       .addDropdown(dropdown => dropdown
         .addOption("left", "左侧边栏")
         .addOption("main", "主窗口（新标签页）")
@@ -239,336 +329,283 @@ export class DaybookSettingTab extends PluginSettingTab {
           await reopenView();
         }));
 
-    new Setting(card1)
+    new Setting(gGeneral)
       .setName("日记文件夹")
-      .setDesc("存放日记文件的文件夹路径（相对于 vault 根目录）")
+      .setDesc("日记文件存放的文件夹（相对库根目录）")
       .addText(text => text
         .setPlaceholder("例如: Daily 或 Journal/Daily")
         .setValue(this.plugin.settings.diaryFolder)
         .onChange(async (value) => {
           this.plugin.settings.diaryFolder = value.trim();
-          await this.plugin.saveSettings();
+          await save();
         }));
 
-    new Setting(card1)
+    new Setting(gGeneral)
       .setName("日期格式")
-      .setDesc("日记文件名的日期格式（使用 YYYY MM DD）")
+      .setDesc("日记文件名的日期格式（YYYY MM DD）")
       .addText(text => text
         .setPlaceholder("YYYY-MM-DD")
         .setValue(this.plugin.settings.dateFormat)
         .onChange(async (value) => {
           this.plugin.settings.dateFormat = value.trim() || "YYYY-MM-DD";
-          await this.plugin.saveSettings();
+          await save();
         }));
 
-    // ══ 卡片 2: 版块管理 ════════════════════════════
-    const card2 = this.createSettingsCard(containerEl, "版块管理", "layers");
-    card2.createEl("p", {
-      text: "每个章节对应主页面左上角下拉列表中的一个记录入口；关闭类型或停用章节后，对应入口与其今日记录一并隐藏。",
-      cls: "db-settings-hint"
+    /* ══ 分组 2：版块与章节 ══ */
+    const gPanels = this.group(root, "版块与章节", "layers");
+    gPanels.createDiv({
+      cls: "db-settings-hint",
+      text: "版块＝主界面左上角的入口分组；章节＝进入后可切换的记录页。改动即时生效，删除前会先确认。",
     });
 
-    // 类型开关
     const TYPE_TOGGLES: { key: SectionType; label: string; desc: string }[] = [
-      { key: "memos", label: "⚡ 闪念类型", desc: "关闭后所有闪念章节不显示" },
-      { key: "plans", label: "📅 待办计划类型", desc: "关闭后所有计划章节不显示" },
-      { key: "habits", label: "💧 习惯打卡类型", desc: "关闭后所有习惯打卡章节不显示" },
+      { key: "memos", label: "⚡ 闪念类型", desc: "关闭后隐藏所有闪念章节及其记录" },
+      { key: "plans", label: "📅 待办计划类型", desc: "关闭后隐藏所有计划章节及其任务" },
+      { key: "habits", label: "💧 习惯打卡类型", desc: "关闭后隐藏所有习惯章节" },
     ];
     TYPE_TOGGLES.forEach(({ key, label, desc }) => {
-      new Setting(card2)
+      new Setting(gPanels)
         .setName(label)
         .setDesc(desc)
         .addToggle(toggle => toggle
           .setValue(isTypeEnabled(this.plugin.settings, key))
           .onChange(async value => {
             this.plugin.settings.typeEnabled[key] = value;
-            await this.plugin.saveSettings();
+            await save();
             refreshView();
           }));
     });
 
-    const panelList = card2.createDiv({ cls: "db-panel-editor" });
-
-    const refreshView = () => {
-      const view = this.plugin.getJournalView();
-      if (view) view.buildUI();
-    };
-
+    const panelList = gPanels.createDiv({ cls: "db-set-list" });
     const totalSections = () => this.plugin.settings.panels.reduce((n, p) => n + p.sections.length, 0);
 
-    const renderPanelEditor = () => {
+    const renderPanels = () => {
       panelList.empty();
       this.plugin.settings.panels.forEach((panel, pi) => {
-        // ── 版块卡片 ──
-        const panelCard = panelList.createDiv({ cls: "db-panel-card" });
-        const panelHead = panelCard.createDiv({ cls: "db-panel-card-head" });
+        const body = this.accordion(panelList, "db-set-panel", head => {
+          head.createDiv({ cls: "db-set-num", text: String(pi + 1) });
+          head.createSpan({ cls: "db-set-item-title", text: panel.name });
+          head.createSpan({
+            cls: "db-set-item-sub",
+            text: panel.sections.length === 1 ? "1 个章节" : `${panel.sections.length} 个章节`,
+          });
+        });
 
-        // 序号
-        panelHead.createDiv({ cls: "db-section-card-num", text: `${pi + 1}` });
-
-        // 版块名（可编辑）
-        const nameInput = panelHead.createEl("input", {
-          cls: "db-panel-name-input",
-          attr: { type: "text", "aria-label": `版块 ${pi + 1} 名称` },
+        // 版块名
+        const nameCtl = this.field(body, "版块名称");
+        const nameInput = nameCtl.createEl("input", {
+          cls: "db-set-input", attr: { type: "text", "aria-label": "版块名称" },
         });
         nameInput.value = panel.name;
         nameInput.addEventListener("change", async () => {
           const v = nameInput.value.trim();
-          if (v) { this.plugin.settings.panels[pi].name = v; await this.plugin.saveSettings(); refreshView(); }
+          if (!v) { nameInput.value = panel.name; return; }
+          panel.name = v;
+          await save(); renderPanels(); refreshView();
         });
 
-        // 单/多章节提示
-        const secCount = panel.sections.length;
-        const hintEl = panelHead.createDiv({
-          cls: "db-panel-section-hint",
-          text: secCount <= 1 ? "单章节" : `${secCount} 个章节`,
-        });
-
-        // 折叠按钮
-        const panelChevron = panelHead.createDiv({ cls: "db-panel-chevron" });
-        setIcon(panelChevron, "chevron-down");
-
-        // 排序按钮
-        const moveGroup = panelHead.createDiv({ cls: "db-section-move-group" });
-        const upBtn = moveGroup.createDiv({ cls: "db-section-move-btn", text: "↑", attr: { "aria-label": "上移版块", role: "button", tabindex: "0" } });
-        upBtn.toggleClass("disabled", pi === 0);
-        upBtn.addEventListener("click", async () => {
-          if (pi === 0) return;
+        // 版块操作
+        const tools = body.createDiv({ cls: "db-set-tools" });
+        this.tool(tools, "arrow-up", "上移版块", { disabled: pi === 0 }, async () => {
           const arr = this.plugin.settings.panels;
           [arr[pi - 1], arr[pi]] = [arr[pi], arr[pi - 1]];
-          await this.plugin.saveSettings();
-          renderPanelEditor();
-          refreshView();
+          await save(); renderPanels(); refreshView();
         });
-        const downBtn = moveGroup.createDiv({ cls: "db-section-move-btn", text: "↓", attr: { "aria-label": "下移版块", role: "button", tabindex: "0" } });
-        downBtn.toggleClass("disabled", pi === this.plugin.settings.panels.length - 1);
-        downBtn.addEventListener("click", async () => {
-          if (pi === this.plugin.settings.panels.length - 1) return;
+        this.tool(tools, "arrow-down", "下移版块", { disabled: pi === this.plugin.settings.panels.length - 1 }, async () => {
           const arr = this.plugin.settings.panels;
           [arr[pi + 1], arr[pi]] = [arr[pi], arr[pi + 1]];
-          await this.plugin.saveSettings();
-          renderPanelEditor();
-          refreshView();
+          await save(); renderPanels(); refreshView();
+        });
+        this.tool(tools, "trash-2", "删除版块", { danger: true }, () => {
+          new SettingsConfirmModal(this.app, "删除版块",
+            `确定删除版块「${panel.name}」吗？其中的 ${panel.sections.length} 个章节会一并移除（日记文件里的记录不受影响）。`,
+            "删除", () => {
+              void (async () => {
+                this.plugin.settings.panels.splice(pi, 1);
+                await save(); renderPanels(); refreshView();
+              })();
+            }).open();
         });
 
-        // 删除版块
-        const delPanelBtn = panelHead.createDiv({
-          cls: "db-section-del-btn",
-          text: "🗑️ 删除",
-          attr: { role: "button", tabindex: "0", "aria-label": `删除版块 ${panel.name}` },
-        });
-        delPanelBtn.addEventListener("click", async () => {
-          this.plugin.settings.panels.splice(pi, 1);
-          await this.plugin.saveSettings();
-          renderPanelEditor();
-          refreshView();
-        });
-
-        // ── 版块内：章节列表 ──
-        const secList = panelCard.createDiv({ cls: "db-panel-sections" });
-
-        // 点击版块头折叠/展开章节列表
-        panelHead.addEventListener("click", (e) => {
-          if ((e.target as HTMLElement).closest("input, button, select, textarea, .db-section-toggle, .db-section-move-btn, .db-section-del-btn")) return;
-          panelCard.toggleClass("db-panel-collapsed", !panelCard.hasClass("db-panel-collapsed"));
-          setIcon(panelChevron, panelCard.hasClass("db-panel-collapsed") ? "chevron-right" : "chevron-down");
-        });
+        // 章节列表
+        const secList = body.createDiv({ cls: "db-set-sublist" });
         panel.sections.forEach((sec, si) => {
-          const secCard = secList.createDiv({ cls: "db-section-card db-section-card-nested" });
-          const secHead = secCard.createDiv({ cls: "db-section-card-head" });
-
-          // 章节序号
-          secHead.createDiv({ cls: "db-section-card-num", text: `${si + 1}` });
-
-          // 显示/隐藏
-          const toggleBtn = secHead.createDiv({
-            cls: `db-section-toggle ${sec.enabled ? "enabled" : ""}`,
-            text: sec.enabled ? "👁️ 可见" : "🚫 隐藏",
-            attr: { role: "button", tabindex: "0", "aria-label": sec.enabled ? "点击隐藏" : "点击显示" },
-          });
-          toggleBtn.addEventListener("click", async () => {
-            this.plugin.settings.panels[pi].sections[si].enabled = !sec.enabled;
-            await this.plugin.saveSettings();
-            renderPanelEditor();
-            refreshView();
+          const sb = this.accordion(secList, "db-set-section", head => {
+            head.createSpan({ cls: "db-set-emoji", text: sec.emoji });
+            head.createSpan({ cls: "db-set-item-title", text: sec.label });
+            head.createSpan({ cls: "db-set-item-sub", text: SECTION_TYPE_INFO[sec.type].label });
+            this.pill(head, sec.enabled ? "可见" : "隐藏", sec.enabled, async () => {
+              sec.enabled = !sec.enabled;
+              await save(); renderPanels(); refreshView();
+            });
           });
 
-          // 排序
-          const secMove = secHead.createDiv({ cls: "db-section-move-group" });
-          const sUp = secMove.createDiv({ cls: "db-section-move-btn", text: "↑", attr: { "aria-label": "上移章节", role: "button", tabindex: "0" } });
-          sUp.toggleClass("disabled", si === 0);
-          sUp.addEventListener("click", async () => {
-            if (si === 0) return;
-            const arr = this.plugin.settings.panels[pi].sections;
-            [arr[si - 1], arr[si]] = [arr[si], arr[si - 1]];
-            await this.plugin.saveSettings();
-            renderPanelEditor();
-            refreshView();
+          // 名称 + 图标
+          const row1 = sb.createDiv({ cls: "db-set-field-row" });
+          const labelCtl = this.field(row1, "名称");
+          const labelInput = labelCtl.createEl("input", {
+            cls: "db-set-input", attr: { type: "text", "aria-label": "章节名称" },
           });
-          const sDown = secMove.createDiv({ cls: "db-section-move-btn", text: "↓", attr: { "aria-label": "下移章节", role: "button", tabindex: "0" } });
-          sDown.toggleClass("disabled", si === panel.sections.length - 1);
-          sDown.addEventListener("click", async () => {
-            if (si === panel.sections.length - 1) return;
-            const arr = this.plugin.settings.panels[pi].sections;
-            [arr[si + 1], arr[si]] = [arr[si], arr[si + 1]];
-            await this.plugin.saveSettings();
-            renderPanelEditor();
-            refreshView();
-          });
-
-          // 删除章节
-          const delSecBtn = secHead.createDiv({
-            cls: "db-section-del-btn",
-            text: "🗑️ 删除",
-            attr: { role: "button", tabindex: "0", "aria-label": `删除章节 ${sec.label}` },
-          });
-          delSecBtn.addEventListener("click", async () => {
-            this.plugin.settings.panels[pi].sections.splice(si, 1);
-            await this.plugin.saveSettings();
-            renderPanelEditor();
-            refreshView();
-          });
-
-          // 章节内容
-          const secBody = secCard.createDiv({ cls: "db-section-card-body" });
-          const row1 = secBody.createDiv({ cls: "db-section-field-row" });
-
-          // emoji
-          const emojiCell = row1.createDiv({ cls: "db-section-field" });
-          emojiCell.createEl("label", { text: "图标", cls: "db-section-field-label" });
-          const emojiInput = emojiCell.createEl("input", { cls: "db-section-edit-emoji", attr: { type: "text", maxlength: "4", "aria-label": `章节 ${si + 1} 图标` } });
-          emojiInput.value = sec.emoji;
-          emojiInput.addEventListener("change", async () => {
-            const v = emojiInput.value.trim();
-            if (v) { this.plugin.settings.panels[pi].sections[si].emoji = v; await this.plugin.saveSettings(); refreshView(); }
-          });
-
-          // 名称
-          const labelCell = row1.createDiv({ cls: "db-section-field" });
-          labelCell.createEl("label", { text: "名称", cls: "db-section-field-label" });
-          const labelInput = labelCell.createEl("input", { cls: "db-section-edit-label", attr: { type: "text", "aria-label": `章节 ${si + 1} 名称` } });
           labelInput.value = sec.label;
           labelInput.addEventListener("change", async () => {
             const v = labelInput.value.trim();
-            if (v) { this.plugin.settings.panels[pi].sections[si].label = v; await this.plugin.saveSettings(); refreshView(); }
+            if (!v) { labelInput.value = sec.label; return; }
+            sec.label = v;
+            await save(); renderPanels(); refreshView();
+          });
+          const emojiCtl = this.field(row1, "图标");
+          const emojiInput = emojiCtl.createEl("input", {
+            cls: "db-set-input", attr: { type: "text", maxlength: "4", "aria-label": "章节图标" },
+          });
+          emojiInput.value = sec.emoji;
+          emojiInput.addEventListener("change", async () => {
+            const v = emojiInput.value.trim();
+            if (!v) { emojiInput.value = sec.emoji; return; }
+            sec.emoji = v;
+            await save(); renderPanels(); refreshView();
           });
 
           // 类型
-          const typeCell = row1.createDiv({ cls: "db-section-field" });
-          typeCell.createEl("label", { text: "类型", cls: "db-section-field-label" });
-          const typeSelect = typeCell.createEl("select", { cls: "db-section-edit-type", attr: { "aria-label": `章节 ${si + 1} 类型` } });
+          const typeCtl = this.field(sb, "章节类型");
+          const typeSelect = typeCtl.createEl("select", {
+            cls: "db-set-input", attr: { "aria-label": "章节类型" },
+          });
           (Object.entries(SECTION_TYPE_INFO) as [SectionType, typeof SECTION_TYPE_INFO[SectionType]][]).forEach(([key, info]) => {
             const opt = typeSelect.createEl("option", { value: key, text: `${info.emoji} ${info.label}` });
             if (sec.type === key) opt.setAttribute("selected", "selected");
           });
           typeSelect.addEventListener("change", async () => {
-            this.plugin.settings.panels[pi].sections[si].type = typeSelect.value as SectionType;
-            await this.plugin.saveSettings();
-            refreshView();
+            sec.type = typeSelect.value as SectionType;
+            await save(); renderPanels(); refreshView();
           });
 
-          // 占位符
-          const row2 = secBody.createDiv({ cls: "db-section-field-row" });
-          const phCell = row2.createDiv({ cls: "db-section-field db-section-field-wide" });
-          phCell.createEl("label", { text: "输入框提示文字", cls: "db-section-field-label" });
-          const phInput = phCell.createEl("input", { cls: "db-section-edit-placeholder", attr: { type: "text", "aria-label": `章节 ${si + 1} 提示文字` } });
+          // 提示文字
+          const phCtl = this.field(sb, "输入框提示文字");
+          const phInput = phCtl.createEl("input", {
+            cls: "db-set-input", attr: { type: "text", "aria-label": "章节提示文字" },
+          });
           phInput.value = sec.placeholder;
           phInput.addEventListener("change", async () => {
-            this.plugin.settings.panels[pi].sections[si].placeholder = phInput.value.trim() || "输入内容…";
-            await this.plugin.saveSettings();
-            refreshView();
+            sec.placeholder = phInput.value.trim() || "输入内容…";
+            await save(); refreshView();
           });
 
-          // 文件路径（自定义）
-          const rowFp = secBody.createDiv({ cls: "db-section-field-row" });
-          const fpCell = rowFp.createDiv({ cls: "db-section-field db-section-field-wide" });
-          fpCell.createEl("label", { text: "文件路径", cls: "db-section-field-label" });
-          const fpInput = fpCell.createEl("input", {
-            cls: "db-section-edit-filepath",
-            attr: { type: "text", placeholder: "如 Work/Notes/{{YYYY-MM-DD}}.md，留空则用默认", "aria-label": `章节 ${si + 1} 文件路径` },
+          // 文件路径
+          const fpCtl = this.field(sb, "文件路径",
+            "{{YYYY-MM-DD}} 是日期变量，也支持 {{YYYY/MM}}、{{HH:mm}} 等 moment 格式；留空用默认路径");
+          const fpInput = fpCtl.createEl("input", {
+            cls: "db-set-input db-set-input-mono",
+            attr: { type: "text", placeholder: "如 Work/Notes/{{YYYY-MM-DD}}.md", "aria-label": "章节文件路径" },
           });
           fpInput.value = sec.filePath ?? "";
           fpInput.addEventListener("change", async () => {
-            this.plugin.settings.panels[pi].sections[si].filePath = fpInput.value.trim() || undefined;
-            await this.plugin.saveSettings();
-            refreshView();
-          });
-          fpCell.createEl("div", {
-            cls: "db-section-field-hint",
-            text: "{{YYYY-MM-DD}} 为日期变量，支持 moment 格式如 {{YYYY/MM}}、{{HH:mm}} 等",
+            sec.filePath = fpInput.value.trim() || undefined;
+            await save(); refreshView();
           });
 
-          // 心情选择条默认展开状态（仅闪念）
+          // 心情条默认状态（仅闪念）
           if (sec.type === "memos") {
-            const row3 = secBody.createDiv({ cls: "db-section-field-row" });
-            const moodCell = row3.createDiv({ cls: "db-section-field" });
-            moodCell.createEl("label", { text: "是否展开", cls: "db-section-field-label" });
-            const moodToggle = moodCell.createDiv({
-              cls: `db-section-toggle ${sec.showMoodPicker !== false ? "enabled" : ""}`,
-              text: sec.showMoodPicker !== false ? "😊 展开" : "🙈 收起",
-              attr: { role: "button", tabindex: "0", "aria-label": "切换心情选择条默认展开状态" },
-            });
-            moodToggle.addEventListener("click", async () => {
-              this.plugin.settings.panels[pi].sections[si].showMoodPicker = sec.showMoodPicker === false;
-              await this.plugin.saveSettings();
-              renderPanelEditor();
-              refreshView();
-            });
+            const moodCtl = this.field(sb, "心情选择条");
+            this.pill(moodCtl, sec.showMoodPicker !== false ? "默认展开" : "默认收起",
+              sec.showMoodPicker !== false, async () => {
+                sec.showMoodPicker = sec.showMoodPicker === false;
+                await save(); renderPanels(); refreshView();
+              });
           }
+
+          // 章节操作
+          const stools = sb.createDiv({ cls: "db-set-tools" });
+          this.tool(stools, "arrow-up", "上移章节", { disabled: si === 0 }, async () => {
+            const arr = panel.sections;
+            [arr[si - 1], arr[si]] = [arr[si], arr[si - 1]];
+            await save(); renderPanels(); refreshView();
+          });
+          this.tool(stools, "arrow-down", "下移章节", { disabled: si === panel.sections.length - 1 }, async () => {
+            const arr = panel.sections;
+            [arr[si + 1], arr[si]] = [arr[si], arr[si + 1]];
+            await save(); renderPanels(); refreshView();
+          });
+          this.tool(stools, "trash-2", "删除章节", { danger: true }, () => {
+            new SettingsConfirmModal(this.app, "删除章节",
+              `确定删除章节「${sec.emoji} ${sec.label}」吗？日记文件里已有的记录不受影响。`,
+              "删除", () => {
+                void (async () => {
+                  panel.sections.splice(si, 1);
+                  await save(); renderPanels(); refreshView();
+                })();
+              }).open();
+          });
         });
 
-        // 添加章节按钮（版块内）
-        const addSecBtn = secList.createEl("button", { cls: "db-section-add-btn db-section-add-btn-sm", text: "+ 添加章节", attr: { "aria-label": `在版块 ${panel.name} 中添加章节` } });
-        addSecBtn.toggleClass("is-disabled", totalSections() >= MAX_SECTIONS);
-        addSecBtn.addEventListener("click", async () => {
-          if (totalSections() >= MAX_SECTIONS) return;
-          const count = panel.sections.length + 1;
-          this.plugin.settings.panels[pi].sections.push({ id: `custom-${Date.now()}`, emoji: "⚡", label: `新章节${count}`, type: "memos", placeholder: "输入内容…", enabled: true, showMoodPicker: false });
-          await this.plugin.saveSettings();
-          renderPanelEditor();
-          refreshView();
+        // 添加章节
+        const full = totalSections() >= MAX_SECTIONS;
+        const addSec = body.createEl("button", {
+          cls: "db-set-add",
+          text: full ? `章节已达上限（${MAX_SECTIONS} 个）` : "+ 添加章节",
+          attr: { type: "button", "aria-label": `在版块 ${panel.name} 中添加章节` },
+        });
+        addSec.toggleClass("is-disabled", full);
+        addSec.addEventListener("click", async () => {
+          if (full) { new Notice(`最多 ${MAX_SECTIONS} 个章节`); return; }
+          panel.sections.push({
+            id: `custom-${Date.now()}`, emoji: "⚡", label: `新章节${panel.sections.length + 1}`,
+            type: "memos", placeholder: "输入内容…", enabled: true, showMoodPicker: false,
+          });
+          await save(); renderPanels(); refreshView();
         });
       });
     };
 
-    renderPanelEditor();
+    renderPanels();
 
-    // 添加版块按钮
-    const addPanelBtn = card2.createEl("button", { cls: "db-section-add-btn", text: "+ 添加版块", attr: { "aria-label": "添加版块" } });
+    // 添加版块
+    const addPanelBtn = gPanels.createEl("button", {
+      cls: "db-set-add db-set-add-outer",
+      text: "+ 添加版块", attr: { type: "button", "aria-label": "添加版块" },
+    });
     addPanelBtn.addEventListener("click", async () => {
       this.plugin.settings.panels.push({
         id: `panel-${Date.now()}`,
         name: `新版块${this.plugin.settings.panels.length + 1}`,
         sections: [{ id: `custom-${Date.now()}`, emoji: "⚡", label: "新章节1", type: "memos", placeholder: "输入内容…", enabled: true, showMoodPicker: false }],
       });
-      await this.plugin.saveSettings();
-      renderPanelEditor();
-      refreshView();
+      await save(); renderPanels(); refreshView();
     });
 
-        // ══ 卡片 3: 记录偏好 ════════════════════════════
-    const card3 = this.createSettingsCard(containerEl, "记录偏好", "sparkles");
+    /* ══ 分组 3：记录体验 ══ */
+    const gRecord = this.group(root, "记录体验", "sparkles");
+    gRecord.createDiv({
+      cls: "db-settings-hint",
+      text: `自定义心情表情与含义，最多 ${MAX_CUSTOM_MOODS} 个；记录页长按心情也能直接编辑。`,
+    });
 
-    // — 心情管理 —
-    card3.createEl("p", { text: `自定义心情表情与含义，最多 ${MAX_CUSTOM_MOODS} 个；长按心情可直接编辑`, cls: "db-settings-hint" });
-    const moodList = card3.createDiv({ cls: "db-mood-editor" });
-    const addMoodBtn = card3.createEl("button", { cls: "db-mood-add-btn", attr: { "aria-label": "添加心情" } });
-
-    const refreshJournalView = () => { const view = this.plugin.getJournalView(); if (view) view.buildUI(); };
+    const moodList = gRecord.createDiv({ cls: "db-mood-editor" });
+    const addMoodBtn = gRecord.createEl("button", {
+      cls: "db-mood-add-btn", attr: { type: "button", "aria-label": "添加心情" },
+    });
 
     const renderMoodEditor = () => {
       moodList.empty();
       this.plugin.settings.customMoods.forEach((mood, idx) => {
         const row = moodList.createDiv({ cls: "db-mood-edit-row" });
-        const emojiInput = row.createEl("input", { cls: "db-mood-edit-emoji", attr: { type: "text", maxlength: "4", "aria-label": `心情 ${idx + 1} 表情` } });
+        const emojiInput = row.createEl("input", { cls: "db-mood-edit-emoji", attr: { type: "text", maxlength: "4", placeholder: "🙂", "aria-label": `心情 ${idx + 1} 表情` } });
         emojiInput.value = mood.emoji;
-        const labelInput = row.createEl("input", { cls: "db-mood-edit-label", attr: { type: "text", "aria-label": `心情 ${idx + 1} 含义` } });
+        const labelInput = row.createEl("input", { cls: "db-mood-edit-label", attr: { type: "text", placeholder: "含义，如：思考", "aria-label": `心情 ${idx + 1} 含义` } });
         labelInput.value = mood.label;
-        emojiInput.addEventListener("change", async () => { const v = emojiInput.value.trim(); if (v) { this.plugin.settings.customMoods[idx].emoji = v; await this.plugin.saveSettings(); refreshJournalView(); } });
-        labelInput.addEventListener("change", async () => { const v = labelInput.value.trim(); if (v) { this.plugin.settings.customMoods[idx].label = v; await this.plugin.saveSettings(); refreshJournalView(); } });
+        emojiInput.addEventListener("change", async () => {
+          const v = emojiInput.value.trim();
+          if (v) { mood.emoji = v; await save(); refreshView(); }
+        });
+        labelInput.addEventListener("change", async () => {
+          const v = labelInput.value.trim();
+          if (v) { mood.label = v; await save(); refreshView(); }
+        });
         const del = row.createDiv({ cls: "db-mood-edit-del", text: "×", attr: { role: "button", "aria-label": `删除心情 ${mood.label}`, tabindex: "0" } });
-        const remove = async () => { this.plugin.settings.customMoods.splice(idx, 1); await this.plugin.saveSettings(); renderMoodEditor(); refreshJournalView(); };
-        del.addEventListener("click", remove);
+        const remove = async () => {
+          this.plugin.settings.customMoods.splice(idx, 1);
+          await save(); renderMoodEditor(); refreshView();
+        };
+        del.addEventListener("click", () => void remove());
         del.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void remove(); } });
       });
       const full = this.plugin.settings.customMoods.length >= MAX_CUSTOM_MOODS;
@@ -576,60 +613,43 @@ export class DaybookSettingTab extends PluginSettingTab {
       addMoodBtn.setText(full ? `已达上限（${MAX_CUSTOM_MOODS} 个）` : "+ 添加心情");
     };
     addMoodBtn.addEventListener("click", async () => {
-      if (this.plugin.settings.customMoods.length >= MAX_CUSTOM_MOODS) return;
+      if (this.plugin.settings.customMoods.length >= MAX_CUSTOM_MOODS) {
+        new Notice(`最多 ${MAX_CUSTOM_MOODS} 个心情`);
+        return;
+      }
       this.plugin.settings.customMoods.push({ emoji: "🙂", label: "心情" });
-      await this.plugin.saveSettings();
-      renderMoodEditor();
-      refreshJournalView();
+      await save(); renderMoodEditor(); refreshView();
     });
     renderMoodEditor();
 
-    // — 快捷标签 —
-    new Setting(card3)
+    new Setting(gRecord)
       .setName("快捷标签")
-      .setDesc("记录页显示的快捷标签，点击追加 #标签；多个用逗号分隔")
+      .setDesc("记录页一键追加的 #标签；多个用逗号分隔")
       .addText(text => text
         .setPlaceholder("商业, 灵感, 读书")
         .setValue(this.plugin.settings.quickTags.join(", "))
         .onChange(async (value) => {
           this.plugin.settings.quickTags = value.split(/[,，]/).map(t => t.trim()).filter(Boolean);
-          await this.plugin.saveSettings();
+          await save();
         }));
 
-    // — 优先级徽标 —
-    new Setting(card3)
-      .setName("显示 2 级优先级徽标")
-      .setDesc("开启后 2 级（重要不紧急）计划也显示橙色 Ⅱ 徽标；默认只显示 1红 / 3蓝 / 4绿")
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.showMediumPriorityBadge)
-        .onChange(async value => {
-          this.plugin.settings.showMediumPriorityBadge = value;
-          await this.plugin.saveSettings();
-          const view = this.plugin.getJournalView();
-          if (view) view.buildUI();
-        }));
+    /* ══ 分组 4：计划与反馈 ══ */
+    const gPlan = this.group(root, "计划与反馈", "check-circle");
 
-    // ══ 卡片 4: 计划完成时间 ════════════════════════
-    const card4 = this.createSettingsCard(containerEl, "计划完成时间", "check-circle");
-    card4.createEl("p", {
-      text: "勾选完成计划时自动写入完成时间行内字段；取消完成时自动移除。",
-      cls: "db-settings-hint"
-    });
-
-    new Setting(card4)
+    new Setting(gPlan)
       .setName("完成时间字段名")
-      .setDesc("写入任务末尾的行内字段名，如 completedAt")
+      .setDesc("勾选完成时写入任务末尾的行内字段，如 completedAt")
       .addText(text => text
         .setPlaceholder("completedAt")
         .setValue(this.plugin.settings.todoCompletedField)
         .onChange(async (value) => {
           this.plugin.settings.todoCompletedField = value.trim() || "completedAt";
-          await this.plugin.saveSettings();
+          await save();
         }));
 
-    new Setting(card4)
+    new Setting(gPlan)
       .setName("已完成任务显示")
-      .setDesc("在已完成的计划后面显示的完成信息")
+      .setDesc("已完成的计划后面显示的完成信息")
       .addDropdown(dropdown => dropdown
         .addOption("duration", "完成耗时")
         .addOption("time", "完成时间")
@@ -637,36 +657,44 @@ export class DaybookSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.todoCompletionDisplay)
         .onChange(async value => {
           this.plugin.settings.todoCompletionDisplay = value as typeof this.plugin.settings.todoCompletionDisplay;
-          await this.plugin.saveSettings();
-          const view = this.plugin.getJournalView();
-          if (view) view.buildUI();
+          await save();
+          refreshView();
         }));
 
-    // ══ 卡片 5: 完成反馈（手机端） ══════════════════
-    const card5 = this.createSettingsCard(containerEl, "完成反馈", "bell-ring");
-    card5.createEl("p", {
-      text: "仅手机端生效：勾选待办完成、或习惯打卡达到当日目标次数时给出反馈（每日 1 次的习惯每次打卡都反馈）。",
-      cls: "db-settings-hint"
+    new Setting(gPlan)
+      .setName("显示 2 级优先级徽标")
+      .setDesc("开启后 2 级（重要不紧急）计划也显示橙色 Ⅱ 徽标；默认只显示 1红 / 3蓝 / 4绿")
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.showMediumPriorityBadge)
+        .onChange(async value => {
+          this.plugin.settings.showMediumPriorityBadge = value;
+          await save();
+          refreshView();
+        }));
+
+    gPlan.createDiv({
+      cls: "db-settings-hint",
+      text: "以下完成反馈仅手机端生效：勾选待办完成、或习惯打卡达到当日目标次数时触发（每日 1 次的习惯每次打卡都反馈）。",
     });
 
-    new Setting(card5)
+    new Setting(gPlan)
       .setName("完成时震动")
       .setDesc("点击完成的瞬间轻微震动")
       .addToggle(toggle => toggle
         .setValue(this.plugin.settings.completionHaptic)
         .onChange(async value => {
           this.plugin.settings.completionHaptic = value;
-          await this.plugin.saveSettings();
+          await save();
         }));
 
-    new Setting(card5)
+    new Setting(gPlan)
       .setName("完成时播放音效")
-      .setDesc("与震动同时播放「完成音效」，音量固定为 60%")
+      .setDesc("与震动同时播放「完成音效」，音量固定 60%")
       .addToggle(toggle => toggle
         .setValue(this.plugin.settings.completionSound)
         .onChange(async value => {
           this.plugin.settings.completionSound = value;
-          await this.plugin.saveSettings();
+          await save();
         }));
   }
 }
