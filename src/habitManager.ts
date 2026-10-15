@@ -26,6 +26,10 @@ export interface HabitConfig {
   archived?: boolean;
   filePath: string;     // habits/<文件名>.md
   executeDays?: number[]; // 1=周一…7=周日；空/缺省 = 每天执行
+  /** 上下班打卡型：点打卡时弹出时间选择（默认当前时间），常用时间可一键打卡 */
+  attendance?: boolean;
+  /** 常用打卡时间（HH:mm，升序去重），仅 attendance 时有意义 */
+  quickTimes?: string[];
 }
 
 /** 旧 data.json 中的习惯定义（无 filePath），仅供迁移读取 */
@@ -99,6 +103,23 @@ function normalizeExecuteDays(raw: unknown): number[] | undefined {
   const list = [...set].sort((a, b) => a - b);
   if (list.length === 0 || list.length === 7) return undefined;
   return list;
+}
+
+/** 校验 HH:mm */
+export function isValidHHmm(s: string): boolean {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(s);
+}
+
+/** 归一化常用时间列表：仅保留合法 HH:mm，去重升序，最多 8 个 */
+export function normalizeQuickTimes(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const set = new Set<string>();
+  for (const v of raw) {
+    const s = String(v).trim();
+    if (isValidHHmm(s)) set.add(s);
+  }
+  const list = [...set].sort();
+  return list.length > 0 ? list.slice(0, 8) : undefined;
 }
 
 /** 是否执行日（非执行日 = 休息，不打卡不断连） */
@@ -198,6 +219,8 @@ export function parseHabitFile(path: string, content: string): HabitData | null 
     archived: fm.is_archived === true,
     filePath: path,
     executeDays: normalizeExecuteDays(fm.execute_days),
+    attendance: fm.attendance === true,
+    quickTimes: normalizeQuickTimes(fm.quick_times),
   };
   return { config, rows, rawFrontmatter: fm };
 }
@@ -242,6 +265,12 @@ export function serializeHabitFile(
 
   if (config.executeDays && config.executeDays.length > 0) fm.execute_days = [...config.executeDays].sort((a, b) => a - b);
   else delete fm.execute_days;
+
+  if (config.attendance || fm.attendance !== undefined) fm.attendance = !!config.attendance;
+  else delete fm.attendance;
+
+  if (config.attendance && config.quickTimes && config.quickTimes.length > 0) fm.quick_times = [...config.quickTimes];
+  else delete fm.quick_times;
 
   const validity = fm.validity && typeof fm.validity === "object" && !Array.isArray(fm.validity)
     ? { ...(fm.validity as Record<string, unknown>) }
@@ -349,13 +378,13 @@ function nowHHmm(): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-/** 打卡一次（新增记录，带当前时间），返回记录的时间 */
-export async function checkinHabit(app: App, habit: HabitConfig, date: string): Promise<string> {
+/** 打卡一次（新增记录；time 省略 = 当前时间，非法格式一律回退当前时间），返回记录的时间 */
+export async function checkinHabit(app: App, habit: HabitConfig, date: string, time?: string): Promise<string> {
   const data = await readHabitFile(app, habit);
-  const time = nowHHmm();
-  data.rows.push({ habitId: habit.id, date, time, skipped: false });
+  const t = time && isValidHHmm(time) ? time : nowHHmm();
+  data.rows.push({ habitId: habit.id, date, time: t, skipped: false });
   await writeHabitFile(app, habit, data.rows);
-  return time;
+  return t;
 }
 
 /** 删除指定时间的一次打卡（返回是否删掉） */
@@ -446,6 +475,8 @@ export interface HabitDraft {
   timesPerDay: number;
   executeDays?: number[];
   archived?: boolean;
+  attendance?: boolean;
+  quickTimes?: string[];
 }
 
 function uniqueHabitPath(app: App, dir: string, stem: string): string {
@@ -480,6 +511,8 @@ export async function createHabitFile(
     executeDays: draft.executeDays && draft.executeDays.length > 0 && draft.executeDays.length < 7
       ? [...draft.executeDays].sort((a, b) => a - b)
       : undefined,
+    attendance: draft.attendance || undefined,
+    quickTimes: draft.attendance ? normalizeQuickTimes(draft.quickTimes) : undefined,
   };
   await app.vault.create(filePath, serializeHabitFile(habit, [], {}, true));
   return habit;
@@ -504,6 +537,12 @@ export async function updateHabitConfig(
     executeDays: draft.executeDays !== undefined
       ? (draft.executeDays.length > 0 && draft.executeDays.length < 7 ? [...draft.executeDays].sort((a, b) => a - b) : undefined)
       : data.config.executeDays,
+    attendance: draft.attendance !== undefined ? (draft.attendance || undefined) : data.config.attendance,
+    quickTimes: draft.attendance !== undefined || draft.quickTimes !== undefined
+      ? ((draft.attendance ?? data.config.attendance)
+        ? normalizeQuickTimes(draft.quickTimes ?? data.config.quickTimes)
+        : undefined)
+      : data.config.quickTimes,
   };
   await writeHabitFile(app, next, data.rows);
   return next;

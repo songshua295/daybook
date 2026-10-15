@@ -28,6 +28,7 @@ import {
   updateHabitConfig,
   deleteHabitFile,
   checkinHabit,
+  isValidHHmm,
   deleteCheckinAt,
   clearDayCheckins,
   skipDay,
@@ -194,6 +195,8 @@ export interface HabitDraft {
   color: string;
   timesPerDay: number;
   executeDays: number[];   // 1=周一…7=周日；全勾 = 每天
+  attendance: boolean;     // 上下班打卡型：点打卡弹出时间选择
+  quickTimes: string[];    // 常用时间 HH:mm（attendance 时有效）
 }
 
 const PRESET_HABIT_COLORS = ["#4caf50", "#ff9800", "#9c27b0", "#2196f3", "#e91e63", "#607d8b", "#f44336", "#3f51b5"];
@@ -291,6 +294,73 @@ export class HabitEditModal extends Modal {
     const dayHint = contentEl.createDiv({ cls: "db-habit-edit-hint" });
     syncDayHint();
 
+    /* ── 打卡类型：每日习惯 / 上下班 ──
+       上下班型点打卡时弹出时间选择框（默认当前时间 + 常用时间一键打），
+       用于上班/下班卡这类"记录的是时刻而非次数"的打卡 */
+    let attendance = !!this.habit?.attendance;
+    let quickTimes: string[] = [...(this.habit?.quickTimes ?? [])];
+
+    const typeRow = contentEl.createDiv({ cls: "db-habit-edit-field" });
+    typeRow.createDiv({ cls: "db-habit-edit-label", text: "打卡类型" });
+    const typeChips = typeRow.createDiv({ cls: "db-habit-type-row" });
+
+    // 常用时间编辑区：仅上下班型显示
+    const qtField = contentEl.createDiv({ cls: "db-habit-edit-field" });
+    qtField.createDiv({ cls: "db-habit-edit-label", text: "常用时间" });
+    const qtChips = qtField.createDiv({ cls: "db-habit-quicktimes-row" });
+    const qtAddRow = qtField.createDiv({ cls: "db-habit-quicktimes-add" });
+    const qtInput = qtAddRow.createEl("input", {
+      cls: "db-habit-quicktime-input",
+      attr: { type: "time", "aria-label": "新常用时间" },
+    });
+    qtInput.value = "09:00";
+    const qtAddBtn = makeActivatable(qtAddRow.createDiv({ cls: "db-habit-quicktime-addbtn", text: "添加" }), "添加常用时间");
+
+    const renderQuickTimes = () => {
+      qtField.toggleClass("is-hidden", !attendance);
+      qtChips.empty();
+      if (quickTimes.length === 0) {
+        qtChips.createDiv({ cls: "db-habit-quicktimes-empty", text: "还没有常用时间，添加几个吧（如 09:00 / 18:00）" });
+      }
+      quickTimes.forEach(t => {
+        const chip = qtChips.createDiv({ cls: "db-habit-quicktime-chip" });
+        chip.createSpan({ cls: "db-habit-quicktime-text", text: t });
+        const del = makeActivatable(chip.createSpan({ cls: "db-habit-quicktime-del", text: "×", attr: { "aria-label": `删除常用时间 ${t}` } }), `删除常用时间 ${t}`);
+        del.addEventListener("click", e => {
+          e.stopPropagation();
+          quickTimes = quickTimes.filter(x => x !== t);
+          renderQuickTimes();
+        });
+      });
+    };
+    const addQuickTime = () => {
+      const v = (qtInput.value || "").trim();
+      if (!isValidHHmm(v)) { new Notice("请选择有效时间（HH:mm）"); return; }
+      if (quickTimes.includes(v)) { new Notice(`${v} 已在常用时间中`); return; }
+      if (quickTimes.length >= 8) { new Notice("常用时间最多 8 个"); return; }
+      quickTimes = [...quickTimes, v].sort();
+      renderQuickTimes();
+    };
+    qtAddBtn.addEventListener("click", addQuickTime);
+
+    const renderTypeChips = () => {
+      typeChips.empty();
+      const mk = (label: string, on: boolean, pick: () => void, tip: string) => {
+        const chip = makeActivatable(typeChips.createDiv({ cls: `db-habit-type-chip${on ? " on" : ""}` }), tip);
+        chip.createSpan({ text: label });
+        chip.setAttribute("aria-pressed", String(on));
+        chip.addEventListener("click", () => { pick(); renderTypeChips(); renderQuickTimes(); });
+      };
+      mk("每日习惯", !attendance, () => { attendance = false; }, "普通习惯：点打卡即记录当前时间");
+      mk("上下班打卡", attendance, () => {
+        attendance = true;
+        // 首次开启且没配过：预置早晚两个常用时间，省去手动输入
+        if (quickTimes.length === 0) quickTimes = ["09:00", "18:00"];
+      }, "记录上下班时刻：点打卡弹出时间选择，常用时间可一键打卡");
+    };
+    renderTypeChips();
+    renderQuickTimes();
+
     contentEl.createDiv({
       cls: "db-habit-edit-hint",
       text: "1 次 = 每天打一次卡；大于 1 次 = 支持一天多次打卡，每次都会记录时间",
@@ -307,10 +377,79 @@ export class HabitEditModal extends Modal {
         color,
         timesPerDay: times,
         executeDays: [...executeDays].sort((a, b) => a - b),
+        attendance,
+        quickTimes: attendance ? quickTimes : [],
       });
       this.close();
     });
     activeWindow.setTimeout(() => nameInput.focus(), 50);
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+
+/**
+ * 打卡时间选择弹窗（上下班型专用）：
+ * 默认填当前时间可微调；常用时间胶囊一键按该时刻打卡。
+ * onPick 抛错时弹窗保持打开，由调用方提示。
+ */
+export class CheckinTimeModal extends Modal {
+  constructor(
+    app: any,
+    private habit: HabitConfig,
+    private date: string,
+    private onPick: (time: string) => Promise<void>
+  ) {
+    super(app);
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("db-checkin-time-modal");
+    contentEl.createEl("h3", { text: `${this.habit.icon} ${this.habit.name}` });
+    contentEl.createDiv({ cls: "db-checkin-time-date", text: this.date });
+
+    const timeInput = contentEl.createEl("input", {
+      cls: "db-checkin-time-input",
+      attr: { type: "time", "aria-label": "打卡时间" },
+    });
+    timeInput.value = moment().format("HH:mm");
+
+    const quicks = this.habit.quickTimes ?? [];
+    let busy = false;
+    const pick = async (t: string) => {
+      if (busy) return;
+      busy = true;
+      try {
+        await this.onPick(t);
+        this.close();
+      } catch (e) {
+        busy = false;
+        new Notice("打卡失败：" + (e instanceof Error ? e.message : String(e)));
+      }
+    };
+
+    if (quicks.length > 0) {
+      const row = contentEl.createDiv({ cls: "db-checkin-time-quick-row" });
+      row.createDiv({ cls: "db-checkin-time-quick-label", text: "常用时间" });
+      quicks.forEach(t => {
+        const chip = makeActivatable(row.createDiv({ cls: "db-checkin-time-quick-chip", text: t }), `按 ${t} 打卡`);
+        chip.addEventListener("click", () => void pick(t));
+      });
+    }
+
+    const btns = contentEl.createDiv({ cls: "db-mood-modal-btns" });
+    const cancel = btns.createEl("button", { text: "取消" });
+    cancel.addEventListener("click", () => this.close());
+    const ok = btns.createEl("button", { cls: "mod-cta", text: "打卡" });
+    ok.addEventListener("click", () => {
+      const v = (timeInput.value || "").trim();
+      void pick(isValidHHmm(v) ? v : moment().format("HH:mm"));
+    });
+    activeWindow.setTimeout(() => timeInput.focus(), 50);
   }
 
   onClose() {
@@ -344,10 +483,20 @@ export class HabitDayDetailModal extends Modal {
         attr: { "aria-label": `补打卡 ${this.date}` },
       }), `补打卡 ${this.date}`);
       setIcon(addRow.createDiv({ cls: "db-habit-day-add-icon" }), "plus");
-      addRow.createSpan({ text: "补打卡（记录当前时间）" });
+      addRow.createSpan({ text: this.habit.attendance ? "补打卡（选择时间）" : "补打卡（记录当前时间）" });
       addBtn = addRow;
       const doAdd = async () => {
         if (addRow.classList.contains("busy")) return;
+        // 上下班型：补打也要选时刻，不直接落当前时间
+        if (this.habit.attendance) {
+          new CheckinTimeModal(this.app, this.habit, this.date, async (t) => {
+            await checkinHabit(this.app, this.habit, this.date, t);
+            new Notice(`✅ 已补打卡 ${this.date} ${t}`);
+            this.onChanged?.();
+            render();
+          }).open();
+          return;
+        }
         addRow.classList.add("busy");
         try {
           await checkinHabit(this.app, this.habit, this.date);
@@ -1537,6 +1686,13 @@ export class DaybookView extends ItemView {
         item.setTitle("打开统计面板").setIcon("layout-dashboard");
         item.onClick(() => void this.plugin.activateDashboard());
       });
+      menu.addItem(item => {
+        item.setTitle("插件设置").setIcon("settings");
+        item.onClick(() => {
+          const setting = (this.app as unknown as { setting?: { open(): void; openTabById(id: string): void } }).setting;
+          if (setting) { setting.open(); setting.openTabById(this.plugin.manifest.id); }
+        });
+      });
       const rect = moreBtn.getBoundingClientRect();
       menu.showAtPosition({ x: Math.max(8, rect.right - 180), y: rect.bottom + 4 });
     });
@@ -1966,6 +2122,18 @@ export class DaybookView extends ItemView {
             if (target === 1 && done) {
               await clearDayCheckins(this.app, habit, todayStr);
               new Notice("↩️ 已取消今日打卡");
+              refreshAll();
+            } else if (habit.attendance) {
+              // 上下班型：先选时刻（默认当前时间 / 常用时间一键），再落记录
+              new CheckinTimeModal(this.app, habit, todayStr, async (t) => {
+                if (count + 1 >= target) this.plugin.feedback.notify();
+                const time = await checkinHabit(this.app, habit, nowToday(), t);
+                const n = count + 1;
+                new Notice(n >= target
+                  ? `✅ ${habit.name} ${time} · 今日已达标（${n}/${target}）`
+                  : `✅ ${habit.name} ${time}（${n}/${target}）`);
+                refreshAll();
+              }).open();
             } else {
               // 手势内先给反馈：多次打卡只在补满当日目标（含超出）时响
               if (count + 1 >= target) this.plugin.feedback.notify();
@@ -1974,8 +2142,8 @@ export class DaybookView extends ItemView {
               new Notice(n >= target
                 ? `✅ ${habit.name} ${t} · 今日已达标（${n}/${target}）`
                 : `✅ ${habit.name} ${t}（${n}/${target}）`);
+              refreshAll();
             }
-            refreshAll();
           } catch (e) {
             new Notice("打卡失败，请检查日记目录设置");
           }
@@ -2080,7 +2248,7 @@ export class DaybookView extends ItemView {
    * toolbarSlot 存在时渲染精简工具栏（拍照 + 录音）；实时渲染模式下不再需要
    * B/S/双链 等格式化按钮——标记语法在输入时即被原生渲染。
    */
-  private setupMediaSupport(editor: LiveEditor, wrap: HTMLElement, section?: SectionConfig, toolbarSlot?: HTMLElement) {
+  private setupMediaSupport(editor: LiveEditor, wrap: HTMLElement, section?: SectionConfig, toolbarSlot?: HTMLElement, onRecState?: (on: boolean) => void) {
     // 图片文件选择
     const fileInput = wrap.createEl("input", {
       cls: "db-img-file-input",
@@ -2118,7 +2286,7 @@ export class DaybookView extends ItemView {
     micBtn.addEventListener("mousedown", e => e.preventDefault());
     micBtn.addEventListener("click", () => {
       if (this.isRecording) this.stopRecording(editor, micBtn);
-      else this.startRecording(editor, micBtn);
+      else void this.startRecording(editor, micBtn, onRecState);
     });
   }
 
@@ -2172,20 +2340,28 @@ export class DaybookView extends ItemView {
     }
   }
 
-  /** 开始录音（编辑面板内点按式：点击开始/再次点击停止，音频插入编辑器） */
-  private async startRecording(editor: LiveEditor, btn: HTMLElement) {
+  /** 开始录音（点按式：点击开始/再次点击停止，音频插入编辑器；onState 供调用方同步录音计时等 UI） */
+  private async startRecording(editor: LiveEditor | null, btn: HTMLElement, onState?: (on: boolean) => void) {
     const ok = await this.startRecorder((blob, ext) => {
       btn.removeClass("recording");
-      void this.saveAudioBlob(blob, ext, editor.el.isConnected ? editor : null);
+      const prev = btn.dataset.dbRecLabel ?? "录音";
+      btn.setAttribute("aria-label", prev);
+      btn.setAttribute("title", prev);
+      onState?.(false);
+      void this.saveAudioBlob(blob, ext, editor && editor.el.isConnected ? editor : null);
     });
     if (ok) {
+      btn.dataset.dbRecLabel = btn.getAttribute("aria-label") ?? btn.getAttribute("title") ?? "录音";
+      btn.setAttribute("aria-label", "停止录音");
+      btn.setAttribute("title", "录音中，再次点击停止");
       btn.addClass("recording");
+      onState?.(true);
       new Notice("\u{1F3A4} 开始录音，再次点击停止");
     }
   }
 
   /** 停止录音 */
-  private stopRecording(_editor: LiveEditor, _btn: HTMLElement) {
+  private stopRecording(_editor: LiveEditor | null, _btn: HTMLElement | null) {
     if (this.mediaRecorder && this.isRecording) {
       this.mediaRecorder.stop();
     }
@@ -2409,10 +2585,26 @@ export class DaybookView extends ItemView {
         editor.focus();
       });
 
-      // 2) 图片（setupMediaSupport 的照片按钮；点按式麦克风按钮按设计移除）
+      // 2) 图片 + 录音（点按式麦克风就放在编辑器功能栏里，旁边显示录音时长）
       const toolbarSlot = toolsLeft.createDiv({ cls: "db-memo-toolbar-slot" });
-      this.setupMediaSupport(editor, wrap, section, toolbarSlot);
-      toolsLeft.querySelector(".db-memo-tb-audio")?.remove();
+      const recTime = toolsLeft.createSpan({ cls: "db-editor-rec-time", text: "0:00" });
+      recTime.style.display = "none";
+      let recTimer = 0;
+      let recSecs = 0;
+      const stopRecTimer = () => {
+        if (recTimer) { activeWindow.clearInterval(recTimer); recTimer = 0; }
+        recTime.style.display = "none";
+      };
+      this.setupMediaSupport(editor, wrap, section, toolbarSlot, on => {
+        if (!on) { stopRecTimer(); return; }
+        recSecs = 0;
+        recTime.textContent = "0:00";
+        recTime.style.display = "";
+        recTimer = activeWindow.setInterval(() => {
+          recSecs++;
+          recTime.textContent = `${Math.floor(recSecs / 60)}:${String(recSecs % 60).padStart(2, "0")}`;
+        }, 1000);
+      });
 
       toolsLeft.createDiv({ cls: "db-editor-divider" });
 
@@ -2452,30 +2644,21 @@ export class DaybookView extends ItemView {
         editor.focus();
       });
 
-      // 右侧动作按钮（双态）：默认麦克风=点击开始/再次点击停止录音；输入文字后变纸飞机发送
+      // 右侧发送按钮（录音入口在功能栏左组的麦克风，这里只保留纸飞机）
       const actionBtn = toolbar.createEl("button", {
         cls: "db-editor-send",
-        attr: { type: "button", "aria-label": "录音（点击开始，再次点击停止）" },
+        attr: { type: "button", "aria-label": `保存${section.label}` },
       });
-      setIcon(actionBtn, "mic");
-      let actionMode: "mic" | "send" = "mic";
+      setIcon(actionBtn, "send");
       const syncAction = () => {
-        if (this.isRecording) return; // 录音中保持麦克风态（红色脉冲由 recording 类控制）
-        const has = !!editor.getValue().trim() || !!this.selectedMood;
-        const next: "mic" | "send" = has ? "send" : "mic";
-        if (next !== actionMode) {
-          actionMode = next;
-          setIcon(actionBtn, next === "send" ? "send" : "mic");
-          actionBtn.toggleClass("is-active", next === "send");
-          actionBtn.setAttribute("aria-label", next === "send" ? `保存${section.label}` : "录音（点击开始，再次点击停止）");
-        }
+        actionBtn.toggleClass("is-active", !!editor.getValue().trim() || !!this.selectedMood);
       };
       updateSend = syncAction;
       syncAction();
 
       const submit = async () => {
         const text = editor.getValue().trim();
-        if (!text && !this.selectedMood) return;
+        if (!text && !this.selectedMood) { new Notice("请先输入内容～"); return; }
         const mood = moods.find(m => m.emoji === this.selectedMood);
         const content = mood
           ? (text ? `${mood.emoji} ${mood.label} — ${text}` : `${mood.emoji} ${mood.label}`)
@@ -2493,40 +2676,12 @@ export class DaybookView extends ItemView {
         } catch (e) { new Notice("记录失败，请检查日记目录设置"); }
         finally { actionBtn.disabled = false; updateSend?.(); }
       };
-      // 录音时长显示（桌面按钮录音态）
-      const recTime = toolbar.createSpan({ cls: "db-editor-rec-time", text: "0:00" });
-      recTime.style.display = "none";
-      let recTimer = 0;
-      let recSecs = 0;
-      const stopRecTimer = () => {
-        if (recTimer) { activeWindow.clearInterval(recTimer); recTimer = 0; }
-        recTime.style.display = "none";
-      };
-
-      actionBtn.addEventListener("click", () => {
-        if (this.isRecording) {
-          stopRecTimer();
-          this.stopRecording(editor, actionBtn);
-          return;
-        }
-        if (actionMode === "send") { void submit(); return; }
-        void (async () => {
-          await this.startRecording(editor, actionBtn);
-          if (!this.isRecording) return;   // 启动失败（无权限等）不计时
-          recSecs = 0;
-          recTime.textContent = "0:00";
-          recTime.style.display = "";
-          recTimer = activeWindow.setInterval(() => {
-            recSecs++;
-            recTime.textContent = `${Math.floor(recSecs / 60)}:${String(recSecs % 60).padStart(2, "0")}`;
-          }, 1000);
-        })();
-      });
+      actionBtn.addEventListener("click", () => { void submit(); });
       editor.el.addEventListener("keydown", (e: KeyboardEvent) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && actionMode === "send") { e.preventDefault(); void submit(); }
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); void submit(); }
       });
     } else {
-      // 移动端 sheet：flomo 式紧凑布局——文本区 + 单行工具条（# 图片 B 列表 心情 ⋯ ｜ 录音 发送）
+      // 移动端 sheet：flomo 式紧凑布局——文本区 + 单行工具条（# 图片 录音 B 列表 心情 ⋯ ｜ 发送）
       const composerBar = wrap.createDiv({ cls: "db-composer-bar" });
       const barLeft = composerBar.createDiv({ cls: "db-composer-bar-left" });
       const barRight = composerBar.createDiv({ cls: "db-composer-bar-right" });
@@ -2544,7 +2699,7 @@ export class DaybookView extends ItemView {
         editor.focus();
       });
 
-      // 2) 图片 + 录音（setupMediaSupport 生成两个按钮，录音移到右组）
+      // 2) 图片 + 录音（都留在功能栏左组，紧跟 # 之后；右组只留发送）
       const mediaSlot = barLeft.createDiv({ cls: "db-composer-media-slot" });
       this.setupMediaSupport(editor, wrap, section, mediaSlot);
 
@@ -2593,11 +2748,7 @@ export class DaybookView extends ItemView {
         menu.showAtMouseEvent(e as MouseEvent);
       });
 
-      // 录音按钮移到右组
-      const micBtn = mediaSlot.querySelector(".db-memo-tb-audio") as HTMLElement | null;
-      if (micBtn) barRight.appendChild(micBtn);
-
-      // 发送（保存）按钮：绿色圆形纸飞机
+      // 发送（保存）按钮：绿色圆形纸飞机（录音已归入左组功能栏）
       const sendBtn = makeActivatable(barRight.createEl("button", {
         cls: "db-composer-send",
         attr: { type: "button", "aria-label": `保存${section.label}` },
