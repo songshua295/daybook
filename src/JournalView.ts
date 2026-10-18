@@ -1980,9 +1980,8 @@ export class DaybookView extends ItemView {
     this.habitsRerender = rerender;
     const f = this.getFilter(section.id);
 
-    // 头部：标题 + 新建习惯入口
+    // 头部：仅新建习惯入口（章节名已由顶栏标题胶囊展示，不再重复大标题）
     const head = container.createDiv({ cls: "db-habits-head" });
-    head.createSpan({ cls: "db-habits-head-title", text: "习惯打卡" });
 
     let data: HabitData[] = [];
     try {

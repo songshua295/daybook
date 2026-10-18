@@ -3291,14 +3291,9 @@ body .db-journal-root .db-filter-q:focus {
   display: flex;
   flex-direction: row;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 10px;
-  padding: 18px 16px 10px;
-}
-.db-habits-head-title {
-  font-size: 20px;
-  font-weight: 800;
-  letter-spacing: 0.01em;
+  padding: 12px 16px 4px;
 }
 .db-habits-add {
   display: inline-flex;
@@ -4282,10 +4277,7 @@ body .db-journal-root .db-filter-q:focus {
    v4.5 手机端微调（.is-phone 由 Obsidian 在移动端 body 提供）
    ════════════════════════════════════════════════════════ */
 .is-phone .db-habits-head {
-  padding: 14px 14px 8px;
-}
-.is-phone .db-habits-head-title {
-  font-size: 18px;
+  padding: 10px 14px 6px;
 }
 /* 详情弹窗：总览改 2×2，热力图统计移到网格下方 */
 .is-phone .db-detail-overview-items {
