@@ -1065,11 +1065,22 @@ body,
 }
 
 /* ── 计划板块：textarea + 左侧 + 按钮 ── */
+/* 计划输入框外边框：与闪念编辑器 .db-live-editor 完全同款（1.5px --db-border + 14px 圆角 + 聚焦强调光环），
+   统一两类编辑框外观。边框画在只包裹编辑器的这一行上，工具条(.db-composer-bar)仍在框外，与闪念结构一致。 */
 .db-plans-input-wrap .db-todo-add-row.db-todo-add-row-textarea {
   display: flex;
   align-items: flex-start;
   gap: 8px;
   padding: 10px 12px;
+  border: 1.5px solid var(--db-border, var(--background-modifier-border));
+  border-radius: 14px;
+  background: var(--db-surface, var(--background-primary));
+  overflow: hidden;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.db-plans-input-wrap .db-todo-add-row.db-todo-add-row-textarea:focus-within {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--interactive-accent) 18%, transparent);
 }
 
 .db-plans-input-wrap .db-todo-add-btn.db-todo-add-btn-left {
@@ -5840,3 +5851,2482 @@ body .db-journal-root .db-filter-q:focus {
 .is-phone .db-plan-sort-chip { min-height: 40px; padding: 8px 18px; font-size: 14px; }
 .is-phone .db-plan-sort-label { font-size: 12.5px; }
 .is-phone .db-plan-sort-reset { padding: 14px 0 calc(12px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))); font-size: 13px; }
+
+
+/* ════════════════════════════════════════════════════════
+   14. 记账章节（db-led-*）：五页（首页/视图/资产/统计/设置）+ 记一笔 sheet
+   配色沿用 db tokens：收入绿 / 支出红 / 强调 accent（与习惯、计划章节同色板）
+   ═══════════════════════════════════════════════════════ */
+.db-led-root,
+.db-led-overlay {
+  --led-in:  var(--color-green, #22c55e);
+  --led-out: var(--color-red, #ef4444);
+  --led-tr:  var(--text-muted, #8e8e93);   /* 转账：中性灰 */
+}
+.db-led-root {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── 页头：仅记一笔按钮（页名在顶栏章节标题，圆点已移除） ── */
+.db-led-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.db-led-header .db-led-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 8px 14px;
+  border: none;
+  border-radius: var(--db-radius);
+  background: var(--db-accent);
+  color: var(--text-on-accent, #fff);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.db-led-header .db-led-add:active { transform: scale(0.97); }
+.db-led-add-icon { display: inline-flex; }
+.db-led-add-icon svg { width: 14px; height: 14px; }
+
+.db-led-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── 卡片 ── */
+.db-led-card {
+  background: var(--db-surface);
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius-lg);
+  box-shadow: var(--db-shadow-sm);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.db-led-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--db-text-muted);
+  margin-bottom: 6px;
+}
+.db-led-empty {
+  padding: 14px;
+  border: 1px dashed var(--db-border);
+  border-radius: var(--db-radius);
+  color: var(--db-text-sub);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.db-led-note {
+  color: var(--db-text-sub);
+  font-size: 11.5px;
+  line-height: 1.6;
+  padding: 2px 4px;
+}
+
+/* ── 流水行 ── */
+.db-led-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 2px;
+  border-radius: var(--db-radius-sm);
+  cursor: pointer;
+}
+.db-led-row + .db-led-row { border-top: 1px solid color-mix(in srgb, var(--db-border) 55%, transparent); }
+.db-led-row:active { background: var(--db-bg-hover); }
+.db-led-row-icon {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 600;
+}
+.db-led-row-icon.is-out {
+  color: color-mix(in srgb, var(--led-out) 85%, var(--db-text));
+  background: color-mix(in srgb, var(--led-out) 12%, var(--db-surface));
+}
+.db-led-row-icon.is-in {
+  color: color-mix(in srgb, var(--led-in) 80%, var(--db-text));
+  background: color-mix(in srgb, var(--led-in) 12%, var(--db-surface));
+}
+.db-led-row-icon.is-tr {
+  color: color-mix(in srgb, var(--led-tr) 75%, var(--db-text));
+  background: color-mix(in srgb, var(--led-tr) 14%, var(--db-surface));
+}
+.db-led-row-mid { flex: 1 1 0; min-width: 0; }
+.db-led-row-title {
+  font-size: 14px;
+  color: var(--db-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-row-sub {
+  font-size: 11.5px;
+  color: var(--db-text-sub);
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-row-right {
+  flex: 0 0 auto;
+  text-align: right;
+}
+.db-led-row-amount {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--db-text);
+}
+.db-led-row-amount.is-in { color: color-mix(in srgb, var(--led-in) 80%, var(--db-text)); }
+.db-led-row-amount.is-out { color: color-mix(in srgb, var(--led-out) 80%, var(--db-text)); }
+.db-led-row-amount.is-tr { color: color-mix(in srgb, var(--led-tr) 78%, var(--db-text)); }
+.db-led-row-acct {
+  font-size: 11px;
+  color: var(--db-text-sub);
+  margin-top: 1px;
+  max-width: 150px;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-row-base {
+  font-size: 11px;
+  color: var(--db-text-sub);
+  margin-top: 1px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 导入 / 导出（db-led-io-*）：向导步骤、字段与值映射、勾选预览、批次台账 ── */
+.db-led-subhead-tip {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--db-accent);
+  font-weight: 600;
+}
+.db-led-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius);
+  background: transparent;
+  color: var(--db-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.db-led-btn-ghost:active { background: var(--db-surface2); }
+.db-led-btn-ghost[disabled] { opacity: .45; cursor: default; }
+
+.db-led-io-card { gap: 8px; }
+.db-led-io-tip { font-size: 14px; font-weight: 650; color: var(--db-text); }
+.db-led-io-vault { display: flex; gap: 8px; align-items: center; }
+.db-led-io-vault .db-led-input { flex: 1 1 0; min-width: 0; }
+.db-led-io-files { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+.db-led-io-files .db-led-group-hint { width: 100%; }
+.db-led-chip-file { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-led-io-loaded { gap: 10px; }
+.db-led-io-file-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--db-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-led-io-detect { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.db-led-io-detect-name { font-size: 18px; font-weight: 700; color: var(--db-text); }
+.db-led-io-detect-conf {
+  font-size: 11.5px;
+  font-weight: 650;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--db-text-muted);
+  background: color-mix(in srgb, var(--db-text-muted) 14%, var(--db-surface));
+}
+.db-led-io-detect-conf.is-good {
+  color: color-mix(in srgb, var(--led-in) 80%, var(--db-text));
+  background: color-mix(in srgb, var(--led-in) 14%, var(--db-surface));
+}
+.db-led-io-detect-conf.is-mid {
+  color: color-mix(in srgb, var(--color-orange, #f59e0b) 82%, var(--db-text));
+  background: color-mix(in srgb, var(--color-orange, #f59e0b) 14%, var(--db-surface));
+}
+.db-led-io-miss { font-size: 12px; color: color-mix(in srgb, var(--led-out) 82%, var(--db-text)); }
+.db-led-io-selects { flex-direction: row; flex-wrap: wrap; gap: 8px; }
+.db-led-io-selects .db-led-select { flex: 1 1 140px; min-width: 0; }
+.db-led-io-headers { display: flex; flex-wrap: wrap; gap: 6px; }
+.db-led-io-header {
+  font-size: 11.5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--db-border);
+  color: var(--db-text-muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-io-header.is-used {
+  color: color-mix(in srgb, var(--db-accent) 78%, var(--db-text));
+  border-color: color-mix(in srgb, var(--db-accent) 34%, var(--db-border));
+  background: var(--db-accent-soft);
+}
+
+/* 映射行：名称 + 目标下拉（+ 样例 / 自定义名输入） */
+.db-led-map-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 0;
+}
+.db-led-map-row + .db-led-map-row { border-top: 1px solid color-mix(in srgb, var(--db-border) 55%, transparent); }
+.db-led-map-name {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--db-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-map-name.is-req::after { content: " *"; color: var(--led-out); }
+.db-led-map-to { flex: 0 1 46%; min-width: 118px; }
+.db-led-map-sample {
+  flex: 0 1 auto;
+  max-width: 84px;
+  font-size: 11.5px;
+  color: var(--db-text-sub);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 「＋新建…」时的新名称输入：默认隐藏，JS 显式 display:block，换行独占一行 */
+.db-led-map-custom {
+  display: none;
+  flex: 1 1 100%;
+  min-width: 0;
+  margin-top: 2px;
+}
+.db-led-io-inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.db-led-io-inline .db-led-select { flex: 1 1 150px; min-width: 0; }
+.db-led-io-count { font-size: 12px; color: var(--db-text-muted); }
+.db-led-io-foot { display: flex; align-items: center; gap: 8px; }
+.db-led-io-foot .db-led-cta { flex: 1 1 0; }
+.db-led-io-back { align-self: flex-start; }
+
+/* iOS 风开关 */
+.db-led-switch-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+.db-led-switch-row .db-led-set-label { flex: 1 1 0; min-width: 0; }
+.db-led-switch {
+  flex: 0 0 auto;
+  position: relative;
+  width: 44px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--db-text-muted) 26%, transparent);
+  cursor: pointer;
+  transition: background .16s ease;
+}
+.db-led-switch.is-on { background: var(--db-accent); }
+.db-led-switch-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--db-shadow-sm);
+  transition: transform .16s ease;
+}
+.db-led-switch.is-on .db-led-switch-knob { transform: translateX(18px); }
+
+/* 预览：统计条 + 勾选列表 */
+.db-led-io-bar { gap: 8px; }
+.db-led-io-stat { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--db-text-muted); }
+.db-led-io-stat .is-sel { color: var(--db-accent); font-weight: 650; }
+.db-led-io-stat .is-bad { color: color-mix(in srgb, var(--led-out) 82%, var(--db-text)); }
+.db-led-io-stat .is-dup { color: var(--db-text-sub); }
+.db-led-io-stat .is-warn { color: color-mix(in srgb, var(--color-orange, #f59e0b) 82%, var(--db-text)); }
+.db-led-io-tools,
+.db-led-io-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.db-led-io-list { padding: 0 12px; }
+.db-led-io-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+}
+.db-led-io-row + .db-led-io-row { border-top: 1px solid color-mix(in srgb, var(--db-border) 55%, transparent); }
+.db-led-io-row.is-bad { opacity: .55; }
+.db-led-io-row.is-dup .db-led-io-title { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--db-text-sub) 60%, transparent); }
+.db-led-check {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--db-accent);
+  cursor: pointer;
+}
+.db-led-check[disabled] { cursor: default; }
+.db-led-io-mid { flex: 1 1 0; min-width: 0; }
+.db-led-io-title {
+  font-size: 13.5px;
+  color: var(--db-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-io-sub {
+  font-size: 11.5px;
+  color: var(--db-text-sub);
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-io-err {
+  font-size: 11px;
+  margin-top: 1px;
+  color: color-mix(in srgb, var(--led-out) 80%, var(--db-text));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-io-warn {
+  font-size: 11px;
+  margin-top: 1px;
+  color: color-mix(in srgb, var(--color-orange, #f59e0b) 78%, var(--db-text));
+}
+.db-led-io-right { flex: 0 0 auto; text-align: right; }
+.db-led-io-amount {
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--db-text);
+}
+.db-led-io-amount.is-in { color: color-mix(in srgb, var(--led-in) 80%, var(--db-text)); }
+.db-led-io-amount.is-out { color: color-mix(in srgb, var(--led-out) 80%, var(--db-text)); }
+.db-led-io-amount.is-tr { color: color-mix(in srgb, var(--led-tr) 78%, var(--db-text)); }
+.db-led-io-kind { font-size: 11px; color: var(--db-text-sub); margin-top: 1px; }
+.db-led-io-done { gap: 8px; }
+
+/* 导入记录（批次台账） */
+.db-led-io-batches { padding: 2px 12px; }
+.db-led-batch { display: flex; align-items: center; gap: 10px; padding: 10px 0; }
+.db-led-batch + .db-led-batch { border-top: 1px solid color-mix(in srgb, var(--db-border) 55%, transparent); }
+.db-led-batch.is-undone { opacity: .5; }
+.db-led-batch-mid { flex: 1 1 0; min-width: 0; }
+.db-led-batch-file {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--db-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-batch-sub {
+  font-size: 11.5px;
+  color: var(--db-text-sub);
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-batch-undo { flex: 0 0 auto; min-height: 36px; padding: 6px 12px; }
+
+/* ── 汇总三格 ── */
+.db-led-sum {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.db-led-sum-cell {
+  padding: 8px 6px;
+  border-radius: var(--db-radius);
+  background: color-mix(in srgb, var(--text-normal) 4%, var(--db-surface));
+  text-align: center;
+  min-width: 0;
+}
+.db-led-sum-cell.is-out { background: color-mix(in srgb, var(--led-out) 8%, var(--db-surface)); }
+.db-led-sum-cell.is-in { background: color-mix(in srgb, var(--led-in) 8%, var(--db-surface)); }
+.db-led-sum-label { font-size: 11px; color: var(--db-text-muted); }
+.db-led-sum-value {
+  font-size: 16px;
+  font-weight: 700;
+  margin-top: 2px;
+  color: var(--db-text);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-sum-cell.is-out .db-led-sum-value { color: color-mix(in srgb, var(--led-out) 80%, var(--db-text)); }
+.db-led-sum-cell.is-in .db-led-sum-value { color: color-mix(in srgb, var(--led-in) 75%, var(--db-text)); }
+/* ── 首页概览卡（浅绿渐变，参照记账 App 头部卡） ── */
+.db-led-hero {
+  background: linear-gradient(165deg,
+    color-mix(in srgb, var(--led-in) 16%, var(--db-surface)) 0%,
+    color-mix(in srgb, var(--led-in) 5%, var(--db-surface)) 55%,
+    var(--db-surface) 100%);
+  border-color: color-mix(in srgb, var(--led-in) 22%, var(--db-border));
+}
+.db-led-hero-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.db-led-hero-cell { min-width: 0; }
+.db-led-hero-label { font-size: 11.5px; color: var(--db-text-muted); }
+.db-led-hero-value {
+  margin-top: 3px;
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--db-text);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 首页大 CTA：添加一条新记账 ── */
+.db-led-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  margin: 0;
+  border: none;
+  border-radius: 14px;
+  background: var(--db-accent, var(--interactive-accent));
+  color: var(--text-on-accent, #fff);
+  font-size: 15px;
+  font-weight: 650;
+  cursor: pointer;
+  box-shadow: var(--db-shadow-sm);
+}
+.db-led-cta:active { transform: scale(0.99); }
+.db-led-cta-icon { display: inline-flex; }
+.db-led-cta-icon svg { width: 18px; height: 18px; }
+
+/* ── 分类占比条（fill 宽度静态设置，不做过渡动画） ── */
+.db-led-bar-row { padding: 6px 0 2px; }
+.db-led-bar-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.db-led-bar-name {
+  color: var(--db-text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-bar-val {
+  flex: 0 0 auto;
+  color: var(--db-text-sub);
+  font-variant-numeric: tabular-nums;
+}
+.db-led-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-normal) 6%, var(--db-surface));
+  overflow: hidden;
+}
+.db-led-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--db-accent) 70%, var(--db-surface));
+}
+
+/* ── 月份导航 / 过滤条 ── */
+.db-led-monthnav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 2px 0;
+}
+.db-led-nav-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--db-border);
+  background: var(--db-surface);
+  color: var(--db-text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.db-led-nav-btn:active { background: var(--db-bg-hover); }
+.db-led-nav-label {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--db-text);
+  min-width: 110px;
+  text-align: center;
+}
+.db-led-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ── 胶囊 chip ── */
+.db-led-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.db-led-chip {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--db-border);
+  background: var(--db-surface);
+  color: var(--db-text-muted);
+  font-size: 12.5px;
+  cursor: pointer;
+  user-select: none;
+}
+.db-led-chip.is-active {
+  border-color: color-mix(in srgb, var(--db-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--db-accent) 14%, transparent);
+  color: color-mix(in srgb, var(--db-accent) 70%, var(--db-text));
+  font-weight: 600;
+}
+.db-led-chip-base { min-height: 26px; padding: 3px 10px; font-size: 11.5px; }
+
+/* ── 类别 chips ── */
+.db-led-cats { display: flex; flex-wrap: wrap; gap: 8px; }
+.db-led-cat {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 14px;
+  border-radius: var(--db-radius);
+  border: 1px solid var(--db-border);
+  background: var(--db-surface);
+  color: var(--db-text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+.db-led-cat.is-active {
+  border-color: color-mix(in srgb, var(--db-accent) 50%, transparent);
+  background: color-mix(in srgb, var(--db-accent) 14%, transparent);
+  color: color-mix(in srgb, var(--db-accent) 70%, var(--db-text));
+  font-weight: 600;
+}
+
+/* ── 日分组：日期行在卡片外（参照记账 App），合计 收/支/转 带颜色 ── */
+.db-led-day {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.db-led-day-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+}
+.db-led-day-date { font-size: 13px; font-weight: 650; color: var(--db-text); }
+.db-led-day-sums {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.db-led-day-part {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.db-led-day-k { font-size: 11px; color: var(--db-text-muted); }
+.db-led-day-v { font-size: 12px; font-weight: 650; }
+.db-led-day-v.is-in { color: color-mix(in srgb, var(--led-in) 80%, var(--db-text)); }
+.db-led-day-v.is-out { color: color-mix(in srgb, var(--led-out) 80%, var(--db-text)); }
+.db-led-day-v.is-tr { color: color-mix(in srgb, var(--led-tr) 78%, var(--db-text)); }
+.db-led-day-card { padding: 2px 12px; }
+
+/* ── 视图页：日历（月历格子 + 选中日流水） ── */
+.db-led-cal { gap: 4px; }
+.db-led-cal-sum {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 14px;
+  padding-bottom: 4px;
+}
+.db-led-cal-week,
+.db-led-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+}
+.db-led-cal-wd {
+  text-align: center;
+  font-size: 11px;
+  color: var(--db-text-sub);
+  padding: 2px 0 4px;
+}
+.db-led-cal-cell {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 4px 1px 3px;
+  border-radius: var(--db-radius-sm);
+  cursor: pointer;
+  user-select: none;
+}
+.db-led-cal-cell.is-blank { cursor: default; }
+.db-led-cal-d {
+  font-size: 13.5px;
+  font-weight: 650;
+  line-height: 1.25;
+  color: var(--db-text);
+  font-variant-numeric: tabular-nums;
+}
+.db-led-cal-cell.is-weekend .db-led-cal-d { color: color-mix(in srgb, var(--led-in) 68%, var(--db-text)); }
+.db-led-cal-lines {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  min-height: 26px;                 /* 固定两行高度，有无记录都不让格子跳动 */
+}
+.db-led-cal-line {
+  max-width: 100%;
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--db-text-sub);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-cal-line.is-in { color: color-mix(in srgb, var(--led-in) 78%, var(--db-text)); }
+.db-led-cal-line.is-out { color: color-mix(in srgb, var(--led-out) 78%, var(--db-text)); }
+.db-led-cal-line.is-tr { color: color-mix(in srgb, var(--led-tr) 72%, var(--db-text)); }
+.db-led-cal-cell.is-today { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--db-accent) 48%, transparent); }
+.db-led-cal-cell.is-sel,
+.db-led-cal-cell.is-sel.is-today {
+  background: var(--db-accent);
+  box-shadow: var(--db-shadow-sm);
+}
+.db-led-cal-cell.is-sel .db-led-cal-d,
+.db-led-cal-cell.is-sel .db-led-cal-line { color: var(--text-on-accent, #fff); }
+.db-led-cal-cell.is-sel .db-led-cal-d { font-weight: 700; }
+
+/* ── 资产 ── */
+.db-led-net {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--db-text);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-net-sub { font-size: 11.5px; color: var(--db-text-sub); margin-top: 4px; }
+.db-led-acct-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 2px;
+  min-width: 0;
+}
+.db-led-acct-row + .db-led-acct-row { border-top: 1px solid color-mix(in srgb, var(--db-border) 55%, transparent); }
+.db-led-acct-name {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 13.5px;
+  color: var(--db-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-acct-val {
+  flex: 0 0 auto;
+  text-align: right;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--db-text);
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+.db-led-acct-val.is-neg { color: color-mix(in srgb, var(--led-out) 80%, var(--db-text)); }
+.db-led-acct-conv { font-size: 10.5px; font-weight: 400; color: var(--db-text-sub); }
+
+/* ── 账户图标（品牌 logo / 通用图标，见 src/accountIcons.ts） ──
+   注意：Obsidian 全局样式里有 `button { height: var(--input-height); }`（约 30px），
+   它会夹扁所有没写 height 的原生按钮（PC 端没有 @media(hover:none) 的 min-height 兜底，
+   图标格就被压成一行人还溢出去）。所以这里的按钮一律 `height: auto` + 显式 min-*。 */
+.db-led-acct-icon {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--db-text-muted) 10%, var(--db-surface));
+  color: var(--db-text-muted);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1;
+  overflow: hidden;
+}
+.db-led-acct-icon svg { width: 17px; height: 17px; flex: 0 0 auto; display: block; }
+.db-led-acct-icon.is-btn {
+  height: auto;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--db-border);
+  background: var(--db-surface);
+  cursor: pointer;
+}
+.db-led-acct-icon.is-btn:active { background: var(--db-surface2); }
+.db-led-set-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.db-led-set-name .db-led-input { flex: 1 1 0; min-width: 0; }
+
+/* 图标选择页：网格，每格图标 + 名字 */
+.db-led-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 8px;
+}
+.db-led-icon-cell {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  height: auto;                 /* 顶掉主题 button{height:30px} */
+  min-height: 66px;             /* 34px 图标 + 5px 间距 + 一行标签 + 内边距 */
+  margin: 0;
+  padding: 9px 4px 7px;
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius);
+  background: var(--db-surface);
+  color: var(--db-text-muted);
+  line-height: 1.2;
+  cursor: pointer;
+}
+.db-led-icon-cell:active { background: var(--db-surface2); }
+.db-led-icon-cell.is-active {
+  border-color: color-mix(in srgb, var(--db-accent) 55%, var(--db-border));
+  background: var(--db-accent-soft);
+}
+.db-led-icon-cell-img {
+  flex: 0 0 auto;               /* 纵向 flex 里默认允许收缩，会把方块压扁 */
+  box-sizing: border-box;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--db-text-muted) 10%, var(--db-surface));
+  color: var(--db-text-muted);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1;
+  overflow: hidden;
+}
+.db-led-icon-cell-img svg { width: 19px; height: 19px; flex: 0 0 auto; display: block; }
+.db-led-icon-cell-label {
+  flex: 0 0 auto;
+  max-width: 100%;
+  font-size: 11px;
+  color: var(--db-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* PC 宽屏：图标格不跟着 1fr 拉成大长条，改成固定档位的整齐方块 */
+@container (min-width: 720px) {
+  .db-led-icon-grid {
+    grid-template-columns: repeat(auto-fill, minmax(88px, 112px));
+    justify-content: start;
+    gap: 10px;
+  }
+  .db-led-icon-cell { min-height: 74px; padding: 12px 6px 10px; }
+  .db-led-icon-cell-img { width: 38px; height: 38px; }
+  .db-led-icon-cell-img svg { width: 21px; height: 21px; }
+  .db-led-icon-cell-label { font-size: 12px; }
+}
+
+/* ════════════════════════════════════════════════════════
+   报表页（.db-led-rpt-*）
+   ─ 支出 / 收入卡：环形图 + 右侧明细，下面接逐月平滑面积图
+   ─ 收支对比：横向柱；月收支差：以 0 为基线的正负面积图
+   几何与配色在 src/ledgerCharts.ts 里算，这里只管呈现。
+   ════════════════════════════════════════════════════════ */
+.db-led-rpt-card { gap: 10px; }
+.db-led-rpt-top { display: flex; align-items: center; gap: 12px; min-width: 0; }
+
+/* 环形图：SVG 画扇区，中心文字用 HTML 叠一层，避免跟着 viewBox 缩放 */
+.db-led-rpt-donut { flex: 0 0 auto; }
+.db-led-rpt-donut-box { position: relative; width: 118px; height: 118px; }
+.db-led-rpt-donut-svg { display: block; width: 118px; height: 118px; }
+.db-led-rpt-donut-empty { fill: none; stroke: var(--db-border); stroke-width: 18; }
+.db-led-rpt-donut-mid {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  pointer-events: none;
+}
+.db-led-rpt-donut-k { font-size: 11.5px; color: var(--db-text-muted); }
+.db-led-rpt-donut-v { font-size: 15px; font-weight: 700; color: var(--db-text); font-variant-numeric: tabular-nums; }
+
+/* 环右侧明细：名称 · 金额 · 占比 */
+.db-led-rpt-legend { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.db-led-rpt-lg-row { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; }
+.db-led-rpt-lg-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; }
+.db-led-rpt-lg-name {
+  flex: 1 1 0;
+  min-width: 0;
+  color: var(--db-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-rpt-lg-val { flex: 0 0 auto; color: var(--db-text); font-variant-numeric: tabular-nums; }
+.db-led-rpt-lg-pct { flex: 0 0 42px; text-align: right; color: var(--db-text-muted); font-variant-numeric: tabular-nums; }
+.db-led-rpt-legend-empty { font-size: 12.5px; color: var(--db-text-muted); padding: 12px 0; }
+
+/* 逐月面积图 */
+.db-led-rpt-chart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; margin-top: 2px; }
+.db-led-rpt-chart-title { font-size: 12.5px; font-weight: 600; color: var(--db-text-muted); }
+.db-led-rpt-chart-sub { flex: 0 0 auto; font-size: 11.5px; color: var(--db-text-sub); }
+.db-led-rpt-chart { min-width: 0; }
+/* viewBox 宽度按容器实测（1:1 像素），所以这里等比铺满也不会糊掉文字 */
+.db-led-rpt-svg { display: block; width: 100%; height: auto; }
+.db-led-rpt-area.is-out { fill: color-mix(in srgb, var(--led-out) 14%, transparent); }
+.db-led-rpt-area.is-in { fill: color-mix(in srgb, var(--led-in) 14%, transparent); }
+.db-led-rpt-area.is-pos { fill: color-mix(in srgb, var(--led-in) 22%, transparent); }
+.db-led-rpt-area.is-neg { fill: color-mix(in srgb, var(--led-out) 22%, transparent); }
+.db-led-rpt-line { fill: none; stroke-width: 2; stroke-linecap: round; }
+.db-led-rpt-line.is-out { stroke: var(--led-out); }
+.db-led-rpt-line.is-in { stroke: var(--led-in); }
+.db-led-rpt-line.is-diff { stroke: var(--db-accent); }
+.db-led-rpt-pt { stroke: var(--db-surface); stroke-width: 1.5; }
+.db-led-rpt-chart.is-out .db-led-rpt-pt { fill: var(--led-out); }
+.db-led-rpt-chart.is-in .db-led-rpt-pt { fill: var(--led-in); }
+.db-led-rpt-chart.is-diff .db-led-rpt-pt { fill: var(--db-accent); }
+.db-led-rpt-pt.is-neg { fill: var(--led-out); }
+.db-led-rpt-zero { stroke: var(--db-border); stroke-width: 1; stroke-dasharray: 3 3; }
+.db-led-rpt-vtxt { font-size: 9.5px; fill: var(--db-text-muted); text-anchor: middle; }
+.db-led-rpt-axis { font-size: 9.5px; fill: var(--db-text-sub); text-anchor: middle; }
+.db-led-rpt-chart-foot { font-size: 11px; color: var(--db-text-sub); }
+
+/* 本月支出 / 收入 / 结余横向柱 */
+.db-led-rpt-cmp { gap: 8px; }
+.db-led-rpt-cmp-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.db-led-rpt-cmp-k { flex: 0 0 auto; width: 30px; font-size: 12.5px; color: var(--db-text-muted); }
+.db-led-rpt-cmp-track {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--db-text-muted) 10%, transparent);
+  overflow: hidden;
+}
+.db-led-rpt-cmp-fill { height: 100%; border-radius: 999px; }
+.db-led-rpt-cmp-fill.is-out { background: var(--led-out); }
+.db-led-rpt-cmp-fill.is-in { background: var(--led-in); }
+.db-led-rpt-cmp-v {
+  flex: 0 0 auto;
+  min-width: 80px;
+  text-align: right;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--db-text);
+}
+.db-led-rpt-cmp-v.is-out { color: color-mix(in srgb, var(--led-out) 80%, var(--db-text)); }
+.db-led-rpt-cmp-v.is-in { color: color-mix(in srgb, var(--led-in) 80%, var(--db-text)); }
+.db-led-rpt-cmp-foot { font-size: 11px; color: var(--db-text-sub); }
+
+/* 大图（下钻页）才画的横向网格与左侧刻度 */
+.db-led-rpt-grid { stroke: var(--db-border); stroke-width: 1; stroke-dasharray: 2 4; }
+.db-led-rpt-ytxt { font-size: 9.5px; fill: var(--db-text-sub); text-anchor: end; }
+
+/* 图表本身就是下钻入口：只有按下态与焦点环，不额外配按钮（hover 不作为唯一提示） */
+.db-led-rpt-donut.is-tap,
+.db-led-rpt-chart.is-tap { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.db-led-rpt-donut.is-tap:active,
+.db-led-rpt-chart.is-tap:active { opacity: 0.72; }
+.db-led-rpt-donut.is-tap:focus-visible,
+.db-led-rpt-chart.is-tap:focus-visible {
+  outline: 2px solid var(--db-accent);
+  outline-offset: 3px;
+  border-radius: var(--db-radius);
+}
+
+/* ── 报表下钻页（.db-led-rptd-*）：环形图 → 分类明细；面积图 → 逐月明细 ──
+   卡片保持 align-items: stretch（图表标题要占满一行才分得开两端），只有大图自己居中。 */
+.db-led-rptd-card { gap: 6px; }
+.db-led-rptd-hero { width: 100%; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.db-led-rptd-total {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--db-text);
+  font-variant-numeric: tabular-nums;
+}
+.db-led-rptd-cap { font-size: 12px; color: var(--db-text-muted); }
+.db-led-rpt-donut.is-big { flex: 0 0 auto; align-self: center; margin-top: 8px; }
+.db-led-rpt-donut.is-big .db-led-rpt-donut-box,
+.db-led-rpt-donut.is-big .db-led-rpt-donut-svg { width: 200px; height: 200px; }
+.db-led-rpt-donut.is-big .db-led-rpt-donut-v { font-size: 17px; }
+
+.db-led-rptd-list { width: 100%; min-width: 0; gap: 0; }
+.db-led-rptd-row {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--db-border);
+}
+.db-led-rptd-row:last-child { border-bottom: none; }
+.db-led-rptd-line { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 13px; }
+.db-led-rptd-name {
+  flex: 1 1 0;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--db-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-rptd-ym { flex: 0 0 auto; font-weight: 600; color: var(--db-text); font-variant-numeric: tabular-nums; }
+.db-led-rptd-amt { flex: 0 0 auto; min-width: 62px; text-align: right; color: var(--db-text); font-variant-numeric: tabular-nums; }
+.db-led-rptd-cnt { flex: 0 0 auto; margin-left: auto; min-width: 32px; text-align: right; font-size: 11.5px; color: var(--db-text-sub); }
+.db-led-rptd-pct { flex: 0 0 46px; text-align: right; color: var(--db-text-muted); font-variant-numeric: tabular-nums; }
+.db-led-rptd-delta {
+  flex: 0 0 auto;
+  min-width: 58px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--db-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.db-led-rptd-delta.is-good { color: color-mix(in srgb, var(--led-in) 80%, var(--db-text)); }
+.db-led-rptd-delta.is-bad { color: color-mix(in srgb, var(--led-out) 80%, var(--db-text)); }
+.db-led-rptd-bar {
+  height: 3px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--db-text-muted) 10%, transparent);
+}
+.db-led-rptd-fill { height: 100%; border-radius: 999px; background: var(--db-accent); }
+.db-led-rptd-fill.is-neg { background: var(--led-out); }
+
+/* PC 宽屏：环形图与明细都不跟着整窗拉满 */
+@container (min-width: 720px) {
+  .db-led-rpt-donut.is-big .db-led-rpt-donut-box,
+  .db-led-rpt-donut.is-big .db-led-rpt-donut-svg { width: 224px; height: 224px; }
+  .db-led-rptd-list { max-width: 620px; }
+}
+
+/* PC 宽屏：环形图放大一档，明细与横条不跟着整窗拉满 */
+@container (min-width: 720px) {
+  .db-led-rpt-top { gap: 18px; }
+  .db-led-rpt-donut-box,
+  .db-led-rpt-donut-svg { width: 140px; height: 140px; }
+  .db-led-rpt-donut-v { font-size: 16px; }
+  .db-led-rpt-legend { flex: 0 1 380px; }
+  .db-led-rpt-cmp { max-width: 560px; }
+}
+
+/* ── 月度趋势（柱高按 % 静态设置，无动画） ── */
+.db-led-trend {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 128px;
+  padding: 6px 2px 0;
+}
+.db-led-trend-col {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.db-led-trend-bars {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 3px;
+}
+.db-led-trend-bar { width: 9px; max-width: 40%; border-radius: 4px 4px 2px 2px; }
+.db-led-trend-bar.is-out { background: color-mix(in srgb, var(--led-out) 70%, var(--db-surface)); }
+.db-led-trend-bar.is-in { background: color-mix(in srgb, var(--led-in) 70%, var(--db-surface)); }
+.db-led-trend-label {
+  font-size: 10px;
+  color: var(--db-text-sub);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 页内设置：行 / 输入 / 删除 ── */
+.db-led-set-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 6px 0;
+}
+.db-led-set-row > :nth-child(3) { grid-column: 1; }
+.db-led-set-row > :nth-child(4) { grid-column: 2; justify-self: start; }
+.db-led-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius-sm);
+  background: var(--background-primary);
+  color: var(--db-text);
+  -webkit-text-fill-color: currentColor;
+  font-size: 13px;
+}
+.db-led-input:focus { outline: none; border-color: var(--db-accent); }
+.db-led-input-code { max-width: 76px; text-transform: uppercase; }
+.db-led-input-num { max-width: 110px; font-variant-numeric: tabular-nums; }
+.db-led-set-label { font-size: 12.5px; color: var(--db-text-muted); }
+.db-led-select {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius-sm);
+  background: var(--background-primary);
+  color: var(--db-text);
+  font-size: 13px;
+}
+.db-led-del {
+  width: 32px;
+  height: 32px;
+  margin-left: auto;
+  flex: 0 0 auto;
+  border: none;
+  border-radius: var(--db-radius-sm);
+  background: transparent;
+  color: var(--db-text-sub);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.db-led-del:hover {
+  color: color-mix(in srgb, var(--led-out) 85%, var(--db-text));
+  background: color-mix(in srgb, var(--led-out) 10%, transparent);
+}
+.db-led-del svg { width: 14px; height: 14px; }
+
+/* ── 记账设置页：菜单列表 + 页内二级页（不弹浮层） ── */
+.db-led-menu { padding: 0; overflow: hidden; }
+.db-led-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 14px;
+  margin: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  cursor: pointer;
+  text-align: left;
+}
+.db-led-menu-row + .db-led-menu-row { border-top: 1px solid color-mix(in srgb, var(--db-border) 55%, transparent); }
+.db-led-menu-row:active { background: var(--db-bg-hover); }
+.db-led-menu-label {
+  flex: 0 0 auto;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--db-text);
+}
+.db-led-menu-sum {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--db-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-menu-chev {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--db-text-muted);
+  opacity: 0.6;
+}
+.db-led-menu-chev svg { width: 14px; height: 14px; }
+
+/* 二级页头：返回 + 组标题 */
+.db-led-subhead { display: flex; align-items: center; gap: 6px; }
+.db-led-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 36px;
+  padding: 0 10px 0 2px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--db-text);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.db-led-back:active { opacity: 0.6; }
+.db-led-back-icon { display: inline-flex; }
+.db-led-back-icon svg { width: 18px; height: 18px; }
+.db-led-subhead-title { font-size: 15px; font-weight: 700; color: var(--db-text); }
+
+/* 二级页内小标题与分组容器 */
+.db-led-group-hint {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--db-text-muted);
+}
+.db-led-group-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+/* 「+ 添加…」链接式按钮（二级页/折叠区底部虚线胶囊） */
+.db-led-body .db-led-add:not(.db-led-header-add),
+.db-set-item-body .db-led-add:not(.db-led-header-add) {
+  align-self: flex-start;
+  margin-top: 6px;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1.5px dashed var(--db-border);
+  border-radius: var(--db-radius);
+  background: transparent;
+  color: var(--db-text-muted);
+  font-size: 12.5px;
+  cursor: pointer;
+  width: auto;
+}
+.db-led-subrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 4px 12px;
+}
+.db-led-sub-count {
+  flex: 0 0 auto;
+  margin-left: 10px;
+  font-size: 11px;
+  color: var(--db-text-sub);
+  white-space: nowrap;
+}
+/* 类别手风琴复用 .db-set-item：输入框占满剩余宽度 */
+.db-led-cat-item .db-set-item-head .db-led-input { max-width: 160px; }
+
+/* ── 记一笔 / 编辑：贴视口底部的 sheet（与计划「分组/排序」面板同盒型：
+   body 挂载 + fixed 锚视口，避免滚动容器内 absolute 被拉成整页高度、
+   白色 sheet 错位遮挡内容；键盘弹出时由 JS 写 overlay 的 bottom 抬升避让） ── */
+.db-led-overlay {
+  position: fixed;
+  inset: 0;
+  /* 必须低于 Obsidian 模态层级（--layer-modal:50 / notice:60 / menu:65），
+     否则 sheet 会盖住删除确认弹窗与 Notice（实测 app.asar：modal-container z=50） */
+  z-index: 49;
+  background: rgba(0, 0, 0, 0.38);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.db-led-sheet {
+  width: min(560px, 100%);
+  margin: 0 auto;
+  max-height: min(82vh, 82%);
+  display: flex;
+  flex-direction: column;
+  background: var(--db-surface);
+  border-radius: 18px 18px 0 0;
+  border-top: 1px solid var(--db-border);
+  box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.18);
+  animation: db-led-sheet-in 0.22s ease-out;
+}
+@keyframes db-led-sheet-in {
+  from { transform: translateY(24px); opacity: 0.6; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.db-led-sheet-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--db-border);
+}
+.db-led-sheet-title { font-size: 15px; font-weight: 700; color: var(--db-text); }
+.db-led-sheet-close {
+  width: 36px;
+  height: 36px;
+  margin-right: -8px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--db-text-muted);
+  cursor: pointer;
+}
+.db-led-sheet-close:active { background: var(--db-bg-hover); }
+.db-led-sheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 14px 16px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.db-led-sheet-foot {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px calc(12px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  border-top: 1px solid var(--db-border);
+}
+.db-led-save {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 46px;
+  border: none;
+  border-radius: var(--db-radius-lg);
+  background: var(--db-accent);
+  color: var(--text-on-accent, #fff);
+  font-size: 15px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.db-led-save:active { transform: scale(0.98); }
+.db-led-del-big {
+  flex: 0 0 auto;
+  min-height: 46px;
+  padding: 0 18px;
+  border: 1px solid color-mix(in srgb, var(--led-out) 35%, transparent);
+  border-radius: var(--db-radius-lg);
+  background: color-mix(in srgb, var(--led-out) 8%, var(--db-surface));
+  color: color-mix(in srgb, var(--led-out) 85%, var(--db-text));
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* sheet：收支切换 seg */
+.db-led-seg {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--db-radius-lg);
+  background: color-mix(in srgb, var(--text-normal) 5%, var(--db-surface));
+}
+.db-led-seg-btn {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--db-radius);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--db-text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.db-led-seg-btn.is-active.is-out {
+  background: var(--db-surface);
+  color: color-mix(in srgb, var(--led-out) 85%, var(--db-text));
+  box-shadow: var(--db-shadow-sm);
+}
+.db-led-seg-btn.is-active.is-in {
+  background: var(--db-surface);
+  color: color-mix(in srgb, var(--led-in) 78%, var(--db-text));
+  box-shadow: var(--db-shadow-sm);
+}
+.db-led-seg-btn.is-active.is-tr {
+  background: var(--db-surface);
+  color: color-mix(in srgb, var(--led-tr) 72%, var(--db-text));
+  box-shadow: var(--db-shadow-sm);
+}
+/* 视图切换标签：数量不固定（日历 / 流水…），等分一排而不是三列 */
+.db-led-seg.is-tabs { display: flex; }
+.db-led-seg.is-tabs .db-led-seg-btn { flex: 1 1 0; min-width: 0; }
+.db-led-seg-btn.is-active {
+  background: var(--db-surface);
+  color: var(--db-text);
+  box-shadow: var(--db-shadow-sm);
+}
+
+/* sheet：金额 + 日期 */
+.db-led-amount-row { display: flex; align-items: center; gap: 10px; }
+.db-led-amount {
+  flex: 1 1 0;
+  min-width: 0;
+  border: none;
+  border-bottom: 2px solid var(--db-border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--db-text);
+  -webkit-text-fill-color: currentColor;
+  font-size: 30px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  padding: 4px 2px 8px;
+}
+.db-led-amount:focus { outline: none; border-bottom-color: var(--db-accent); }
+.db-led-amount::placeholder { color: var(--db-text-sub); opacity: 0.6; -webkit-text-fill-color: currentColor; }
+.db-led-date {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 6px 10px;
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius-sm);
+  background: var(--background-primary);
+  color: var(--db-text-muted);
+  font-size: 13px;
+}
+
+/* sheet：字段 / 文本域 */
+.db-led-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.db-led-field-label { font-size: 12px; font-weight: 600; color: var(--db-text-muted); }
+.db-led-textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 56px;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius-sm);
+  background: var(--background-primary);
+  color: var(--db-text);
+  -webkit-text-fill-color: currentColor;
+  font-size: 13px;
+  font-family: inherit;
+}
+.db-led-textarea:focus { outline: none; border-color: var(--db-accent); }
+.db-led-two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+
+/* sheet：高级区折叠（展开态由 JS 切 is-open；只显隐，不做高度动画） */
+.db-led-adv {
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius);
+  background: color-mix(in srgb, var(--text-normal) 3%, var(--db-surface));
+  overflow: hidden;
+}
+.db-led-adv-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  color: var(--db-text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.db-led-adv-chev { display: inline-flex; margin-left: auto; transition: transform 0.18s ease; }
+.db-led-adv-chev svg { width: 14px; height: 14px; }
+.db-led-adv.is-open .db-led-adv-chev { transform: rotate(180deg); }
+.db-led-adv-body {
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 12px 14px;
+}
+.db-led-adv.is-open .db-led-adv-body { display: flex; }
+
+/* ── 触控增强：44px 触摸目标 ── */
+@media (hover: none) {
+  .db-led-header .db-led-add,
+  .db-led-select,
+  .db-led-date { min-height: 44px; }
+  .db-led-back { min-height: 44px; }
+  .db-led-input { min-height: 44px; }
+  .db-led-chip { min-height: 36px; padding: 7px 14px; }
+  .db-led-cat { min-height: 40px; }
+  .db-led-nav-btn { width: 44px; height: 44px; }
+  .db-led-del { width: 44px; height: 44px; }
+  .db-led-row { padding: 11px 2px; }
+  .db-led-seg-btn { min-height: 42px; }
+  .db-led-sheet-close { width: 44px; height: 44px; }
+  /* 导入 / 导出向导 */
+  .db-led-btn-ghost { min-height: 44px; padding: 10px 16px; }
+  .db-led-map-to { min-height: 44px; }
+  .db-led-map-custom { min-height: 44px; }
+  .db-led-batch-undo { min-height: 44px; padding: 8px 14px; }
+  .db-led-io-row { padding: 12px 0; }
+  .db-led-batch { padding: 13px 0; }
+  .db-led-check { width: 24px; height: 24px; }
+  .db-led-switch { width: 48px; height: 28px; }
+  .db-led-switch-knob { width: 22px; height: 22px; }
+  .db-led-switch.is-on .db-led-switch-knob { transform: translateX(20px); }
+  /* 日历格子：整格可点，保证 44px 触摸高度 */
+  .db-led-cal-cell { min-height: 46px; }
+  /* 账户图标：选择按钮与图标格子都要够大 */
+  .db-led-acct-icon.is-btn { width: 40px; height: 40px; }
+  .db-led-icon-cell { min-height: 72px; }
+  /* 报表明细行：整行可看，行高给足 */
+  .db-led-rpt-lg-row { min-height: 22px; }
+  .db-led-rptd-row { padding: 13px 0; }
+}
+
+/* ── 窄容器（手机 / 极窄侧栏）：设置行改两列排布已兜底，这里再收一档 ── */
+@container (max-width: 480px) {
+  .db-led-net { font-size: 22px; }
+  .db-led-amount { font-size: 26px; }
+  /* 向导：窄容器里样例文本让位给下拉框 */
+  .db-led-map-sample { display: none; }
+  .db-led-map-to { flex: 0 1 52%; min-width: 0; }
+  .db-led-io-detect-name { font-size: 16px; }
+  /* 日历：窄容器里字号收一档，金额不带千分位也仍然要能截断 */
+  .db-led-cal-week,
+  .db-led-cal-grid { gap: 1px; }
+  .db-led-cal { padding-left: 8px; padding-right: 8px; }
+  /* 报表：环形图收小，把横向空间让给右侧明细 */
+  .db-led-rpt-top { gap: 10px; }
+  .db-led-rpt-donut-box,
+  .db-led-rpt-donut-svg { width: 104px; height: 104px; }
+  .db-led-rpt-lg-pct { flex: 0 0 38px; }
+  /* 报表明细页：大字与大图都收一档 */
+  .db-led-rptd-total { font-size: 24px; }
+  .db-led-rpt-donut.is-big .db-led-rpt-donut-box,
+  .db-led-rpt-donut.is-big .db-led-rpt-donut-svg { width: 176px; height: 176px; }
+}
+@container (max-width: 360px) {
+  .db-led-hero-value { font-size: 16px; }
+  .db-led-hero-grid { gap: 6px; }
+  .db-led-sum-value { font-size: 14px; }
+  .db-led-set-row { grid-template-columns: minmax(0, 1fr); }
+  .db-led-set-row > :nth-child(3) { grid-column: 1; }
+  .db-led-set-row > :nth-child(4) { grid-column: 1; justify-self: stretch; }
+  .db-led-del { margin-left: 0; }
+  .db-led-two { grid-template-columns: minmax(0, 1fr); }
+  /* 向导：极窄容器里底部按钮改上下排，映射下拉占满第二行 */
+  .db-led-io-foot { flex-direction: column-reverse; align-items: stretch; }
+  .db-led-io-foot .db-led-cta,
+  .db-led-btn-ghost { width: 100%; }
+  .db-led-map-to { flex: 1 1 100%; }
+  .db-led-io-right { flex: 0 0 auto; }
+  .db-led-io-sub,
+  .db-led-io-err,
+  .db-led-batch-sub { white-space: normal; }
+  /* 日历：约 360px 时一列只有 45px，数字与金额都再收小 */
+  .db-led-cal-d { font-size: 12.5px; }
+  .db-led-cal-line { font-size: 9px; }
+  .db-led-cal-lines { min-height: 24px; }
+  .db-led-cal-cell { padding: 3px 0; }
+  .db-led-cal-sum { gap: 10px; }
+  /* 报表：极窄容器里环形图再收一档，占比列让位给名称 */
+  .db-led-rpt-donut-box,
+  .db-led-rpt-donut-svg { width: 94px; height: 94px; }
+  .db-led-rpt-donut-v { font-size: 13.5px; }
+  .db-led-rpt-lg-row,
+  .db-led-rpt-lg-name,
+  .db-led-rpt-lg-val,
+  .db-led-rpt-lg-pct { font-size: 12px; }
+  .db-led-rpt-lg-pct { flex: 0 0 34px; }
+  .db-led-rpt-cmp-v { min-width: 68px; font-size: 12px; }
+  /* 报表明细页：极窄容器里大图再收一档，笔数列让位给金额 */
+  .db-led-rptd-total { font-size: 22px; }
+  .db-led-rptd-line { font-size: 12.5px; }
+  .db-led-rptd-pct { flex: 0 0 40px; }
+  .db-led-rptd-amt { min-width: 54px; }
+  .db-led-rptd-delta { min-width: 50px; font-size: 11.5px; }
+  .db-led-rpt-donut.is-big .db-led-rpt-donut-box,
+  .db-led-rpt-donut.is-big .db-led-rpt-donut-svg { width: 152px; height: 152px; }
+}
+
+
+/* ════════════════════════════════════════════════════════
+   追剧（drama）：列表卡片 + 页内编辑二级页
+   令牌沿用 body/.db-journal-root 上的 --db-*，宽度响应只写 @container
+   ════════════════════════════════════════════════════════ */
+.db-drama-root {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 0 24px;
+  color: var(--db-text);
+}
+/* PC 端 Obsidian 给裸 button 设了固定高度，插件按钮一律自行放开 */
+.db-drama-root button { height: auto; white-space: normal; }
+/* Obsidian app.css 的 `button:not(.clickable-icon)`（特异度 0,1,1）会给所有裸 button
+   刷上灰底 + 输入阴影并居中内容，比插件里的类选择器（0,1,0）高。下面各按钮规则都写成
+   `.db-drama-root button.xxx`（0,2,1）来压过它，含移动端 .mobile-tap 与 :hover 态。
+   同理，就地编辑的文本格写成 `.db-drama-root textarea.db-drama-prop-field`。 */
+.db-drama-root {
+  min-width: 0;
+  max-width: 100%;
+}
+/* 追剧页整页不许横向滚动：安卓 WebView 聚焦输入框时会把页面顺带横移，
+   结果就是左边线跑出屏幕、卡片贴住屏幕左缘（实测偏移正好等于容器内边距）。
+   用 clip 而不是 hidden：hidden 会让这一层变成滚动容器，底部 sticky 操作条会失效。 */
+.db-drama-tab { overflow-x: clip; }
+
+.db-drama-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* ── 列表头部：汇总文字 + 新增入口 ── */
+.db-drama-head {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 0 0;
+}
+.db-drama-sum {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--db-text-sub);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.db-drama-root button.db-drama-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 6px 14px;
+  border: none;
+  border-radius: 999px;
+  background: var(--db-accent-soft);
+  box-shadow: none;
+  color: var(--db-accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+.db-drama-add:active { transform: scale(0.97); }
+.db-drama-add-icon { display: inline-flex; }
+.db-drama-add-icon svg { width: 14px; height: 14px; }
+
+/* ── 状态筛选 chips ── */
+.db-drama-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.db-drama-chips.is-inline { margin-top: 8px; }
+.db-drama-root button.db-drama-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 5px 11px;
+  border: 1px solid var(--db-border);
+  border-radius: 999px;
+  background: var(--db-surface);
+  box-shadow: none;
+  color: var(--db-text-muted);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.db-drama-chip-n { font-size: 11px; color: var(--db-text-sub); font-variant-numeric: tabular-nums; }
+.db-drama-root button.db-drama-chip.is-mini { min-height: 26px; padding: 3px 9px; font-size: 12px; }
+.db-drama-root button.db-drama-chip.is-active {
+  background: var(--db-accent);
+  border-color: transparent;
+  color: var(--text-on-accent, #fff);
+}
+.db-drama-chip.is-active .db-drama-chip-n { color: var(--text-on-accent, #fff); opacity: 0.8; }
+.db-drama-root button.db-drama-chip:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
+
+/* ── 卡片列表 ── */
+.db-drama-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.db-drama-card {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius);
+  background: var(--db-surface);
+  box-shadow: var(--db-shadow-sm);
+}
+.db-drama-card.is-form {
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+}
+.db-drama-empty {
+  padding: 28px 16px;
+  border: 1px dashed var(--db-border);
+  border-radius: var(--db-radius);
+  background: var(--db-surface);
+  color: var(--db-text-muted);
+  font-size: 13px;
+  line-height: 1.7;
+  text-align: center;
+}
+
+/* ── 封面：固定 2:3 相框（小圆角 + 细边框 + 轻投影），图片按原图比例择优呈现 ── */
+.db-drama-cover {
+  position: relative;
+  flex: 0 0 auto;
+  width: 62px;
+  /* 高度写死成 2:3，不依赖 aspect-ratio（老 WebView 上会塌陷成原图比例） */
+  height: 93px;
+  box-sizing: border-box;
+  border: 1px solid var(--db-border);
+  border-radius: 7px;
+  background: var(--db-surface2);
+  box-shadow: var(--db-shadow-sm);
+  overflow: hidden;
+  isolation: isolate;
+}
+.db-drama-cover.is-form { width: 92px; height: 138px; border-radius: 8px; cursor: default; }
+.db-drama-cover.is-tap { cursor: pointer; transition: transform 0.15s ease, opacity 0.15s ease; }
+.db-drama-cover.is-tap:active { transform: scale(0.97); opacity: 0.9; }
+.db-drama-cover.is-tap:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
+.db-drama-img {
+  position: absolute;
+  inset: 0;
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+/* 底图：只在横图 / 方图 / 超长图（is-fit）时登场，放大模糊后填满相框，免得留黑边 */
+.db-drama-img.is-bg {
+  display: none;
+  filter: blur(7px) saturate(1.12);
+  transform: scale(1.3);
+  opacity: 0.5;
+}
+.db-drama-cover.is-fit .db-drama-img.is-bg { display: block; }
+.db-drama-cover.is-fit .db-drama-img:not(.is-bg) { object-fit: contain; padding: 5px; }
+/* 解码完成前先铺一层柔色占位，避免出现破图图标 */
+.db-drama-cover.is-loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(160deg,
+    color-mix(in srgb, var(--db-text-muted) 10%, var(--db-surface2)),
+    var(--db-surface2));
+  animation: db-drama-loading 1.1s ease-in-out infinite alternate;
+}
+@keyframes db-drama-loading { from { opacity: 0.5; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .db-drama-cover.is-loading::after { animation: none; }
+}
+.db-drama-fallback {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: #fff;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1;
+  user-select: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+/* 色块上的高光与内描边：让纯色块也有海报框的质感 */
+.db-drama-fallback::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(155deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0) 52%, rgba(0, 0, 0, 0.12));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+/* ── 卡片正文 ── */
+.db-drama-main {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.db-drama-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.db-drama-root button.db-drama-title-btn {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--db-text);
+  text-align: left;
+  font-size: inherit;
+  font-weight: var(--font-normal, 400);
+  line-height: inherit;
+  cursor: pointer;
+}
+.db-drama-title {
+  min-width: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-drama-original {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--db-text-sub);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-drama-title-btn:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 3px; border-radius: 4px; }
+
+.db-drama-status {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+.db-drama-status.is-live { background: var(--db-accent-soft); color: var(--db-accent); }
+.db-drama-status.is-done { background: color-mix(in srgb, #4c9a6a 14%, transparent); color: color-mix(in srgb, #4c9a6a 78%, var(--db-text)); }
+.db-drama-status.is-pause { background: color-mix(in srgb, #c8963e 16%, transparent); color: color-mix(in srgb, #c8963e 80%, var(--db-text)); }
+.db-drama-status.is-drop { background: color-mix(in srgb, var(--db-text-muted) 14%, transparent); color: var(--db-text-muted); }
+
+.db-drama-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+.db-drama-cat,
+.db-drama-tag {
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  background: var(--db-surface2);
+  color: var(--db-text-muted);
+}
+.db-drama-cat {
+  background: color-mix(in srgb, var(--db-accent) 10%, transparent);
+  color: var(--db-accent);
+  font-weight: 600;
+}
+
+.db-drama-prog { min-width: 0; }
+.db-drama-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.db-drama-count {
+  flex: 0 0 auto;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--db-text);
+  font-variant-numeric: tabular-nums;
+}
+.db-drama-bar {
+  flex: 1 1 0;
+  min-width: 24px;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--db-text-muted) 14%, transparent);
+  overflow: hidden;
+}
+.db-drama-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--db-accent);
+  transition: width 0.25s ease;
+}
+.db-drama-pct {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--db-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.db-drama-dates {
+  min-width: 0;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--db-text-sub);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-drama-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+.db-drama-root button.db-drama-bump,
+.db-drama-root button.db-drama-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 5px 12px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+.db-drama-root button.db-drama-bump {
+  background: var(--db-accent);
+  box-shadow: none;
+  color: var(--text-on-accent, #fff);
+}
+.db-drama-root button.db-drama-link {
+  background: transparent;
+  box-shadow: none;
+  border-color: var(--db-border);
+  color: var(--db-text-muted);
+  font-weight: 500;
+}
+.db-drama-bump:active,
+.db-drama-link:active { transform: scale(0.97); opacity: 0.92; }
+.db-drama-root button.db-drama-bump:focus-visible,
+.db-drama-root button.db-drama-link:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
+.db-drama-bump-icon,
+.db-drama-link-icon { display: inline-flex; }
+.db-drama-bump-icon svg,
+.db-drama-link-icon svg { width: 13px; height: 13px; }
+
+/* ── 编辑二级页 ── */
+.db-drama-subhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 0;
+}
+.db-drama-subhead-title {
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 编辑页底部悬浮操作条：sticky 贴在滚动容器底边，随时可退出 ── */
+.db-drama-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
+  display: flex;
+  gap: 10px;
+  margin-top: 2px;
+  padding: 10px 0 calc(10px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  background: var(--db-bg);
+  border-top: 1px solid var(--db-border);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.db-drama-root button.db-drama-act {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 9px 14px;
+  border: none;
+  border-radius: var(--db-radius-sm);
+  box-shadow: none;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+.db-drama-root button.db-drama-act.is-ghost {
+  background: var(--db-surface2);
+  color: var(--db-text-muted);
+}
+.db-drama-root button.db-drama-act.is-primary {
+  background: var(--db-accent);
+  color: var(--db-accent-text, var(--text-on-accent, #fff));
+}
+.db-drama-act:active { transform: scale(0.98); opacity: 0.92; }
+.db-drama-root button.db-drama-act:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
+.db-drama-act-icon { display: inline-flex; }
+.db-drama-act-icon svg { width: 15px; height: 15px; }
+
+/* ── 属性页：一行 = 图标 + 字段名（左）/ 值（右）
+   版式参照 Notion 的 page properties：值不装进卡片，行直接铺在页面上，
+   和页面标题共用同一条左边线；行与行之间一条发丝分隔线，值右对齐。
+   文本类的值本身就是输入框（.db-drama-prop-field）：就地改、随内容长高，不弹控件。 ── */
+.db-drama-card.is-props {
+  gap: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  /* .db-drama-card 的 align-items: flex-start 是给「封面 + 文字」那种横排卡片用的，
+     竖排到这里会变成「每行按自己内容宽度收缩」：分隔线长短不一，值列 flex: 1 1 0 又分不到
+     可分配空间，输入框就缩成一小条。属性行必须铺满整列才有一致的边线和值宽。 */
+  align-items: stretch;
+}
+.db-drama-props-head {
+  padding: 2px 4px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--db-text-muted);
+}
+.db-drama-prop {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 0;
+}
+/* 文本行按基线对齐：字段名和值字号不同，首行也要在同一条基线上 */
+.db-drama-prop.is-field { align-items: baseline; }
+.db-drama-prop + .db-drama-prop {
+  border-top: 1px solid color-mix(in srgb, var(--db-border) 60%, transparent);
+}
+.db-drama-prop-name {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 45%;
+  padding: 2px 4px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--db-text-muted);
+}
+.db-drama-root .db-drama-prop-name.is-tap { cursor: pointer; }
+.db-drama-root .db-drama-prop-name.is-tap:active { background: var(--db-bg-hover); }
+.db-drama-root .db-drama-prop-name.is-tap:focus-visible {
+  outline: 2px solid var(--db-accent);
+  outline-offset: -1px;
+}
+.db-drama-prop-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  opacity: 0.75;
+}
+/* 该字段在列表卡片上被关掉了：字段名压暗，一眼看出哪些不进列表 */
+.db-drama-prop-name.is-off .db-drama-prop-icon,
+.db-drama-prop-name.is-off .db-drama-prop-label { opacity: 0.45; }
+.db-drama-prop-icon svg { width: 14px; height: 14px; }
+.db-drama-prop-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-drama-prop-value {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 4px 6px;
+  min-width: 0;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+.db-drama-root .db-drama-prop-value.is-tap { cursor: pointer; }
+.db-drama-root .db-drama-prop-value.is-tap:active { background: var(--db-bg-hover); }
+.db-drama-root .db-drama-prop-value.is-tap:focus-visible {
+  outline: 2px solid var(--db-accent);
+  outline-offset: -1px;
+}
+/* 就地文本格：平时看起来就是一行「值」——无边框无底色；悬停 / 聚焦才浮出浅底，
+   聚焦用内描边（inset box-shadow）避免改变行高。app.css 给裸 textarea 有底色规则，写成 0,2,1 压过它。 */
+.db-drama-root textarea.db-drama-prop-field {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 0 4px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--db-text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: right;
+  overflow: hidden;
+  resize: none;
+  -webkit-appearance: none;
+  appearance: none;
+  /* 移动端外壳上有 user-select: none，输入框必须显式放开，否则长按选不中词、也调不出粘贴 */
+  -webkit-user-select: text;
+  user-select: text;
+  caret-color: var(--db-accent);
+}
+.db-drama-root textarea.db-drama-prop-field::placeholder { color: var(--db-text-sub); opacity: 1; }
+.db-drama-root textarea.db-drama-prop-field:hover { background: var(--db-bg-hover); }
+.db-drama-root textarea.db-drama-prop-field:focus {
+  outline: none;
+  background: var(--db-bg-hover);
+  box-shadow: inset 0 0 0 1px var(--db-accent);
+}
+/* 计数两格是数字：只占够写的宽度，右边留给「/ 总集数 · 百分比」 */
+.db-drama-root textarea.db-drama-prop-field.is-num {
+  flex: 0 0 auto;
+  width: 3.5em;
+  font-variant-numeric: tabular-nums;
+}
+/* 值下面的一行辅助件（类型快捷键 / 「今天」）：整行换到值下面，靠右和值对齐 */
+.db-drama-prop-aux {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+.db-drama-prop-aux .db-drama-chips.is-inline { margin-top: 0; }
+.db-drama-root .is-hidden { display: none; }
+/* 值位里的徽标类（状态）沿用列表那套配色，但要能截断 */
+.db-drama-prop-value .db-drama-status {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-drama-prop-empty {
+  font-size: 12.5px;
+  color: var(--db-text-sub);
+}
+.db-drama-prop-sub {
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 1.9;
+  color: var(--db-text-sub);
+  font-variant-numeric: tabular-nums;
+}
+.db-drama-cover.is-prop {
+  width: 42px;
+  height: 63px;
+  border-radius: 6px;
+}
+/* 小图位里 contain 的内边距按比例缩，否则 42px 宽只剩一点点画面 */
+.db-drama-cover.is-prop.is-fit .db-drama-img:not(.is-bg) { padding: 2px; }
+/* 链接类字段：值本身就是可点的链接，改链接走右侧铅笔 */
+.db-drama-root button.db-drama-prop-link {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--db-accent);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.db-drama-prop-link-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-drama-root button.db-drama-prop-link:hover { background: var(--db-accent-soft); }
+.db-drama-root button.db-drama-prop-link:focus-visible {
+  outline: 2px solid var(--db-accent);
+  outline-offset: 1px;
+}
+.db-drama-root button.db-drama-prop-edit {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  min-height: 30px;
+  padding: 5px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--db-text-sub);
+  opacity: 0.8;
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.db-drama-prop-edit svg { width: 13px; height: 13px; }
+.db-drama-root button.db-drama-prop-edit:active { transform: scale(0.94); opacity: 1; }
+.db-drama-root button.db-drama-prop-edit:focus-visible {
+  outline: 2px solid var(--db-accent);
+  outline-offset: 1px;
+}
+/* 编辑态：上下堆叠，控件占满行宽（窄侧栏里左右分栏会让输入框没法用） */
+.db-drama-prop.is-edit {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.db-drama-prop.is-edit .db-drama-prop-value {
+  justify-content: flex-start;
+  padding-bottom: 2px;
+}
+/* 控件要占满行宽：分段器 / 快捷 chips 默认只按内容宽度，右对齐的单元格会缩成一小条 */
+.db-drama-prop.is-edit .db-drama-prop-value > .db-drama-seg,
+.db-drama-prop.is-edit .db-drama-prop-value > .db-drama-chips,
+.db-drama-prop.is-edit .db-drama-prop-value > .db-drama-mini-btns { width: 100%; }
+.db-drama-props-note {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--db-border) 60%, transparent);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--db-text-sub);
+}
+.db-drama-card.is-props .db-drama-created { margin-top: 8px; }
+
+/* 窄容器（手机 / PC 侧栏）：保持一行两列（字段名左、值右，和宽屏一致），
+   只把左列收紧一档（图标 13px、字号 12px、最长 42%），宽度尽量留给值。
+   值本身是输入框，装不下就换行长高，不再整行堆叠。 */
+@container (max-width: 480px) {
+  .db-drama-prop { gap: 8px; padding: 8px 0; }
+  .db-drama-prop-name { max-width: 42%; gap: 5px; font-size: 12px; }
+  .db-drama-prop-icon svg { width: 13px; height: 13px; }
+  .db-drama-prop-empty { font-size: 12px; }
+  .db-drama-cover.is-prop { width: 38px; height: 57px; }
+}
+.db-drama-created { font-size: 11.5px; color: var(--db-text-sub); }
+.db-drama-mini-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.db-drama-root button.db-drama-mini {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 5px 11px;
+  border: 1px solid var(--db-border);
+  border-radius: 999px;
+  background: var(--db-surface);
+  box-shadow: none;
+  color: var(--db-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+.db-drama-root button.db-drama-mini.is-ghost { border-color: transparent; }
+.db-drama-mini:active { transform: scale(0.97); opacity: 0.9; }
+.db-drama-root button.db-drama-mini:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
+.db-drama-mini-icon { display: inline-flex; }
+.db-drama-mini-icon svg { width: 13px; height: 13px; }
+
+.db-drama-seg {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: var(--db-radius-sm);
+  background: var(--db-surface2);
+}
+.db-drama-root button.db-drama-seg-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 32px;
+  padding: 6px 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--db-text-muted);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+.db-drama-root button.db-drama-seg-btn.is-active {
+  background: var(--db-surface);
+  color: var(--db-text);
+  font-weight: 600;
+  box-shadow: var(--db-shadow-sm);
+}
+.db-drama-root button.db-drama-seg-btn:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 1px; }
+
+.db-drama-root button.db-drama-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  align-self: flex-start;
+  min-height: 34px;
+  padding: 6px 14px;
+  border: 1px solid color-mix(in srgb, var(--text-error, #d1493f) 30%, transparent);
+  border-radius: var(--db-radius-sm);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-error, #d1493f);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.db-drama-del:active { opacity: 0.75; }
+.db-drama-root button.db-drama-del:focus-visible { outline: 2px solid var(--text-error, #d1493f); outline-offset: 2px; }
+.db-drama-del-icon { display: inline-flex; }
+.db-drama-del-icon svg { width: 14px; height: 14px; }
+
+/* ── 触控：目标放大 ── */
+@media (hover: none) {
+  .db-drama-root button.db-drama-add,
+  .db-drama-root button.db-drama-bump,
+  .db-drama-root button.db-drama-del { min-height: 44px; padding: 10px 16px; }
+  .db-drama-root button.db-drama-chip { min-height: 36px; padding: 7px 13px; }
+  .db-drama-root button.db-drama-link,
+  .db-drama-root button.db-drama-mini { min-height: 40px; padding: 9px 14px; }
+  .db-drama-root button.db-drama-act { min-height: 46px; }
+  .db-drama-root button.db-drama-seg-btn { min-height: 42px; }
+  .db-drama-root button.db-drama-title-btn { min-height: 34px; }
+  .db-drama-root button.db-drama-prop-link { min-height: 40px; padding: 9px 8px; }
+  .db-drama-root button.db-drama-prop-edit { width: 40px; min-height: 40px; }
+  /* 触控没有 hover：链接的下划线成为唯一「可点」提示 */
+  .db-drama-prop-link-text { text-decoration: underline; text-underline-offset: 2px; }
+  /* 就地文本格钉在 16px：WebView 聚焦字号 <16px 的输入框会自动放大整页，键盘收了也不还原。
+     值本来就常驻这一格，字号不会在「看」和「改」之间跳，行高也就不会抖。 */
+  .db-drama-root textarea.db-drama-prop-field { font-size: 16px; }
+  /* 拇指热区：整行 44+，字段名那一格也要占满行高（点它要开显隐菜单，只有 24px 高的话很难点中） */
+  .db-drama-prop { padding: 2px 0; }
+  .db-drama-prop-name { font-size: 13.5px; padding: 10px 6px; }
+  .db-drama-prop-value { padding: 10px 4px; }
+  .db-drama-prop-sub { line-height: 1.75; }
+  /* 链接值装得下就一行，长链接先折行再省略，别一上来就是「…」 */
+  .db-drama-prop-link-text {
+    white-space: normal;
+    text-align: right;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+  /* 输入时把底部操作条淡出：它是 sticky，正好停在键盘上沿，会把正在输入的最后一行压住。
+     只动 opacity / transform（占位不抽走，页面不重排），并且不吃点击——看不见却能误触「返回」
+     比看不见更糟。class 由 dramaPage 在 focusin / keyboardWillHide 上切换，键盘一收就还原。
+     键入完成仍走回车（enterkeyhint = done）→ 失焦 → 操作条回到原处，再点「确定」。 */
+  .db-drama-root.is-typing .db-drama-actions {
+    opacity: 0;
+    transform: translateY(10px);
+    pointer-events: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .db-drama-actions { transition: none; }
+}
+
+/* ── PC 宽容器：限宽居中 ── */
+@container (min-width: 720px) {
+  .db-drama-body { width: 100%; max-width: 720px; margin: 0 auto; }
+  .db-drama-cover { width: 74px; height: 111px; }
+  .db-drama-title { font-size: 15px; }
+  .db-drama-card { padding: 14px 16px; }
+}
+
+/* ── 窄容器（手机 / 极窄侧栏）── */
+@container (max-width: 480px) {
+  .db-drama-cover { width: 54px; height: 81px; }
+  .db-drama-fallback { font-size: 19px; }
+  .db-drama-card { padding: 10px; gap: 10px; }
+  .db-drama-title { font-size: 14px; }
+}
+@container (max-width: 360px) {
+  .db-drama-cover { width: 48px; height: 72px; }
+  .db-drama-fallback { font-size: 17px; }
+  .db-drama-meta { gap: 6px; }
+  /* 时间行的显隐交给「显示字段」设置，这里不再按宽度硬隐藏 */
+  .db-drama-title { font-size: 13.5px; }
+  .db-drama-original { font-size: 11px; }
+  .db-drama-root button.db-drama-chip { font-size: 12px; padding: 5px 9px; }
+  /* 属性页的紧凑化已在上面 480px 块统一处理，这里只再收一档封面小图 */
+  .db-drama-cover.is-prop { width: 36px; height: 54px; }
+}
+
+/* ── 关掉封面：卡片只剩文字，补齐左边距让标题与「新增剧集」左对齐 ── */
+.db-drama-card.is-bare { padding-left: 14px; }
+@container (max-width: 480px) {
+  .db-drama-card.is-bare { padding-left: 12px; }
+}
+
+/* ════════════════════════════════════════════════════════
+   追剧「显示字段」抽屉（沿用 .db-drawer 版式：✕ 在左、标题靠右）
+   行＝字段名 + 说明 + 右侧勾选位；勾选位平时是空心圈，选中才染主题色
+   ════════════════════════════════════════════════════════ */
+.db-drama-vis-body { padding-top: 4px; }
+.db-drama-vis-note {
+  padding: 10px 16px 12px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--db-text-muted);
+  border-bottom: 1px solid var(--db-border);
+}
+.db-drama-vis-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--db-border) 60%, transparent);
+  cursor: pointer;
+}
+.db-drama-vis-row:last-child { border-bottom: none; }
+.db-drama-vis-row:active { background: var(--db-bg-hover); }
+.db-drama-vis-row:focus-visible {
+  outline: 2px solid var(--db-accent);
+  outline-offset: -2px;
+}
+.db-drama-vis-label {
+  flex: 0 0 auto;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--db-text-muted);
+}
+.db-drama-vis-row.is-on .db-drama-vis-label { color: var(--db-text); font-weight: 600; }
+.db-drama-vis-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--db-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+.db-drama-vis-mark {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--db-border);
+  border-radius: 50%;
+  color: transparent;
+}
+.db-drama-vis-row.is-on .db-drama-vis-mark {
+  border-color: var(--db-accent);
+  background: var(--db-accent);
+  color: var(--db-accent-text, var(--text-on-accent, #fff));
+}
+.db-drama-vis-mark svg { width: 12px; height: 12px; }
+@media (hover: none) {
+  .db-drama-vis-row { min-height: 52px; }
+}

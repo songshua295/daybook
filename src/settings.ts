@@ -2,12 +2,13 @@ import { App, Modal, Notice, PluginSettingTab, Setting, setIcon } from "obsidian
 import type DaybookPlugin from "./main";
 import { VIEW_TYPE_JOURNAL } from "./JournalView";
 import type { LegacyHabitDef } from "./habitManager";
+import type { DramaFieldKey } from "./dramaStore";
 
 /** 视图默认打开位置：left=左侧边栏（默认）/ main=主窗口新标签页 / right=右侧边栏 */
 export type OpenLocation = "left" | "main" | "right";
 
-/** 章节渲染类型：memos=闪念（快速记录，支持 Markdown/双链/标签）, plans=待办计划, habits=习惯打卡 */
-export type SectionType = "memos" | "plans" | "habits";
+/** 章节渲染类型：memos=闪念（快速记录，支持 Markdown/双链/标签）, plans=待办计划, habits=习惯打卡, ledger=记账, drama=追剧 */
+export type SectionType = "memos" | "plans" | "habits" | "ledger" | "drama";
 
 /** 动态章节配置 */
 export interface SectionConfig {
@@ -35,11 +36,13 @@ export interface MoodOption {
   label: string;
 }
 
-/** 章节类型开关：整体关闭某类型（闪念/待办计划/习惯打卡），该类型的所有章节不渲染 */
+/** 章节类型开关：整体关闭某类型（闪念/待办计划/习惯打卡/记账/追剧），该类型的所有章节不渲染 */
 export interface TypeToggles {
   memos: boolean;
   plans: boolean;
   habits: boolean;
+  ledger: boolean;
+  drama: boolean;
 }
 
 /** 类型是否启用（undefined 视为启用） */
@@ -99,6 +102,8 @@ export interface DaybookSettings {
   customMoods: MoodOption[];    // 可长按编辑的心情列表（最多 8 个）
   quickTags: string[];          // 快捷标签（如 商业），点击追加 #标签
   memoSortOrder?: "newest" | "oldest"; // 闪念记录流排序（新→旧 / 旧→新）
+  /** 追剧列表卡片字段显隐（缺省 = 全显示；入口在追剧页「···」→ 显示字段） */
+  dramaFields?: Partial<Record<DramaFieldKey, boolean>>;
   // v3.3 新增：计划完成时间
   todoCompletedField: string;               // 勾选完成时写入任务末尾的行内字段名（如 completedAt）
   todoCompletionDisplay: "duration" | "time" | "both"; // 已完成任务显示：耗时/完成时间/两者
@@ -165,6 +170,8 @@ export const DEFAULT_SETTINGS: DaybookSettings = {
     memos: true,
     plans: true,
     habits: true,
+    ledger: true,
+    drama: true,
   },
   completionHaptic: true,
   completionSound: true,
@@ -181,6 +188,8 @@ export const SECTION_TYPE_INFO: Record<SectionType, { label: string; emoji: stri
   memos: { label: "闪念", emoji: "⚡", desc: "快速记录，支持加粗/删除线/双链/图片/标签" },
   plans: { label: "待办计划", emoji: "\u{1F4C5}", desc: "待办输入 + 日期提取 + 优先级 + 子任务" },
   habits: { label: "习惯打卡", emoji: "\u{1F4A7}", desc: "每习惯一个 md（<日记目录>/habits/，可手动编辑）· 详情页含活跃度热力图 + 周/月/年趋势图" },
+  ledger: { label: "记账", emoji: "\u{1F4B0}", desc: "记一笔/视图/资产/统计/设置 五页 · 数据存 <日记目录>/ledger/*.json" },
+  drama: { label: "追剧", emoji: "\u{1F4FA}", desc: "剧集卡片列表 + 页内编辑 · 数据存 <日记目录>/drama/shows.json（不写日记正文）" },
 };
 
 /** 删除确认弹窗（设置页自带轻量版，避免与 TodayPanel 形成循环导入） */
@@ -362,6 +371,8 @@ export class DaybookSettingTab extends PluginSettingTab {
       { key: "memos", label: "⚡ 闪念类型", desc: "关闭后隐藏所有闪念章节及其记录" },
       { key: "plans", label: "📅 待办计划类型", desc: "关闭后隐藏所有计划章节及其任务" },
       { key: "habits", label: "💧 习惯打卡类型", desc: "关闭后隐藏所有习惯章节" },
+      { key: "ledger", label: "💰 记账类型", desc: "关闭后隐藏所有记账章节" },
+      { key: "drama", label: "\u{1F4FA} 追剧类型", desc: "关闭后隐藏所有追剧章节" },
     ];
     TYPE_TOGGLES.forEach(({ key, label, desc }) => {
       new Setting(gPanels)
@@ -490,18 +501,20 @@ export class DaybookSettingTab extends PluginSettingTab {
             await save(); refreshView();
           });
 
-          // 文件路径
-          const fpCtl = this.field(sb, "文件路径",
-            "{{YYYY-MM-DD}} 是日期变量，也支持 {{YYYY/MM}}、{{HH:mm}} 等 moment 格式；留空用默认路径");
-          const fpInput = fpCtl.createEl("input", {
-            cls: "db-set-input db-set-input-mono",
-            attr: { type: "text", placeholder: "如 Work/Notes/{{YYYY-MM-DD}}.md", "aria-label": "章节文件路径" },
-          });
-          fpInput.value = sec.filePath ?? "";
-          fpInput.addEventListener("change", async () => {
-            sec.filePath = fpInput.value.trim() || undefined;
-            await save(); refreshView();
-          });
+          // 文件路径（记账 / 追剧的数据在 ledger/*.json 与 drama/shows.json，不走日记 md 文件路径）
+          if (sec.type !== "ledger" && sec.type !== "drama") {
+            const fpCtl = this.field(sb, "文件路径",
+              "{{YYYY-MM-DD}} 是日期变量，也支持 {{YYYY/MM}}、{{HH:mm}} 等 moment 格式；留空用默认路径");
+            const fpInput = fpCtl.createEl("input", {
+              cls: "db-set-input db-set-input-mono",
+              attr: { type: "text", placeholder: "如 Work/Notes/{{YYYY-MM-DD}}.md", "aria-label": "章节文件路径" },
+            });
+            fpInput.value = sec.filePath ?? "";
+            fpInput.addEventListener("change", async () => {
+              sec.filePath = fpInput.value.trim() || undefined;
+              await save(); refreshView();
+            });
+          }
 
           // 心情条默认状态（仅闪念）
           if (sec.type === "memos") {

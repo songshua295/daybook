@@ -20,6 +20,9 @@ import {
 } from "./filters";
 import { attachMemoEditor } from "./memoEditor";
 import { DashboardPage } from "./DashboardView";
+import { LedgerPage } from "./ledgerPage";
+import { DramaPage } from "./dramaPage";
+import { DRAMA_FIELDS, dramaFieldOn } from "./dramaStore";
 import { createLiveEditor, type LiveEditor, type LiveEditorOptions } from "./liveEditor";
 import {
   loadHabits,
@@ -1136,6 +1139,9 @@ export class DaybookView extends ItemView {
   private filterOpen = false;
   /** 筛选抽屉浮层（与闪念统计抽屉同呈现：左侧滑出 + 遮罩） */
   private filterOverlayEl: HTMLElement | null = null;
+  /** 追剧「显示字段」抽屉浮层（同款呈现，逐字段开关） */
+  private dramaFieldsOverlayEl: HTMLElement | null = null;
+  private dramaFieldsSentinelArmed = false;
   private filterBtnEl: HTMLElement | null = null;
   private todayHeadEl: HTMLElement | null = null;
   // 顶栏（memos 式三区）：右区操作按钮 + 常驻「···」菜单，窄屏由 fitTopbar 折叠
@@ -1151,6 +1157,10 @@ export class DaybookView extends ItemView {
   private dashPage: DashboardPage | null = null;
   private dashHiddenEls: HTMLElement[] = [];
   private dashSentinelArmed = false;
+  /** 记账章节：五页浮层实例（视图重建 / 关闭时销毁） */
+  private ledgerPage: LedgerPage | null = null;
+  /** 追剧章节：列表页 + 页内编辑二级页实例 */
+  private dramaPage: DramaPage | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: DaybookPlugin) {
     super(leaf);
@@ -1172,6 +1182,8 @@ export class DaybookView extends ItemView {
         this.dashSentinelArmed = false;
         this.closeDashboard(false);
       }
+      // 追剧「显示字段」抽屉：哨兵被弹出（返回键）就收抽屉，浮层由 close 负责移除
+      if (this.dramaFieldsSentinelArmed) this.closeDramaFieldsPanel(false);
     });
   }
 
@@ -1180,6 +1192,10 @@ export class DaybookView extends ItemView {
     this.destroyLiveEditors();
     this.todayPanel?.destroy();
     this.todayPanel = null;
+    this.ledgerPage?.destroy();
+    this.ledgerPage = null;
+    this.dramaPage?.destroy();
+    this.dramaPage = null;
     // 停止录音并释放资源
     if (this.mediaRecorder && this.isRecording) {
       try {
@@ -1436,9 +1452,16 @@ export class DaybookView extends ItemView {
     this.destroyLiveEditors();
     this.todayPanel?.destroy();
     this.todayPanel = null;
+    this.ledgerPage?.destroy();
+    this.ledgerPage = null;
+    this.dramaPage?.destroy();
+    this.dramaPage = null;
     root.empty();
     // root.empty() 已移除筛选抽屉浮层，重建前清掉旧引用
     this.filterOverlayEl = null;
+    // 显示字段抽屉同样挂在 root 里：连同未消费的哨兵一起清掉，别漏给返回键
+    this.dramaFieldsOverlayEl = null;
+    this.dramaFieldsSentinelArmed = false;
     root.setAttribute("class", "db-journal-root db-notion");
     root.style.height = "";
     root.style.maxHeight = "";
@@ -1556,17 +1579,22 @@ export class DaybookView extends ItemView {
         }).open();
       });
     }
-    const filterBtn = left.createEl("button", {
-      cls: "db-topbar-btn db-filter-toggle",
-      attr: { type: "button", "aria-label": "筛选本章节内容", "aria-expanded": "false", title: "筛选" },
-    });
-    setIcon(filterBtn, "list-filter");
-    filterBtn.addEventListener("click", e => {
-      e.stopPropagation();
-      this.toggleFilterPanel();
-    });
-    this.filterBtnEl = filterBtn;
-    this.updateFilterBadge();
+    // 记账 / 追剧章节自带页内筛选，不显示日记内容筛选入口
+    if (active?.type !== "ledger" && active?.type !== "drama") {
+      const filterBtn = left.createEl("button", {
+        cls: "db-topbar-btn db-filter-toggle",
+        attr: { type: "button", "aria-label": "筛选本章节内容", "aria-expanded": "false", title: "筛选" },
+      });
+      setIcon(filterBtn, "list-filter");
+      filterBtn.addEventListener("click", e => {
+        e.stopPropagation();
+        this.toggleFilterPanel();
+      });
+      this.filterBtnEl = filterBtn;
+      this.updateFilterBadge();
+    } else {
+      this.filterBtnEl = null;
+    }
 
     /* ── 中区标题：章节切换（点击弹出原生菜单） ── */
     const center = bar.createDiv({ cls: "db-topbar-center" });
@@ -1626,7 +1654,9 @@ export class DaybookView extends ItemView {
     const specs: { icon: string; label: string; run: () => void; el?: HTMLElement }[] =
       active?.type === "memos"
         ? [{ icon: "search", label: "搜索闪念", run: () => this.openMemoSearch(active) }]
-        : [];
+        : active?.type === "ledger"
+          ? [{ icon: "arrow-left-right", label: "切换页面", run: () => this.openLedgerPageMenu() }]
+          : [];
     specs.forEach(a => {
       const el = right.createEl("button", {
         cls: "db-topbar-btn",
@@ -1681,6 +1711,14 @@ export class DaybookView extends ItemView {
         menu.addItem(item => item.setTitle(a.label).setIcon(a.icon).onClick(() => a.run()));
         grouped = true;
       });
+      // 追剧：列表卡片显示哪些字段（编辑二级页里不开放——改的是列表，看不到也刷不了）
+      if (active?.type === "drama" && !this.dramaPage?.isEditing()) {
+        menu.addItem(item => {
+          item.setTitle("显示字段").setIcon("eye");
+          item.onClick(() => this.openDramaFieldsPanel());
+        });
+        grouped = true;
+      }
       if (grouped) menu.addSeparator();
       menu.addItem(item => {
         item.setTitle("打开统计面板").setIcon("layout-dashboard");
@@ -1779,6 +1817,31 @@ export class DaybookView extends ItemView {
         apply();
       },
     });
+  }
+
+  /** 记账顶栏「切换页面」：点选目标页（当前页打勾），不做逐页循环 */
+  private openLedgerPageMenu(): void {
+    const info = this.ledgerPage?.getPageInfo();
+    if (!info) return;
+    const menu = new Menu();
+    info.pages.forEach(p => {
+      menu.addItem(item => {
+        item.setTitle(p.title);
+        if (p.key === info.current) item.setIcon("check");
+        item.onClick(() => this.ledgerPage?.setPage(p.key));
+      });
+    });
+    // 锚定在按钮下方；键盘 Enter 触发（坐标为 0）或按钮折进「···」时回退到顶栏下方
+    const btn = this.topbarActions.find(a => a.label === "切换页面")?.el;
+    const rect = btn && btn.isConnected ? btn.getBoundingClientRect() : null;
+    if (rect && (rect.left > 0 || rect.top > 0)) {
+      menu.showAtPosition({ x: Math.max(8, rect.right - 150), y: rect.bottom + 4 });
+    } else if (this.topbarEl) {
+      const tr = this.topbarEl.getBoundingClientRect();
+      menu.showAtPosition({ x: Math.max(8, tr.right - 160), y: tr.bottom + 4 });
+    } else {
+      menu.showAtMouseEvent(new MouseEvent("click"));
+    }
   }
 
   /** 取该章节的筛选条件（首次访问时建一份空条件；按章节各自保留） */
@@ -1884,9 +1947,10 @@ export class DaybookView extends ItemView {
     } else badge?.remove();
   }
 
-  /** 习惯章节的数据在 habits/*.md 里，不展示日记的今日记录流 */
+  /** 习惯/记账/追剧章节的数据在 habits/*.md、ledger/*.json 与 drama/shows.json 里，不展示日记的今日记录流 */
   private syncHabitStreamVisibility(): void {
-    const hide = this._currentSection?.type === "habits";
+    const t = this._currentSection?.type;
+    const hide = t === "habits" || t === "ledger" || t === "drama";
     this.todayHeadEl?.toggleClass("is-hidden", hide);
     this.todayHostEl?.toggleClass("is-hidden", hide);
   }
@@ -1941,6 +2005,83 @@ export class DaybookView extends ItemView {
     this.fitTopbar();
   }
 
+  /** 追剧「显示字段」抽屉：逐字段开关，点一下即时写设置并就地重排列表 */
+  private openDramaFieldsPanel(): void {
+    if (this.dramaFieldsOverlayEl) return;
+    const root = this.containerEl.children[1] as HTMLElement | undefined;
+    if (!root || !root.isConnected) return;
+
+    const overlay = root.createDiv({ cls: "db-drawer-overlay" });
+    this.dramaFieldsOverlayEl = overlay;
+    overlay.addEventListener("click", () => this.closeDramaFieldsPanel());
+    const drawer = overlay.createDiv({ cls: "db-drawer" });
+    drawer.addEventListener("click", e => e.stopPropagation());
+
+    const head = drawer.createDiv({ cls: "db-drawer-head" });
+    // ✕ 放最左、标题靠右：与筛选抽屉同一套版式
+    const closeBtn = head.createDiv({
+      cls: "db-drawer-close",
+      attr: { role: "button", tabindex: "0", "aria-label": "关闭显示字段" },
+    });
+    setIcon(closeBtn, "x");
+    closeBtn.addEventListener("click", () => this.closeDramaFieldsPanel());
+    closeBtn.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); this.closeDramaFieldsPanel(); }
+    });
+    head.createSpan({ cls: "db-drawer-title", text: "显示字段" });
+
+    const body = drawer.createDiv({ cls: "db-drawer-body db-drama-vis-body" });
+    body.createDiv({
+      cls: "db-drama-vis-note",
+      text: "关掉的项只是不在列表卡片上出现，数据仍在，编辑页里始终可以改。",
+    });
+
+    DRAMA_FIELDS.forEach(f => {
+      const row = body.createDiv({ cls: "db-drama-vis-row", attr: { role: "switch", tabindex: "0" } });
+      row.createDiv({ cls: "db-drama-vis-label", text: f.label });
+      row.createDiv({ cls: "db-drama-vis-hint", text: f.hint });
+      const mark = row.createDiv({ cls: "db-drama-vis-mark" });
+      const paint = (on: boolean): void => {
+        row.toggleClass("is-on", on);
+        row.setAttribute("aria-checked", on ? "true" : "false");
+        row.setAttribute("aria-label", `${f.label}，${on ? "已显示" : "已隐藏"}`);
+        mark.empty();
+        if (on) setIcon(mark, "check");
+      };
+      const flip = (): void => {
+        const on = !dramaFieldOn(this.plugin.settings.dramaFields, f.key);
+        const st = this.plugin.settings;
+        if (!st.dramaFields) st.dramaFields = {};
+        st.dramaFields[f.key] = on;
+        void this.plugin.saveSettings();
+        paint(on);
+        this.dramaPage?.refresh();
+      };
+      row.addEventListener("click", flip);
+      row.addEventListener("keydown", (e: KeyboardEvent) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); flip(); }
+      });
+      paint(dramaFieldOn(this.plugin.settings.dramaFields, f.key));
+    });
+
+    // 返回键先收抽屉，再交回 Obsidian（与仪表盘二级页同一套哨兵写法）
+    if (Platform.isMobileApp) {
+      this.dramaFieldsSentinelArmed = true;
+      window.history.pushState({ daybookBack: "drama-fields" }, "");
+    }
+  }
+
+  private closeDramaFieldsPanel(reclaim = true): void {
+    const armed = this.dramaFieldsSentinelArmed;
+    this.dramaFieldsSentinelArmed = false;
+    if (this.dramaFieldsOverlayEl) {
+      this.dramaFieldsOverlayEl.remove();
+      this.dramaFieldsOverlayEl = null;
+    }
+    // 非返回键路径关闭（点遮罩 / ✕）：回收未消费的哨兵
+    if (reclaim && armed && Platform.isMobileApp) window.history.back();
+  }
+
   /** 保存后局部刷新今日记录流（不重建输入区，保留草稿与滚动位置） */
   /** 打开闪念搜索弹窗：确认后把关键词与快捷筛选写入章节筛选并刷新记录流 */
   private openMemoSearch(section: SectionConfig) {
@@ -1965,7 +2106,33 @@ export class DaybookView extends ItemView {
   private renderTabContent(container: HTMLElement, section: SectionConfig) {
     if (section.type === "plans") this.renderPlansTab(container, section);
     else if (section.type === "habits") this.renderHabitsTab(container, section);
+    else if (section.type === "ledger") void this.renderLedgerTab(container);
+    else if (section.type === "drama") void this.renderDramaTab(container);
     else this.renderMemosTab(container, section);
+  }
+
+  /** 记账：五页（首页/视图/资产/统计/设置）在页面内渲染，记一笔为贴视口底部的浮层 sheet */
+  private async renderLedgerTab(container: HTMLElement) {
+    container.empty();
+    container.addClass("db-ledger-tab");
+    this.ledgerPage?.destroy();
+    this.ledgerPage = new LedgerPage(this.app, this.plugin, container);
+    // 页名并入顶栏章节标题（「记账 · 首页」），切章节时 buildUI 会复原
+    this.ledgerPage.onPageTitle = (t) => {
+      if (this._currentSection?.type !== "ledger") return;
+      const lbl = this.topbarEl?.querySelector(".db-section-trigger-label");
+      if (lbl) lbl.setText(`${this._currentSection.label} · ${t}`);
+    };
+    await this.ledgerPage.mount();
+  }
+
+  /** 追剧：卡片列表在页面内渲染，编辑是页内整页二级页（不新开标签、不弹浮层） */
+  private async renderDramaTab(container: HTMLElement) {
+    container.empty();
+    container.addClass("db-drama-tab");
+    this.dramaPage?.destroy();
+    this.dramaPage = new DramaPage(this.app, this.plugin, container);
+    await this.dramaPage.mount();
   }
 
   /** 习惯打卡：主界面增删改 + 单次/多次打卡 + 休息日态（时间在详情页悬浮显示） */

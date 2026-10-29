@@ -278,8 +278,18 @@ export function attachMemoEditor(
     }
   }, true);
 
-  // 点击编辑区外部关闭补全（随插件卸载自动清理）
-  plugin.registerDomEvent(document, "click", (e: MouseEvent) => {
-    if (!wrap.contains(e.target as Node)) closeAc();
-  });
+  // 点击编辑区外部关闭补全。
+  // 生命周期自管理：不再用 plugin.registerDomEvent（那是插件级、只在插件卸载时清理，
+  // 而 attachMemoEditor 会随视图重建被反复调用，旧监听器会常驻累积、闭包持有已脱离文档的
+  // wrap 导致内存泄漏）。改用 AbortController + isConnected 自检：wrap 一旦被移除（视图
+  // 重建/关闭），下一次 document click 即 abort 自身，彻底释放，不依赖外部销毁钩子。
+  const docClickAc = new AbortController();
+  document.addEventListener(
+    "click",
+    (e: MouseEvent) => {
+      if (!wrap.isConnected) { docClickAc.abort(); return; }
+      if (!wrap.contains(e.target as Node)) closeAc();
+    },
+    { signal: docClickAc.signal }
+  );
 }

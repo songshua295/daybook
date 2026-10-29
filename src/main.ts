@@ -130,6 +130,30 @@ export default class DaybookPlugin extends Plugin {
     }
     if (dirty) await this.saveSettings();
 
+    // 注入：记账（ledger）章节。旧版曾移除过「expenses」记账类型，这里用新类型 id +
+    // ledgerPanelAddedV1 守卫，只注入一次，不与上面的旧数据清理互相打架。
+    const flags = this.settings as unknown as Record<string, unknown>;
+    const hasLedger = this.settings.panels.some(p => p.sections.some(s => s.type === "ledger"));
+    if (!flags.ledgerPanelAddedV1 && !hasLedger) {
+      this.settings.panels.push({
+        id: "ledger", name: "记账",
+        sections: [{ id: "ledger", emoji: "💰", label: "记账", type: "ledger", placeholder: "", enabled: true }],
+      });
+      flags.ledgerPanelAddedV1 = true;
+      await this.saveSettings();
+    }
+
+    // 注入：追剧（drama）章节。同记账一套守卫：只注入一次，用户删掉后不再自动加回。
+    const hasDrama = this.settings.panels.some(p => p.sections.some(s => s.type === "drama"));
+    if (!flags.dramaPanelAddedV1 && !hasDrama) {
+      this.settings.panels.push({
+        id: "drama", name: "追剧",
+        sections: [{ id: "drama", emoji: "\u{1F4FA}", label: "追剧", type: "drama", placeholder: "", enabled: true }],
+      });
+      flags.dramaPanelAddedV1 = true;
+      await this.saveSettings();
+    }
+
     // 计划视图偏好：浅合并会让旧的 reviewState 整体覆盖新默认值（新字段变 undefined），
     // 所以这里单独深合并一份，再把旧版本的分组/排序取值映射过来。
     // 顺带清掉从未接线的遗留键（groupVisible / filterCompletion / groupOrder …）。
