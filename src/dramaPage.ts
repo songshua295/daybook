@@ -5,7 +5,8 @@
  * 安卓返回键经 popstate 哨兵先退出编辑页，再交回 Obsidian。
  *
  * 编辑页是「属性页」：一行 = 图标 + 字段名（左）/ 值（右）。文本类的值本身就是输入框，
- * 就地改、随内容长高（不弹控件、不重绘行）；封面 / 状态 / 链接各有自己的控件，点值才展开。
+ * 就地改、随内容长高（不弹控件、不重绘行）；封面 / 链接点值就地展开控件，
+ * 状态点值弹锚定菜单（Notion select 的交互）。
  * 点左侧字段名弹菜单，勾选它在本章列表卡片上显不显示（与「···」→ 显示字段 同一套开关）。
  * 安卓输入：按字段给 inputmode、回车按行序跳下一格（末行收键盘）、点空白处收键盘。
  *
@@ -17,14 +18,16 @@
 import { App, Menu, Modal, Notice, Platform, moment, setIcon } from "obsidian";
 import type DaybookPlugin from "./main";
 import { ConfirmModal } from "./TodayPanel";
+import { NotionMultiSelect, NotionSelect, notionChipColor } from "./notionSelect";
 import {
   DramaFieldKey, DramaShow, DramaStatus, DramaStore, STATUS_INFO, STATUS_ORDER,
-  dramaFieldOn, newDramaShow, progressOf,
+  coverList, dramaFieldOn, newDramaShow, progressOf,
 } from "./dramaStore";
 import {
   coverColor, coverInitial, pickLocalImageFile, pickVaultCover, resolveCover,
   tidyCoverInput, uploadCoverImage,
 } from "./dramaCover";
+import { PromptModal } from "./ledgerCategoryUI";
 
 type StatusFilter = "all" | DramaStatus;
 const FILTERS: { key: StatusFilter; label: string }[] = [
@@ -74,8 +77,8 @@ const EDITOR_ROWS: RowDef[] = [
   { key: "category", icon: "film", label: "影视类型", field: "category" },
   { key: "tags", icon: "list", label: "标签", field: "tags" },
   { key: "status", icon: "flag", label: "状态", field: "status" },
-  { key: "episodes", icon: "hash", label: "计数", field: "episodes" },
-  { key: "totalEpisodes", icon: "sigma", label: "总计数" },
+  { key: "episodes", icon: "hash", label: "集数", field: "episodes" },
+  { key: "totalEpisodes", icon: "sigma", label: "总集数" },
   { key: "next", icon: "play", label: "下一集直达", field: "next" },
   { key: "douban", icon: "link", label: "豆瓣 URL", field: "douban" },
   { key: "finishedAt", icon: "calendar", label: "看完时间", field: "dates" },
@@ -84,10 +87,11 @@ const EDITOR_ROWS: RowDef[] = [
 /**
  * 文本类属性：值本身就是输入框，直接在上面改、随内容长高，
  * 不做「展示态 ↔ 弹个输入框」的切换（切换会把行撑高、把键盘顶掉）。
- * 其余三类各有自己的控件：封面（选图按钮）、状态（分段按钮）、链接（可点 + 铅笔）。
+ * 其余几类各有自己的控件：封面（选图按钮）、状态（Notion 下拉）、
+ * 影视类型（Notion 下拉 + 可新建）、标签（Notion 多选）、链接（可点 + 铅笔）。
  */
 const FIELD_ROWS: EditorRow[] = [
-  "title", "originalName", "category", "tags", "episodes", "totalEpisodes", "finishedAt",
+  "title", "originalName", "episodes", "totalEpisodes", "finishedAt",
 ];
 
 /** textarea 高度跟随内容：先放开量一次自然高度再写回（overflow:hidden 保证不出滚动条） */
@@ -182,6 +186,10 @@ export class DramaPage {
   private cards: Record<string, CardRefs> = {};
   /** 本次视图已解码过的封面 src → 原图宽高比：重渲染时跳过占位层，避免相框闪一下 */
   private coverCache: Record<string, number> = {};
+  /** 多封面时随机展示的下标（一次会话内同一部剧稳定，重绘不换图） */
+  private coverPick: Record<string, number> = {};
+  /** 编辑页封面行是否展开成「全部封面 + 增删」；未展开只显示一张随机小图 */
+  private coverOpen = false;
 
   constructor(
     private app: App,
@@ -258,7 +266,9 @@ export class DramaPage {
     if (this.fieldsRo) { this.fieldsRo.disconnect(); this.fieldsRo = null; }
     this.actionsEl = null;
     this.typing = false;
+    this.popCount = 0;
     this.host.removeClass("is-typing");
+    this.host.removeClass("is-popping");
     if (this.editSentinelArmed && Platform.isMobileApp) window.history.back();
     this.editing = null;
     this.editSentinelArmed = false;
@@ -279,6 +289,9 @@ export class DramaPage {
        否则淡出的操作条就再也不会回来 */
     this.typing = false;
     host.removeClass("is-typing");
+    /* 浮层不在本次重建的树里，计数一并归零；旧浮层若还开着，关掉时会被钳回 0 */
+    this.popCount = 0;
+    host.removeClass("is-popping");
     if (this.editing) { this.renderEditor(host); return; }
     if (this.fieldsRo) { this.fieldsRo.disconnect(); this.fieldsRo = null; }
     this.renderList(host);
@@ -367,6 +380,8 @@ export class DramaPage {
         text: STATUS_INFO[s.status].label,
       })
       : null;
+    /* Notion 数据库卡片的内联属性编辑：点状态徽标弹锚定菜单就地改，不进编辑页 */
+    if (statusEl) tappable(statusEl, `修改《${s.title}》状态`, () => this.openCardStatusMenu(statusEl, s.id));
 
     const pills = main.createDiv({ cls: "db-drama-pills" });
     if (on("category") && s.category) pills.createSpan({ cls: "db-drama-cat", text: s.category });
@@ -400,11 +415,18 @@ export class DramaPage {
       next.addEventListener("click", () => { const cur = fresh(); void this.openUrl(cur ? cur.nextEpisodeUrl : s.nextEpisodeUrl); });
     }
     if (on("douban") && isUrl(s.doubanUrl)) {
-      const db = foot.createEl("button", { cls: "db-drama-link", attr: { type: "button", "aria-label": `打开《${s.title}》豆瓣页面` } });
+      const db = foot.createEl("button", { cls: "db-drama-link is-secondary", attr: { type: "button", "aria-label": `打开《${s.title}》豆瓣页面` } });
       setIcon(db.createSpan({ cls: "db-drama-link-icon" }), "book-open");
       db.createSpan({ text: "豆瓣" });
       db.addEventListener("click", () => { const cur = fresh(); void this.openUrl(cur ? cur.doubanUrl : s.doubanUrl); });
     }
+
+    /* 整卡可点（Notion 卡片的交互）：按钮、封面、状态徽标自己有行为，点其余空白处都进编辑 */
+    card.addEventListener("click", (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t || !t.closest || t.closest("button, .db-drama-cover, .db-drama-status")) return;
+      openEdit();
+    });
 
     this.cards[s.id] = { card, statusEl, countEl, datesEl, fillEl, pctEl };
   }
@@ -437,10 +459,27 @@ export class DramaPage {
    * 封面：固定 2:3 相框（小圆角 + 细边框），图片按原图比例择优呈现，而不是把原图甩上去。
    * 竖版海报直接裁切填满；横版 / 方形 / 超长图改用完整显示 + 自身模糊放大当底，
    * 避免把横海报硬裁成一条。比例要等图片解码完才知道，所以先挂 is-loading 占位。
+   * 封面是文件类型可放多张：列表/未展开时只随机展示其中一张（一次会话内稳定，重绘不换图）。
    */
   private paintCover(box: HTMLElement, s: DramaShow): void {
-    const resolved = s.cover ? resolveCover(this.app, s.cover) : null;
-    if (!resolved) { this.paintFallback(box, s); return; }
+    this.paintCoverInto(box, this.pickCoverRef(s), s.title);
+  }
+
+  /** 多封面时随机取一张：一次会话内同一部剧稳定（coverPick 记住下标），下次打开再随机 */
+  private pickCoverRef(s: DramaShow): string {
+    const list = coverList(s);
+    if (!list.length) return "";
+    let i = this.coverPick[s.id];
+    if (i === undefined || i >= list.length) {
+      i = Math.floor(Math.random() * list.length);
+      this.coverPick[s.id] = i;
+    }
+    return list[i];
+  }
+
+  private paintCoverInto(box: HTMLElement, ref: string, title: string): void {
+    const resolved = ref ? resolveCover(this.app, ref) : null;
+    if (!resolved) { this.paintFallback(box, title); return; }
     // 这次会话已经解码过的封面：直接按上次的比例出图，不再铺占位（重渲染时就不闪一下）
     const known = this.coverCache[resolved.src];
     if (known === undefined) box.addClass("is-loading");
@@ -452,7 +491,7 @@ export class DramaPage {
     });
     const img = box.createEl("img", {
       cls: "db-drama-img",
-      attr: { src: resolved.src, alt: s.title, loading: "lazy" },
+      attr: { src: resolved.src, alt: title, loading: "lazy" },
     });
     img.addEventListener("load", () => {
       box.removeClass("is-loading");
@@ -466,15 +505,15 @@ export class DramaPage {
     });
     img.addEventListener("error", () => {
       box.empty();
-      this.paintFallback(box, s);
+      this.paintFallback(box, title);
     });
   }
 
   /** 首字色块兜底：底色按标题哈希取（同一部剧颜色稳定），高光与内描边交给样式 */
-  private paintFallback(box: HTMLElement, s: DramaShow): void {
+  private paintFallback(box: HTMLElement, title: string): void {
     box.removeClass("is-loading");
-    const block = box.createDiv({ cls: "db-drama-fallback", text: coverInitial(s.title) });
-    block.style.background = coverColor(s.title);
+    const block = box.createDiv({ cls: "db-drama-fallback", text: coverInitial(title) });
+    block.style.background = coverColor(title);
   }
 
   private openUrl(url: string): void {
@@ -501,6 +540,37 @@ export class DramaPage {
     new Notice(`《${next.title}》已看 ${next.episodes}${next.totalEpisodes > 0 ? ` / ${next.totalEpisodes}` : ""}`);
   }
 
+  /** 列表卡片上直接改状态（Notion 数据库卡片的内联属性编辑）：搜索下拉，当前项打勾 */
+  private openCardStatusMenu(anchor: HTMLElement, id: string): void {
+    const cur = this.store.byId(id);
+    if (!cur) return;
+    new NotionSelect(anchor, {
+      bindTrigger: true,
+      options: STATUS_ORDER.map(k => ({ value: k, label: STATUS_INFO[k].label })),
+      value: cur.status,
+      searchPlaceholder: "搜索状态…",
+      ariaLabel: `修改《${cur.title}》状态`,
+      onSelect: v => void this.changeStatus(id, v as DramaStatus),
+    }).open();
+  }
+
+  /** 状态就地落库：状态变了（牵动筛选和顶部计数）整页重建，没变只就地改卡片文字 */
+  private async changeStatus(id: string, k: DramaStatus): Promise<void> {
+    const cur = this.store.byId(id);
+    if (!cur) return;
+    const wasStatus = cur.status;
+    await this.store.updateShow({
+      ...cur,
+      status: k,
+      finishedAt: k === "done" && !cur.finishedAt ? moment().format("YYYY-MM-DD") : cur.finishedAt,
+      updatedAt: Date.now(),
+    });
+    /* updateShow 不回读：落库后按 id 现取规范化后的条目 */
+    const next = this.store.byId(id);
+    if (!next || this.destroyed || !this.host.isConnected || this.editing) return;
+    if (wasStatus !== next.status || !this.patchCard(next)) this.render();
+  }
+
   /* ────────────────────────── 编辑二级页 ────────────────────────── */
 
   private openEditor(show: DramaShow, isNew: boolean): void {
@@ -511,6 +581,7 @@ export class DramaPage {
     this.editing = draft;
     this.editIsNew = isNew;
     this.editRow = null;
+    this.coverOpen = false;   // 每次进编辑页封面行都从随机小图开始
     /* 指纹以磁盘上的条目为基准：草稿和它不一致才算「改过」 */
     this.editSaved = draftKey(isNew ? draft : (this.store.byId(show.id) ?? show));
     if (Platform.isMobileApp && !this.editSentinelArmed) {
@@ -647,8 +718,8 @@ export class DramaPage {
       case "originalName": return { placeholder: "如 名探偵コナン", aria: "原名" };
       case "category": return { placeholder: "电视剧 / 动漫 / 电影…", aria: "影视类型" };
       case "tags": return { placeholder: "动作, 悬疑（逗号或空格分隔）", aria: "标签" };
-      case "episodes": return { placeholder: "已看", aria: "计数", numeric: true, inputMode: "numeric" };
-      case "totalEpisodes": return { placeholder: "未定", aria: "总计数", numeric: true, inputMode: "numeric" };
+      case "episodes": return { placeholder: "已看", aria: "集数", numeric: true, inputMode: "numeric" };
+      case "totalEpisodes": return { placeholder: "未定", aria: "总集数", numeric: true, inputMode: "numeric" };
       case "finishedAt": return { placeholder: "YYYY-MM-DD", aria: "看完时间", date: true, inputMode: "numeric", noCaps: true };
       case "next": return { placeholder: "https://…", aria: "下一集直达链接", inputMode: "url", noCaps: true };
       case "douban": return { placeholder: "https://movie.douban.com/subject/…", aria: "豆瓣 URL", inputMode: "url", noCaps: true };
@@ -723,6 +794,8 @@ export class DramaPage {
   private actionsEl: HTMLElement | null = null;
   /** 当前有文本格在输入（决定操作条抬不抬） */
   private typing = false;
+  /** 编辑页里开着的 Notion 浮层数（状态 / 影视类型 / 标签）：开着时和输入态一样淡出操作条 */
+  private popCount = 0;
   /** 键盘弹起有动画，系统等那一下「滚进视野」往往只露个边，停稳后再校准一次 */
   private typingReveal: number | null = null;
   /** 键盘 / 视口监听的成对清理（本页不是 Component，用不了 registerEvent） */
@@ -858,17 +931,46 @@ export class DramaPage {
     let editAria = `编辑${def.label}`;
     switch (def.key) {
       case "cover": {
-        const box = cell.createDiv({ cls: "db-drama-cover is-prop" });
-        this.paintCover(box, s);
-        editAria = "编辑封面";
-        break;
+        /* 封面是文件类型（可多张）：未展开只随机展示一张小图，点开才列出全部并可增删 */
+        if (this.coverOpen) this.paintCoverExpanded(cell, def);
+        else this.paintCoverMini(cell, def);
+        return;
       }
-      case "status":
-        cell.createSpan({
+      case "category": {
+        /* Notion select：影视类型以彩色 chip 呈现，点开搜索已有类型或现场新建 */
+        const chip = cell.createSpan({
+          cls: `db-ns-chip${s.category ? "" : " is-empty"}`,
+          text: s.category || "未设置",
+        });
+        if (s.category) chip.style.setProperty("--ns-chip", notionChipColor(s.category));
+        tappable(chip, "选择影视类型", () => this.openCategorySelect(def, chip));
+        return;
+      }
+      case "tags": {
+        /* Notion multi-select：标签以彩色 chip 多选，可搜索已用标签或现场新建 */
+        new NotionMultiSelect(cell, {
+          options: () => this.store.allTags(),
+          values: s.tags,
+          placeholder: "空",
+          searchPlaceholder: "搜索标签…",
+          allowCreate: true,
+          ariaLabel: "编辑标签",
+          onChange: vs => this.patchDraft({ tags: vs }),
+          onCreate: q => q.replace(/^#/, "").replace(/[,，]/g, "").trim(),
+          onOpen: () => this.syncPopCount(1),
+          onClose: () => this.syncPopCount(-1),
+        });
+        return;
+      }
+      case "status": {
+        const badge = cell.createSpan({
           cls: `db-drama-status is-${STATUS_INFO[s.status].tone}`,
           text: STATUS_INFO[s.status].label,
         });
-        break;
+        /* Notion select 的交互：点徽标弹搜索下拉选状态，不整行换成控件 */
+        tappable(badge, "选择状态", () => this.openStatusMenu(def, badge));
+        return;
+      }
       case "next":
         this.propLinkView(cell, s.nextEpisodeUrl, `打开《${s.title}》下一集`, start);
         return;
@@ -1097,7 +1199,17 @@ export class DramaPage {
     }, 320);
   }
 
-  /** 非文本行的编辑态：封面（就地文本格 + 选图按钮）、状态（分段按钮）、链接（就地文本格） */
+  /**
+   * Notion 浮层（状态 / 类型 / 标签）展开 / 收起时同步：开着就给宿主打 is-popping，
+   * 触屏上由 CSS 把底部操作条淡出——浮层自带搜索框，键盘一样会顶到操作条上沿。
+   * 焦点在浮层的搜索框里，编辑页的 focusin / isInputFocused 都看不到它，只能靠回调。
+   */
+  private syncPopCount(delta: number): void {
+    this.popCount = Math.max(0, this.popCount + delta);
+    this.host.toggleClass("is-popping", this.popCount > 0);
+  }
+
+  /** 非文本行的编辑态：链接（就地文本格）；封面/状态/类型/标签都是 Notion 控件，不进编辑态 */
   private propEdit(cell: HTMLElement, def: RowDef): void {
     const s = this.editing;
     if (!s) return;
@@ -1106,41 +1218,6 @@ export class DramaPage {
       this.setEditRow(null);
     };
     switch (def.key) {
-      case "cover": {
-        /* 失焦不收起这一行：重绘会拆掉按钮节点，「刚打完字接着点按钮」会点空 */
-        this.propField(cell, def, { focus: true, onEnter: () => this.setEditRow(null) });
-        const btns = cell.createDiv({ cls: "db-drama-mini-btns" });
-        const pick = btns.createEl("button", { cls: "db-drama-mini", attr: { type: "button", "aria-label": "从库中选择封面" } });
-        setIcon(pick.createSpan({ cls: "db-drama-mini-icon" }), "image");
-        pick.createSpan({ text: "库里选择" });
-        pick.addEventListener("click", () => pickVaultCover(this.app, embed => commit({ cover: embed })));
-        const up = btns.createEl("button", { cls: "db-drama-mini", attr: { type: "button", "aria-label": "上传本地图片作为封面" } });
-        setIcon(up.createSpan({ cls: "db-drama-mini-icon" }), "upload");
-        up.createSpan({ text: "本地上传" });
-        up.addEventListener("click", () => void this.uploadCover());
-        if (s.cover) {
-          const clear = btns.createEl("button", { cls: "db-drama-mini is-ghost", attr: { type: "button", "aria-label": "清除封面" } });
-          setIcon(clear.createSpan({ cls: "db-drama-mini-icon" }), "x");
-          clear.createSpan({ text: "清除" });
-          clear.addEventListener("click", () => commit({ cover: "" }));
-        }
-        break;
-      }
-      case "status": {
-        const seg = cell.createDiv({ cls: "db-drama-seg" });
-        STATUS_ORDER.forEach(k => {
-          const b = seg.createEl("button", {
-            cls: `db-drama-seg-btn${s.status === k ? " is-active" : ""}`,
-            attr: { type: "button", "aria-label": `状态：${STATUS_INFO[k].label}` },
-            text: STATUS_INFO[k].label,
-          });
-          b.addEventListener("click", () => commit({
-            status: k,
-            finishedAt: k === "done" && !s.finishedAt ? moment().format("YYYY-MM-DD") : s.finishedAt,
-          }));
-        });
-        break;
-      }
       case "next":
         this.propField(cell, def, {
           focus: true, onEnter: () => this.setEditRow(null), onBlur: () => this.setEditRow(null),
@@ -1183,15 +1260,161 @@ export class DramaPage {
     }
   }
 
+  /** 点状态徽标：Notion select 选状态。选中即写草稿，当前项打勾 */
+  private openStatusMenu(def: RowDef, anchor: HTMLElement): void {
+    const s = this.editing;
+    if (!s) return;
+    new NotionSelect(anchor, {
+      bindTrigger: true,
+      options: STATUS_ORDER.map(k => ({ value: k, label: STATUS_INFO[k].label })),
+      value: s.status,
+      searchPlaceholder: "搜索状态…",
+      ariaLabel: "选择状态",
+      onSelect: v => {
+        const cur = this.editing;
+        if (!cur) return;
+        const k = v as DramaStatus;
+        this.patchDraft({
+          status: k,
+          /* 改成「已完结」且没写过日期时自动补今天，和原来的分段按钮同一行为 */
+          finishedAt: k === "done" && !cur.finishedAt ? moment().format("YYYY-MM-DD") : cur.finishedAt,
+        });
+        /* 徽标是静态画的：重绘这一行让新状态立即可见 */
+        const repaint = this.rowPainters[def.key];
+        if (repaint) repaint();
+      },
+      onOpen: () => this.syncPopCount(1),
+      onClose: () => this.syncPopCount(-1),
+    }).open();
+  }
 
-  private async uploadCover(): Promise<void> {
+  /** 影视类型：Notion select——已有类型按名称着色可搜索，没有就现场新建（正是「F栋」那种用法） */
+  private openCategorySelect(def: RowDef, anchor: HTMLElement): void {
+    const s = this.editing;
+    if (!s) return;
+    new NotionSelect(anchor, {
+      bindTrigger: true,
+      options: () => this.store.allCategories().map(c => ({ value: c, label: c })),
+      value: s.category,
+      placeholder: "未设置",
+      searchPlaceholder: "搜索类型…",
+      ariaLabel: "选择影视类型",
+      allowCreate: true,
+      onSelect: v => {
+        this.patchDraft({ category: v });
+        const repaint = this.rowPainters[def.key];
+        if (repaint) repaint();
+      },
+      onCreate: q => ({ value: q, label: q }),
+      onOpen: () => this.syncPopCount(1),
+      onClose: () => this.syncPopCount(-1),
+    }).open();
+  }
+
+
+  /* ── 封面组（文件类型，可多张）：未展开随机一张小图，展开列出全部并可增删 ── */
+
+  private repaintCover(def: RowDef): void {
+    const repaint = this.rowPainters[def.key];
+    if (repaint) repaint();
+  }
+
+  /** 写回封面组：covers 为准，cover 恒同步第一张（旧字段兼容旧版本） */
+  private patchCovers(list: string[]): void {
+    this.patchDraft({ covers: list, cover: list[0] ?? "" });
+  }
+
+  /** 展示态：随机一张的小图（不渲染文件名/大小，不占页面） */
+  private paintCoverMini(cell: HTMLElement, def: RowDef): void {
+    const s = this.editing;
+    if (!s) return;
+    const list = coverList(s);
+    const box = cell.createDiv({ cls: "db-drama-cover is-mini is-tap" });
+    this.paintCoverInto(box, this.pickCoverRef(s), s.title);
+    tappable(box, list.length > 1 ? `展开全部 ${list.length} 张封面` : "编辑封面", () => {
+      this.coverOpen = true;
+      this.repaintCover(def);
+    });
+  }
+
+  /** 展开态：全部封面以大一点的图平铺，每张可移除；入口有库里选择/本地上传/粘贴链接 */
+  private paintCoverExpanded(cell: HTMLElement, def: RowDef): void {
+    const s = this.editing;
+    if (!s) return;
+    const wrap = cell.createDiv({ cls: "db-drama-cover-set" });
+    coverList(s).forEach((ref, i) => {
+      const tile = wrap.createDiv({ cls: "db-drama-cover-tile" });
+      const box = tile.createDiv({ cls: "db-drama-cover is-tile" });
+      this.paintCoverInto(box, ref, s.title);
+      const del = tile.createSpan({
+        cls: "db-drama-cover-del",
+        attr: { role: "button", "aria-label": `移除第 ${i + 1} 张封面`, title: "移除" },
+      });
+      setIcon(del, "x");
+      del.addEventListener("click", e => {
+        e.stopPropagation();
+        const cur = this.editing;
+        if (!cur) return;
+        const next = coverList(cur).filter((_, j) => j !== i);
+        this.patchCovers(next);
+        if (!next.length) this.coverOpen = false;   // 删空了回到随机小图占位态
+        this.repaintCover(def);
+      });
+      del.addEventListener("keydown", e => {
+        if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); del.click(); }
+      });
+    });
+    const btns = cell.createDiv({ cls: "db-drama-mini-btns" });
+    const pick = btns.createEl("button", { cls: "db-drama-mini", attr: { type: "button", "aria-label": "从库中选择封面" } });
+    setIcon(pick.createSpan({ cls: "db-drama-mini-icon" }), "image");
+    pick.createSpan({ text: "库里选择" });
+    pick.addEventListener("click", () => pickVaultCover(this.app, embed => {
+      const cur = this.editing;
+      if (!cur || this.destroyed) return;
+      this.patchCovers([...coverList(cur), embed]);
+      this.repaintCover(def);
+    }));
+    const up = btns.createEl("button", { cls: "db-drama-mini", attr: { type: "button", "aria-label": "上传本地图片作为封面" } });
+    setIcon(up.createSpan({ cls: "db-drama-mini-icon" }), "upload");
+    up.createSpan({ text: "本地上传" });
+    up.addEventListener("click", () => void this.uploadCover(def));
+    const link = btns.createEl("button", { cls: "db-drama-mini", attr: { type: "button", "aria-label": "粘贴封面链接或引用文本" } });
+    setIcon(link.createSpan({ cls: "db-drama-mini-icon" }), "link");
+    link.createSpan({ text: "链接" });
+    link.addEventListener("click", () => {
+      new PromptModal(this.app, {
+        title: "添加封面",
+        placeholder: "https://… 或 ![[cover.jpg]]",
+        confirmText: "添加",
+        onConfirm: v => {
+          const ref = tidyCoverInput(v);
+          const cur = this.editing;
+          if (!ref || !cur) return;
+          this.patchCovers([...coverList(cur), ref]);
+          this.repaintCover(def);
+        },
+      }).open();
+    });
+    if (coverList(s).length) {
+      const collapse = btns.createEl("button", { cls: "db-drama-mini is-ghost", attr: { type: "button", "aria-label": "收起封面列表" } });
+      setIcon(collapse.createSpan({ cls: "db-drama-mini-icon" }), "chevron-up");
+      collapse.createSpan({ text: "收起" });
+      collapse.addEventListener("click", () => {
+        this.coverOpen = false;
+        this.repaintCover(def);
+      });
+    }
+  }
+
+  private async uploadCover(def: RowDef): Promise<void> {
     const file = await pickLocalImageFile(this.host);
     if (!file || this.destroyed) return;
     const embed = await uploadCoverImage(this.app, `${this.store.dir}/covers`, file);
     if (!embed) return;
-    this.patchDraft({ cover: embed });
-    /* 封面行正处编辑态：收起它即可回到展示态并显示新封面 */
-    this.setEditRow(null);
+    const cur = this.editing;
+    if (!cur) return;
+    this.patchCovers([...coverList(cur), embed]);
+    this.repaintCover(def);
   }
 }
 

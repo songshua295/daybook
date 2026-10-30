@@ -6427,28 +6427,6 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-led-chip-base { min-height: 26px; padding: 3px 10px; font-size: 11.5px; }
 
-/* ── 类别 chips ── */
-.db-led-cats { display: flex; flex-wrap: wrap; gap: 8px; }
-.db-led-cat {
-  min-height: 34px;
-  display: inline-flex;
-  align-items: center;
-  padding: 6px 14px;
-  border-radius: var(--db-radius);
-  border: 1px solid var(--db-border);
-  background: var(--db-surface);
-  color: var(--db-text-muted);
-  font-size: 13px;
-  cursor: pointer;
-  user-select: none;
-}
-.db-led-cat.is-active {
-  border-color: color-mix(in srgb, var(--db-accent) 50%, transparent);
-  background: color-mix(in srgb, var(--db-accent) 14%, transparent);
-  color: color-mix(in srgb, var(--db-accent) 70%, var(--db-text));
-  font-weight: 600;
-}
-
 /* ── 日分组：日期行在卡片外（参照记账 App），合计 收/支/转 带颜色 ── */
 .db-led-day {
   display: flex;
@@ -7077,22 +7055,6 @@ body .db-journal-root .db-filter-q:focus {
   cursor: pointer;
   width: auto;
 }
-.db-led-subrow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0 4px 12px;
-}
-.db-led-sub-count {
-  flex: 0 0 auto;
-  margin-left: 10px;
-  font-size: 11px;
-  color: var(--db-text-sub);
-  white-space: nowrap;
-}
-/* 类别手风琴复用 .db-set-item：输入框占满剩余宽度 */
-.db-led-cat-item .db-set-item-head .db-led-input { max-width: 160px; }
-
 /* ── 记一笔 / 编辑：贴视口底部的 sheet（与计划「分组/排序」面板同盒型：
    body 挂载 + fixed 锚视口，避免滚动容器内 absolute 被拉成整页高度、
    白色 sheet 错位遮挡内容；键盘弹出时由 JS 写 overlay 的 bottom 抬升避让） ── */
@@ -7132,7 +7094,6 @@ body .db-journal-root .db-filter-q:focus {
   padding: 12px 16px;
   border-bottom: 1px solid var(--db-border);
 }
-.db-led-sheet-title { font-size: 15px; font-weight: 700; color: var(--db-text); }
 .db-led-sheet-close {
   width: 36px;
   height: 36px;
@@ -7311,11 +7272,459 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-led-adv.is-open .db-led-adv-body { display: flex; }
 
+/* ── 记一笔头部：类型 tabs（文字 + 下划线，P1 顶栏样式）+ 编辑分类 ── */
+.db-led-ktabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+}
+.db-led-ktab {
+  position: relative;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 2px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--db-text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.db-led-ktab::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  width: 24px;
+  height: 3px;
+  border-radius: 2px;
+  background: currentColor;
+  transform: translateX(-50%) scaleX(0);
+  transition: transform 0.15s ease;
+}
+.db-led-ktab.is-active { color: var(--db-text); }
+.db-led-ktab.is-active.is-out { color: color-mix(in srgb, var(--led-out) 80%, var(--db-text)); }
+.db-led-ktab.is-active.is-in { color: color-mix(in srgb, var(--led-in) 78%, var(--db-text)); }
+.db-led-ktab.is-active.is-tr { color: color-mix(in srgb, var(--led-tr) 72%, var(--db-text)); }
+.db-led-ktab.is-active::after { transform: translateX(-50%) scaleX(1); }
+.db-led-sheet-edit {
+  flex: 0 0 auto;
+  min-height: 36px;
+  margin-right: -6px;
+  padding: 4px 4px 4px 10px;
+  border: none;
+  background: transparent;
+  color: var(--db-text-muted);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.db-led-sheet-edit:active { color: var(--db-text); }
+
+/* ── 类别宫格（P1：圆图标 + 文字，一排 5 个） ── */
+.db-led-catgrid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px 2px;
+}
+.db-led-catcell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 2px 0;
+  border: none;
+  background: transparent;
+  border-radius: var(--db-radius);
+  cursor: pointer;
+  user-select: none;
+}
+.db-led-catcircle {
+  position: relative;
+  box-sizing: border-box;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--text-normal) 6%, var(--db-surface));
+  color: var(--db-text-muted);
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 1;
+  transition: transform 0.12s ease, background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+}
+.db-led-catcircle svg { width: 21px; height: 21px; }
+.db-led-catcell:active .db-led-catcircle { transform: scale(0.94); }
+.db-led-catname {
+  max-width: 100%;
+  font-size: 11.5px;
+  line-height: 1.25;
+  color: var(--db-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-catcell.is-active .db-led-catcircle {
+  background: var(--db-accent);
+  color: var(--text-on-accent, #fff);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--db-accent) 35%, transparent);
+}
+.db-led-catcell.is-active .db-led-catname {
+  color: color-mix(in srgb, var(--db-accent) 72%, var(--db-text));
+  font-weight: 650;
+}
+/* 有二级分类的「···」角标 */
+.db-led-catdot {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  box-sizing: border-box;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 2px;
+  border-radius: 9px;
+  border: 2px solid var(--db-surface);
+  background: color-mix(in srgb, var(--db-accent) 30%, var(--db-surface));
+  color: color-mix(in srgb, var(--db-accent) 80%, var(--db-text));
+  font-size: 7px;
+  font-weight: 700;
+  line-height: 12px;
+  letter-spacing: 0.5px;
+  text-align: center;
+}
+.db-led-catcell.is-active .db-led-catdot {
+  background: var(--text-on-accent, #fff);
+  border-color: var(--db-accent);
+  color: color-mix(in srgb, var(--db-accent) 75%, var(--db-text));
+}
+/* 「新增」格子：虚线圈 */
+.db-led-catcell.is-add .db-led-catcircle {
+  background: transparent;
+  border: 1.5px dashed color-mix(in srgb, var(--db-text-muted) 40%, transparent);
+  color: var(--db-text-muted);
+}
+/* 子类面板：插在选中分类所在行之后，跨整行的浅灰圆角块，内部同样 5 列 */
+.db-led-catpanel {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px 2px;
+  margin: 2px 0 6px;
+  padding: 10px 6px;
+  border-radius: var(--db-radius-lg);
+  background: color-mix(in srgb, var(--text-normal) 4.5%, var(--db-surface));
+}
+.db-led-catpanel .db-led-catcircle { width: 40px; height: 40px; background: var(--db-surface); }
+.db-led-catpanel .db-led-catcircle svg { width: 18px; height: 18px; }
+.db-led-row-icon svg { width: 19px; height: 19px; }
+
+/* 键盘可达性：焦点圈 */
+.db-led-catcell:focus-visible,
+.db-catmgr-cat-head:focus-visible,
+.db-led-sheet-close:focus-visible {
+  outline: 2px solid var(--db-accent);
+  outline-offset: -2px;
+}
+
+/* ── 分类管理（P2）：页签 + 新增分类 + 可展开/可拖拽排序的卡片 ── */
+.db-catmgr { display: flex; flex-direction: column; gap: 12px; }
+/* 浮层内嵌模式：撑满 sheet 并自身滚动 */
+.db-led-sheet.is-mgr { max-height: min(94vh, 94%); }
+.db-led-sheet.is-mgr .db-catmgr {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 6px 16px calc(14px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+}
+
+/* ── 编辑单条记录（is-embed）：sheet 的表单盒型照用，去掉浮层专属的限高 / 圆角 / 入场动画，
+   在页面里就是一张普通大卡；保存条在卡内吸底，滚到表单中段也能保存 / 删除 ── */
+.db-led-sheet.is-embed {
+  width: 100%;
+  max-height: none;
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius-lg);
+  box-shadow: var(--db-shadow-sm);
+  animation: none;
+}
+.db-led-sheet.is-embed .db-led-sheet-body {
+  /* 页面自己滚，不在卡内滚：卡内滚动会把表单和吸底条截成两个滚动区 */
+  overflow: visible;
+  padding: 14px 16px 16px;
+}
+.db-led-sheet.is-embed .db-led-sheet-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
+  /* 吸底后要自己垫底色，滚过的内容才不会从保存条底下透出来 */
+  background: var(--db-surface);
+  border-radius: 0 0 var(--db-radius-lg) var(--db-radius-lg);
+}
+.db-catmgr-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 48px;
+  margin: 0;
+  padding: 8px 14px;
+  border: none;
+  border-radius: var(--db-radius-lg);
+  background: var(--db-accent-soft);
+  color: color-mix(in srgb, var(--db-accent) 78%, var(--db-text));
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.db-catmgr-add:active { transform: scale(0.99); }
+.db-catmgr-add-icon { display: inline-flex; }
+.db-catmgr-add-icon svg { width: 17px; height: 17px; }
+.db-catmgr-list { display: flex; flex-direction: column; gap: 10px; }
+.db-catmgr-cat {
+  background: var(--db-surface);
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius-lg);
+  overflow: hidden;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.db-catmgr-cat.is-dragging {
+  border-color: color-mix(in srgb, var(--db-accent) 55%, var(--db-border));
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
+}
+.db-catmgr-cat-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  padding: 8px 10px 8px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.db-catmgr-chev { display: inline-flex; flex: 0 0 auto; color: var(--db-text-sub); transition: transform 0.15s ease; }
+.db-catmgr-chev svg { width: 15px; height: 15px; }
+.db-catmgr-cat.is-open .db-catmgr-chev { transform: rotate(90deg); }
+.db-catmgr-icon {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--text-normal) 6%, var(--db-surface));
+  color: var(--db-text-muted);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1;
+}
+.db-catmgr-icon svg { width: 18px; height: 18px; }
+.db-catmgr-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--db-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-catmgr-edit,
+.db-catmgr-grip {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--db-text-sub);
+  cursor: pointer;
+}
+.db-catmgr-edit:active { background: var(--db-bg-hover); color: var(--db-text); }
+.db-catmgr-grip { cursor: grab; touch-action: none; }   /* touch-action 挡掉浏览器滚动，指针拖拽才跟手 */
+.db-catmgr-grip:active { cursor: grabbing; }
+.db-catmgr-edit svg,
+.db-catmgr-grip svg { width: 16px; height: 16px; }
+.db-catmgr-cat-body {
+  display: none;
+  padding: 2px 12px 12px;
+  border-top: 1px dashed color-mix(in srgb, var(--db-border) 75%, transparent);
+}
+.db-catmgr-cat.is-open .db-catmgr-cat-body { display: block; }
+.db-catmgr-subs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px 2px;
+  padding-top: 10px;
+}
+.db-catmgr-subs .db-led-catcircle { width: 40px; height: 40px; }
+.db-catmgr-subs .db-led-catcircle svg { width: 18px; height: 18px; }
+
+/* 分类编辑弹窗：名称 + 图标库（分组滚动区） */
+.db-cat-modal-field { display: flex; flex-direction: column; gap: 5px; }
+.db-cat-modal-label { font-size: 12px; font-weight: 600; color: var(--db-text-muted); margin-top: 4px; }
+.db-cat-icon-scroll { max-height: 250px; overflow-y: auto; padding-right: 2px; }
+.db-cat-icon-group-title { font-size: 11.5px; font-weight: 650; color: var(--db-text-sub); margin: 12px 0 6px; }
+.db-cat-icon-scroll .db-led-icon-grid { grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); }
+
+/* ── Notion 风格可搜索下拉（触发器 + 固定定位浮层） ──
+   触发器平时就是「值本身」：无边框、无底色（Notion 属性行的排法，别让值装在盒子里），
+   下拉意图由右侧箭头承担；悬停 / 按下才浮出浅底提示可点。 */
+.db-ns-trigger {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--db-radius-sm);
+  background: transparent;
+  box-shadow: none;
+  color: var(--db-text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.db-ns-trigger:active { background: var(--db-bg-hover); }
+@media (hover: hover) {
+  .db-ns-trigger:hover { background: var(--db-bg-hover); }
+}
+/* app.css 给裸 button 的默认底色 / 边框若以 (0,1,1) 盖回来，无边框就白去了：
+   双类把这几项重置提到 (0,2,0) 压住 */
+.db-ns-trigger.db-ns-trigger {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+.db-ns-trigger:focus-visible { outline: 2px solid var(--db-accent); outline-offset: -2px; }
+.db-ns-trigger .db-ns-chip { flex: 0 1 auto; }
+.db-ns-trigger .db-ns-chev { flex: 0 0 auto; margin-left: auto; display: inline-flex; color: var(--db-text-sub); }
+.db-ns-trigger .db-ns-chev svg { width: 14px; height: 14px; }
+.db-ns-chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 9px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 550;
+  line-height: 1.5;
+  background: color-mix(in srgb, var(--ns-chip, var(--db-text-muted)) 18%, transparent);
+  color: color-mix(in srgb, var(--ns-chip, var(--db-text-muted)) 82%, var(--db-text));
+}
+.db-ns-chip.is-empty { background: transparent; color: var(--db-text-sub); font-weight: 400; }
+.db-ns-pop {
+  position: fixed;
+  z-index: 55;                     /* 高于记账浮层(49)与 Obsidian 弹窗容器(50)，低于 Notice(60) */
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  background: var(--db-surface);
+  border: 1px solid var(--db-border);
+  border-radius: 10px;
+  box-shadow: var(--db-shadow-md, 0 3px 8px rgba(0, 0, 0, 0.12)), 0 8px 28px rgba(0, 0, 0, 0.14);
+  overflow: hidden;
+  animation: db-ns-pop-in 0.12s ease-out;
+}
+@keyframes db-ns-pop-in {
+  from { transform: translateY(-3px); opacity: 0.5; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.db-ns-search {
+  flex: 0 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: none;
+  border-bottom: 1px solid var(--db-border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--db-text);
+  -webkit-text-fill-color: currentColor;
+  font-size: 13px;
+}
+.db-ns-search:focus { outline: none; border-bottom-color: var(--db-accent); }
+.db-ns-hint { flex: 0 0 auto; padding: 8px 12px 2px; font-size: 11px; color: var(--db-text-sub); }
+.db-ns-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 6px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.db-ns-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+  color: var(--db-text);
+  user-select: none;
+}
+.db-ns-row:active,
+.db-ns-row.is-kbd { background: var(--db-bg-hover); }
+.db-ns-row .db-ns-chip { flex: 0 1 auto; }
+.db-ns-row .db-ns-check,
+.db-ns-row .db-ns-plus { flex: 0 0 auto; margin-left: auto; display: inline-flex; color: var(--db-accent); }
+.db-ns-row .db-ns-plus { color: var(--db-text-muted); }
+.db-ns-row .db-ns-check svg,
+.db-ns-row .db-ns-plus svg { width: 14px; height: 14px; }
+.db-ns-row.is-create { color: var(--db-text-muted); }
+.db-ns-empty { padding: 10px 12px; font-size: 12px; color: var(--db-text-sub); }
+/* 多选触发器：一排可移除的 chip */
+.db-ns-mult { row-gap: 4px; }
+.db-ns-mult .db-ns-mult-chips {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.db-ns-mult .db-ns-chip { display: inline-flex; align-items: center; gap: 3px; }
+.db-ns-chip-text { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-ns-chip-x {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: -2px;
+  padding: 2px;
+  border-radius: 4px;
+  color: color-mix(in srgb, var(--ns-chip, var(--db-text-muted)) 72%, var(--db-text));
+  cursor: pointer;
+}
+.db-ns-chip-x:active { background: color-mix(in srgb, var(--ns-chip, var(--db-text-muted)) 24%, transparent); }
+.db-ns-chip-x svg { width: 10px; height: 10px; }
+
 /* ── 触控增强：44px 触摸目标 ── */
 @media (hover: none) {
   .db-led-header .db-led-add,
   .db-led-select,
   .db-led-date { min-height: 44px; }
+  .db-ns-trigger { min-height: 44px; }
+  .db-ns-row { min-height: 40px; }
   .db-led-back { min-height: 44px; }
   .db-led-input { min-height: 44px; }
   .db-led-chip { min-height: 36px; padding: 7px 14px; }
@@ -7341,6 +7750,16 @@ body .db-journal-root .db-filter-q:focus {
   /* 账户图标：选择按钮与图标格子都要够大 */
   .db-led-acct-icon.is-btn { width: 40px; height: 40px; }
   .db-led-icon-cell { min-height: 72px; }
+  /* 类别宫格 / 分类管理：圆圈加大、行高给足 */
+  .db-led-catcell { padding: 4px 0; }
+  .db-led-catcircle { width: 50px; height: 50px; }
+  .db-led-catpanel .db-led-catcircle,
+  .db-catmgr-subs .db-led-catcircle { width: 44px; height: 44px; }
+  .db-led-sheet-edit { min-height: 44px; }
+  .db-catmgr-cat-head { min-height: 56px; }
+  .db-catmgr-edit,
+  .db-catmgr-grip { width: 44px; height: 44px; }
+  .db-catmgr-add { min-height: 50px; }
   /* 报表明细行：整行可看，行高给足 */
   .db-led-rpt-lg-row { min-height: 22px; }
   .db-led-rptd-row { padding: 13px 0; }
@@ -7498,24 +7917,39 @@ body .db-journal-root .db-filter-q:focus {
   gap: 4px;
   min-height: 30px;
   padding: 5px 11px;
-  border: 1px solid var(--db-border);
+  border: none;
   border-radius: 999px;
-  background: var(--db-surface);
+  /* Notion 标签：无边框，靠一层灰底成形（surface2 和页面底同源，深浅色都成立） */
+  background: var(--db-surface2);
   box-shadow: none;
   color: var(--db-text-muted);
   font-size: 12.5px;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 .db-drama-chip-n { font-size: 11px; color: var(--db-text-sub); font-variant-numeric: tabular-nums; }
 .db-drama-root button.db-drama-chip.is-mini { min-height: 26px; padding: 3px 9px; font-size: 12px; }
+/* 激活态用低饱和柔底（规范 §1）：柔底 + accent 文字，不拿实色填充喊叫 */
 .db-drama-root button.db-drama-chip.is-active {
-  background: var(--db-accent);
-  border-color: transparent;
-  color: var(--text-on-accent, #fff);
+  background: var(--db-accent-soft);
+  color: var(--db-accent);
+  font-weight: 600;
 }
-.db-drama-chip.is-active .db-drama-chip-n { color: var(--text-on-accent, #fff); opacity: 0.8; }
+.db-drama-chip.is-active .db-drama-chip-n { color: var(--db-accent); opacity: 0.7; }
 .db-drama-root button.db-drama-chip:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
+/* PC 悬停反馈只给「点了有反应」的控件，包在 hover:hover 里防触屏粘滞高亮（规范 §3）。
+   灰底 chip 的悬停要比常态深一档才看得出来，直接用 text-normal 往 surface2 里混 */
+@media (hover: hover) {
+  .db-drama-root button.db-drama-chip:not(.is-active):hover {
+    background: color-mix(in srgb, var(--text-normal) 9%, var(--db-surface2));
+  }
+  .db-drama-root button.db-drama-link:hover,
+  .db-drama-root button.db-drama-mini:hover { background: var(--db-bg-hover); }
+  .db-drama-root button.db-drama-bump:hover { background: var(--db-accent-hover); }
+  .db-drama-root button.db-drama-add:hover {
+    background: color-mix(in srgb, var(--db-accent) 20%, transparent);
+  }
+}
 
 /* ── 卡片列表 ── */
 .db-drama-list {
@@ -7535,6 +7969,25 @@ body .db-journal-root .db-filter-q:focus {
   border-radius: var(--db-radius);
   background: var(--db-surface);
   box-shadow: var(--db-shadow-sm);
+  /* 整卡可点（Notion 卡片）：按钮和封面各自有行为，点其余空白处进编辑 */
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+/* 整卡悬停反馈只在有 hover 的设备上生效（规范 §3；触屏按压反馈在各控件上）：
+   浅底 + 边框向 accent 靠一点，标记「这张卡是活的」 */
+@media (hover: hover) {
+  .db-drama-card:hover {
+    background: var(--db-bg-hover);
+    border-color: color-mix(in srgb, var(--db-accent) 40%, var(--db-border));
+  }
+  /* 渐进披露：低频动作（豆瓣、改链接的铅笔）PC 上先藏住，悬停 / 键盘聚焦才浮出；
+     触屏没有 hover，一律常显 */
+  .db-drama-root button.db-drama-link.is-secondary { opacity: 0; }
+  .db-drama-root .db-drama-card:hover button.db-drama-link.is-secondary,
+  .db-drama-root .db-drama-card:focus-within button.db-drama-link.is-secondary { opacity: 1; }
+  .db-drama-root button.db-drama-prop-edit { opacity: 0; }
+  .db-drama-root .db-drama-prop:hover button.db-drama-prop-edit,
+  .db-drama-root .db-drama-prop:focus-within button.db-drama-prop-edit { opacity: 0.85; }
 }
 .db-drama-card.is-form {
   flex-direction: column;
@@ -7689,6 +8142,10 @@ body .db-journal-root .db-filter-q:focus {
   line-height: 1.6;
 }
 .db-drama-status.is-live { background: var(--db-accent-soft); color: var(--db-accent); }
+/* 列表卡片上的状态徽标可点（弹锚定菜单就地改状态） */
+.db-drama-status.is-tap { cursor: pointer; transition: transform 0.15s ease; }
+.db-drama-status.is-tap:active { transform: scale(0.95); }
+.db-drama-status.is-tap:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
 .db-drama-status.is-done { background: color-mix(in srgb, #4c9a6a 14%, transparent); color: color-mix(in srgb, #4c9a6a 78%, var(--db-text)); }
 .db-drama-status.is-pause { background: color-mix(in srgb, #c8963e 16%, transparent); color: color-mix(in srgb, #c8963e 80%, var(--db-text)); }
 .db-drama-status.is-drop { background: color-mix(in srgb, var(--db-text-muted) 14%, transparent); color: var(--db-text-muted); }
@@ -7806,13 +8263,15 @@ body .db-journal-root .db-filter-q:focus {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  padding: 2px 0;
+  /* 标题与属性行的文字共用同一条左边线（行内边距 10px），Notion 页面标题的排法 */
+  padding: 4px 10px 0;
 }
 .db-drama-subhead-title {
   min-width: 0;
   flex: 1 1 auto;
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7862,10 +8321,14 @@ body .db-journal-root .db-filter-q:focus {
 .db-drama-act-icon svg { width: 15px; height: 15px; }
 
 /* ── 属性页：一行 = 图标 + 字段名（左）/ 值（右）
-   版式参照 Notion 的 page properties：值不装进卡片，行直接铺在页面上，
-   和页面标题共用同一条左边线；行与行之间一条发丝分隔线，值右对齐。
+   版式参照 Notion 的 page properties（P1 宽屏 / P2 移动端）：值不装进卡片，行直接铺在页面上；
+   字段名列固定宽，值一律从值列的同一条起点线向左对齐；行与行不画分隔线，
+   只靠间距 + 悬停时整行一块浅底圆角高亮来分区（触屏没有 hover，按压反馈由格子 :active 提供）。
    文本类的值本身就是输入框（.db-drama-prop-field）：就地改、随内容长高，不弹控件。 ── */
 .db-drama-card.is-props {
+  /* 字段名左列固定宽：值列因此有恒定的起点（Notion 属性页的排法）。
+     clamp 下限保证「原名 / 别名」这类最长的字段名放得下，上限免得宽屏把值挤到最右。 */
+  --drama-name-w: clamp(104px, 24%, 176px);
   gap: 0;
   padding: 0;
   border: none;
@@ -7878,7 +8341,7 @@ body .db-journal-root .db-filter-q:focus {
   align-items: stretch;
 }
 .db-drama-props-head {
-  padding: 2px 4px 6px;
+  padding: 2px 10px 8px;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.2px;
@@ -7890,21 +8353,27 @@ body .db-journal-root .db-filter-q:focus {
   align-items: flex-start;
   gap: 10px;
   min-width: 0;
-  padding: 7px 0;
+  /* 行内边距同时是高亮的留白：悬停时整行铺一块浅底、圆角，行与行只靠间距分隔（Notion 式），
+     不再画发丝线。2px 外边距让相邻两行的高亮块之间留一条缝。 */
+  margin: 2px 0;
+  padding: 10px;
+  border-radius: 8px;
+  transition: background-color 0.12s ease;
 }
 /* 文本行按基线对齐：字段名和值字号不同，首行也要在同一条基线上 */
 .db-drama-prop.is-field { align-items: baseline; }
-.db-drama-prop + .db-drama-prop {
-  border-top: 1px solid color-mix(in srgb, var(--db-border) 60%, transparent);
+/* 整行悬停高亮只在有 hover 的设备上生效；触屏的按压反馈由字段名 / 值格的 :active 提供 */
+@media (hover: hover) {
+  .db-drama-prop:hover { background: var(--db-bg-hover); }
 }
 .db-drama-prop-name {
   display: inline-flex;
-  flex: 0 0 auto;
+  /* 固定列宽：值列起点恒定；装不下的长字段名按 Notion 移动端的方式省略号截断 */
+  flex: 0 0 var(--drama-name-w, 24%);
   align-items: center;
   gap: 6px;
   min-width: 0;
-  max-width: 45%;
-  padding: 2px 4px;
+  padding: 2px 0;
   border-radius: 6px;
   font-size: 12.5px;
   line-height: 1.5;
@@ -7937,10 +8406,11 @@ body .db-journal-root .db-filter-q:focus {
   flex-direction: row;
   flex-wrap: wrap;
   align-items: flex-start;
-  justify-content: flex-end;
+  /* 值左对齐：和 Notion 一样，所有值都从值列的同一条起点线开始排 */
+  justify-content: flex-start;
   gap: 4px 6px;
   min-width: 0;
-  padding: 2px 4px;
+  padding: 2px 0;
   border-radius: 6px;
 }
 .db-drama-root .db-drama-prop-value.is-tap { cursor: pointer; }
@@ -7949,8 +8419,8 @@ body .db-journal-root .db-filter-q:focus {
   outline: 2px solid var(--db-accent);
   outline-offset: -1px;
 }
-/* 就地文本格：平时看起来就是一行「值」——无边框无底色；悬停 / 聚焦才浮出浅底，
-   聚焦用内描边（inset box-shadow）避免改变行高。app.css 给裸 textarea 有底色规则，写成 0,2,1 压过它。 */
+/* 就地文本格：平时看起来就是一行「值」——无边框无底色（悬停的浅底由整行提供），
+   聚焦才浮出内描边（inset box-shadow）避免改变行高。app.css 给裸 textarea 有底色规则，写成 0,2,1 压过它。 */
 .db-drama-root textarea.db-drama-prop-field {
   flex: 1 1 0;
   min-width: 0;
@@ -7965,7 +8435,7 @@ body .db-journal-root .db-filter-q:focus {
   font-family: inherit;
   font-size: 13px;
   line-height: 1.5;
-  text-align: right;
+  text-align: left;
   overflow: hidden;
   resize: none;
   -webkit-appearance: none;
@@ -7976,25 +8446,24 @@ body .db-journal-root .db-filter-q:focus {
   caret-color: var(--db-accent);
 }
 .db-drama-root textarea.db-drama-prop-field::placeholder { color: var(--db-text-sub); opacity: 1; }
-.db-drama-root textarea.db-drama-prop-field:hover { background: var(--db-bg-hover); }
 .db-drama-root textarea.db-drama-prop-field:focus {
   outline: none;
   background: var(--db-bg-hover);
   box-shadow: inset 0 0 0 1px var(--db-accent);
 }
-/* 计数两格是数字：只占够写的宽度，右边留给「/ 总集数 · 百分比」 */
+/* 计数两格是数字：只占够写的宽度，「/ 总集数 · 百分比」紧跟在数字后面 */
 .db-drama-root textarea.db-drama-prop-field.is-num {
   flex: 0 0 auto;
   width: 3.5em;
   font-variant-numeric: tabular-nums;
 }
-/* 值下面的一行辅助件（类型快捷键 / 「今天」）：整行换到值下面，靠右和值对齐 */
+/* 值下面的一行辅助件（类型快捷键 / 「今天」）：整行换到值下面，和值同一条起点线 */
 .db-drama-prop-aux {
   flex: 1 1 100%;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 6px;
   min-width: 0;
 }
@@ -8025,6 +8494,43 @@ body .db-journal-root .db-filter-q:focus {
 }
 /* 小图位里 contain 的内边距按比例缩，否则 42px 宽只剩一点点画面 */
 .db-drama-cover.is-prop.is-fit .db-drama-img:not(.is-bg) { padding: 2px; }
+/* 封面组（文件类型，可多张）：未展开一张小图，展开后大一点的图平铺；只渲染图片本身，不渲染文件名/大小 */
+.db-drama-cover.is-mini {
+  width: 34px;
+  height: 51px;
+  border-radius: 5px;
+  box-shadow: none;
+}
+.db-drama-cover.is-tile {
+  width: 84px;
+  height: 126px;
+  border-radius: 8px;
+}
+.db-drama-cover-set {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+}
+.db-drama-cover-tile { position: relative; flex: 0 0 auto; }
+.db-drama-cover-del {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+  user-select: none;
+}
+.db-drama-cover-del:active { background: rgba(0, 0, 0, 0.78); }
+.db-drama-cover-del svg { width: 12px; height: 12px; }
 /* 链接类字段：值本身就是可点的链接，改链接走右侧铅笔 */
 .db-drama-root button.db-drama-prop-link {
   display: inline-flex;
@@ -8082,30 +8588,32 @@ body .db-journal-root .db-filter-q:focus {
   align-items: stretch;
   gap: 8px;
 }
+/* 竖排后字段名占满一行，别再按固定列宽收缩（列向布局里 flex-basis 量的是高度） */
+.db-drama-prop.is-edit .db-drama-prop-name { flex-basis: auto; }
 .db-drama-prop.is-edit .db-drama-prop-value {
   justify-content: flex-start;
   padding-bottom: 2px;
 }
-/* 控件要占满行宽：分段器 / 快捷 chips 默认只按内容宽度，右对齐的单元格会缩成一小条 */
-.db-drama-prop.is-edit .db-drama-prop-value > .db-drama-seg,
+/* 控件要占满行宽：快捷 chips 默认只按内容宽度，右对齐的单元格会缩成一小条 */
 .db-drama-prop.is-edit .db-drama-prop-value > .db-drama-chips,
 .db-drama-prop.is-edit .db-drama-prop-value > .db-drama-mini-btns { width: 100%; }
 .db-drama-props-note {
-  margin-top: 10px;
-  padding-top: 10px;
+  margin-top: 12px;
+  padding: 10px 10px 0;
   border-top: 1px solid color-mix(in srgb, var(--db-border) 60%, transparent);
   font-size: 11px;
   line-height: 1.6;
   color: var(--db-text-sub);
 }
-.db-drama-card.is-props .db-drama-created { margin-top: 8px; }
+.db-drama-card.is-props .db-drama-created { margin: 8px 10px 0; }
 
 /* 窄容器（手机 / PC 侧栏）：保持一行两列（字段名左、值右，和宽屏一致），
-   只把左列收紧一档（图标 13px、字号 12px、最长 42%），宽度尽量留给值。
+   左列收窄到约三成（移动端属性页的比例），超长字段名省略号截断，宽度尽量留给值。
    值本身是输入框，装不下就换行长高，不再整行堆叠。 */
 @container (max-width: 480px) {
-  .db-drama-prop { gap: 8px; padding: 8px 0; }
-  .db-drama-prop-name { max-width: 42%; gap: 5px; font-size: 12px; }
+  .db-drama-card.is-props { --drama-name-w: min(32%, 118px); }
+  .db-drama-prop { gap: 8px; }
+  .db-drama-prop-name { gap: 5px; font-size: 12px; }
   .db-drama-prop-icon svg { width: 13px; height: 13px; }
   .db-drama-prop-empty { font-size: 12px; }
   .db-drama-cover.is-prop { width: 38px; height: 57px; }
@@ -8134,44 +8642,13 @@ body .db-journal-root .db-filter-q:focus {
 .db-drama-mini-icon { display: inline-flex; }
 .db-drama-mini-icon svg { width: 13px; height: 13px; }
 
-.db-drama-seg {
-  display: flex;
-  gap: 4px;
-  padding: 3px;
-  border-radius: var(--db-radius-sm);
-  background: var(--db-surface2);
-}
-.db-drama-root button.db-drama-seg-btn {
-  flex: 1 1 0;
-  min-width: 0;
-  min-height: 32px;
-  padding: 6px 4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 7px;
-  background: transparent;
-  box-shadow: none;
-  color: var(--db-text-muted);
-  font-size: 12.5px;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
-}
-.db-drama-root button.db-drama-seg-btn.is-active {
-  background: var(--db-surface);
-  color: var(--db-text);
-  font-weight: 600;
-  box-shadow: var(--db-shadow-sm);
-}
-.db-drama-root button.db-drama-seg-btn:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 1px; }
-
 .db-drama-root button.db-drama-del {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
   align-self: flex-start;
+  margin-left: 10px;
   min-height: 34px;
   padding: 6px 14px;
   border: 1px solid color-mix(in srgb, var(--text-error, #d1493f) 30%, transparent);
@@ -8196,7 +8673,6 @@ body .db-journal-root .db-filter-q:focus {
   .db-drama-root button.db-drama-link,
   .db-drama-root button.db-drama-mini { min-height: 40px; padding: 9px 14px; }
   .db-drama-root button.db-drama-act { min-height: 46px; }
-  .db-drama-root button.db-drama-seg-btn { min-height: 42px; }
   .db-drama-root button.db-drama-title-btn { min-height: 34px; }
   .db-drama-root button.db-drama-prop-link { min-height: 40px; padding: 9px 8px; }
   .db-drama-root button.db-drama-prop-edit { width: 40px; min-height: 40px; }
@@ -8205,23 +8681,27 @@ body .db-journal-root .db-filter-q:focus {
   /* 就地文本格钉在 16px：WebView 聚焦字号 <16px 的输入框会自动放大整页，键盘收了也不还原。
      值本来就常驻这一格，字号不会在「看」和「改」之间跳，行高也就不会抖。 */
   .db-drama-root textarea.db-drama-prop-field { font-size: 16px; }
-  /* 拇指热区：整行 44+，字段名那一格也要占满行高（点它要开显隐菜单，只有 24px 高的话很难点中） */
-  .db-drama-prop { padding: 2px 0; }
-  .db-drama-prop-name { font-size: 13.5px; padding: 10px 6px; }
-  .db-drama-prop-value { padding: 10px 4px; }
+  /* 拇指热区：字段名那一格要占满行高（点它要开显隐菜单，太矮的话很难点中）。
+     行距比 PC 收一档（参照移动端属性页的紧凑排布），整行仍保持在 40px 上下。 */
+  .db-drama-prop { padding: 0 8px; }
+  .db-drama-prop-name { font-size: 13.5px; padding: 9px 0; }
+  .db-drama-prop-value { padding: 9px 0; }
   .db-drama-prop-sub { line-height: 1.75; }
   /* 链接值装得下就一行，长链接先折行再省略，别一上来就是「…」 */
   .db-drama-prop-link-text {
     white-space: normal;
-    text-align: right;
+    text-align: left;
     line-height: 1.35;
     overflow-wrap: anywhere;
   }
   /* 输入时把底部操作条淡出：它是 sticky，正好停在键盘上沿，会把正在输入的最后一行压住。
      只动 opacity / transform（占位不抽走，页面不重排），并且不吃点击——看不见却能误触「返回」
      比看不见更糟。class 由 dramaPage 在 focusin / keyboardWillHide 上切换，键盘一收就还原。
-     键入完成仍走回车（enterkeyhint = done）→ 失焦 → 操作条回到原处，再点「确定」。 */
-  .db-drama-root.is-typing .db-drama-actions {
+     键入完成仍走回车（enterkeyhint = done）→ 失焦 → 操作条回到原处，再点「确定」。
+     状态 / 类型 / 标签的下拉浮层开着（is-popping）时同样淡出：浮层自带搜索框，
+     键盘一样顶到操作条上沿，浮层悬在半空，底下露一排按钮既挡内容又能误触。 */
+  .db-drama-root.is-typing .db-drama-actions,
+  .db-drama-root.is-popping .db-drama-actions {
     opacity: 0;
     transform: translateY(10px);
     pointer-events: none;
@@ -8234,9 +8714,13 @@ body .db-journal-root .db-filter-q:focus {
 /* ── PC 宽容器：限宽居中 ── */
 @container (min-width: 720px) {
   .db-drama-body { width: 100%; max-width: 720px; margin: 0 auto; }
+  /* 标题跟着 body 一起限宽居中，才能和属性行共用同一条左边线
+     （width: 100% 先撑满再被 max-width 截住，auto 外边距居中的是整个盒子而不是内容） */
+  .db-drama-subhead { width: 100%; max-width: 720px; margin: 0 auto; }
   .db-drama-cover { width: 74px; height: 111px; }
   .db-drama-title { font-size: 15px; }
   .db-drama-card { padding: 14px 16px; }
+  .db-drama-subhead-title { font-size: 22px; }
 }
 
 /* ── 窄容器（手机 / 极窄侧栏）── */
@@ -8329,4 +8813,6 @@ body .db-journal-root .db-filter-q:focus {
 .db-drama-vis-mark svg { width: 12px; height: 12px; }
 @media (hover: none) {
   .db-drama-vis-row { min-height: 52px; }
+  .db-drama-cover-del { width: 28px; height: 28px; }
+  .db-drama-cover-del svg { width: 14px; height: 14px; }
 }

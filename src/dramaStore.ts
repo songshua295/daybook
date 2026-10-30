@@ -47,7 +47,7 @@ export const DRAMA_FIELDS: { key: DramaFieldKey; label: string; hint: string }[]
   { key: "originalName", label: "原名 / 别名", hint: "如 名探偵コナン" },
   { key: "category", label: "影视类型", hint: "电视剧 / 动漫…" },
   { key: "tags", label: "标签", hint: "条目上的 #标签" },
-  { key: "episodes", label: "集数计数", hint: "已看 / 总集数" },
+  { key: "episodes", label: "集数", hint: "已看 / 总集数" },
   { key: "progress", label: "进度条", hint: "百分比与进度条" },
   { key: "dates", label: "时间行", hint: "添加于 / 看完于" },
   { key: "next", label: "下一集按钮", hint: "跳转播放链接" },
@@ -68,7 +68,8 @@ export interface DramaShow {
   originalName: string;      // 原名 / 别名（如 名探偵コナン）
   category: string;          // 影视类型（电视剧 / 动漫 / 电影…）
   tags: string[];            // 标签
-  cover: string;             // 封面引用（![[ ]]、md 图片语法、vault 路径或普通 URL）
+  cover: string;             // 封面引用（旧字段，恒等于 covers[0]，保留兼容旧数据/旧版本）
+  covers?: string[];         // 封面组：文件类型，可放多张（![[ ]]、md 语法、vault 路径或 URL）
   status: DramaStatus;       // 状态
   totalEpisodes: number;     // 总计数（总集数，0 = 未知）
   episodes: number;          // 计数（已看集数）
@@ -93,6 +94,7 @@ export function newDramaShow(): DramaShow {
     category: "",
     tags: [],
     cover: "",
+    covers: [],
     status: "following",
     totalEpisodes: 0,
     episodes: 0,
@@ -102,6 +104,12 @@ export function newDramaShow(): DramaShow {
     createdAt: now,
     updatedAt: now,
   };
+}
+
+/** 封面组：covers 优先，旧数据只有 cover 时回落成单元素数组 */
+export function coverList(s: Pick<DramaShow, "cover" | "covers">): string[] {
+  const arr = Array.isArray(s.covers) ? s.covers : (s.cover ? [s.cover] : []);
+  return arr.filter((c): c is string => typeof c === "string" && !!c.trim());
 }
 
 /** 读取任意来源的条目并补齐字段（旧文件 / 手改 JSON 都可能缺键） */
@@ -117,13 +125,17 @@ function normalizeShow(raw: Partial<DramaShow> | null): DramaShow | null {
     const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
     return isFinite(n) && n > 0 ? Math.round(n) : 0;
   };
+  const covers = Array.isArray(raw.covers)
+    ? raw.covers.map(c => String(c ?? "").trim()).filter(Boolean)
+    : (String(raw.cover ?? "").trim() ? [String(raw.cover).trim()] : []);
   return {
     id: String(raw.id ?? makeDramaId()),
     title,
     originalName: String(raw.originalName ?? ""),
     category: String(raw.category ?? ""),
     tags: Array.isArray(raw.tags) ? raw.tags.map(t => String(t).trim()).filter(Boolean) : [],
-    cover: String(raw.cover ?? ""),
+    cover: covers[0] ?? "",
+    covers,
     status,
     totalEpisodes: asNum(raw.totalEpisodes),
     episodes: asNum(raw.episodes),

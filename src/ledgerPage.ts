@@ -2,7 +2,8 @@
  * ledgerPage.ts — 记账（ledger）章节的六页 UI
  *
  * 页头不放页名/圆点：页名经 onPageTitle 并入顶栏章节标题（「记账 · 首页」），切页走顶栏「切换页面」菜单。
- * 记一笔/编辑 = 视图内底部浮层 sheet（不新开 tab），安卓返回键经 popstate 哨兵逐层剥离。
+ * 记一笔 = 视图内底部浮层 sheet（不新开 tab）；编辑单条记录 = 页内整页二级页（移动端不再被浮层压掉可视面积）。
+ * 安卓返回键经 popstate 哨兵逐层剥离。
  * 金额口径说明见 ledgerStore 头注释；页内「设置」同步展示给用户。
  */
 import { App, Notice, Platform, moment, setIcon } from "obsidian";
@@ -11,12 +12,15 @@ import { ConfirmModal } from "./TodayPanel";
 import { LedgerDataPage } from "./ledgerDataPage";
 import { lunarLabel } from "./lunar";
 import { accountIconKey, allIconChoices, guessAccountIcon, iconLabel, renderAccountIcon } from "./accountIcons";
+import { guessCategoryIcon, renderCategoryIcon } from "./categoryIcons";
+import { activatable, CategoryEditModal, CategoryManager, PromptModal } from "./ledgerCategoryUI";
+import { NotionMultiSelect, NotionSelect } from "./notionSelect";
 import {
   EXPENSE_COLORS, INCOME_COLORS, Box, Slice,
   compactMoney, donutArcs, niceCeil, pctText, seriesPoints, smoothAreaPath, smoothPath, toSlices,
 } from "./ledgerCharts";
 import {
-  LedgerStore, LedgerRecord, LedgerConfig, LedgerKind,
+  LedgerStore, LedgerRecord, LedgerConfig, LedgerKind, LedgerCategory,
   actualAmount, baseAmount, fmtMoney, round2, summarize, categoryStats,
   accountBalances, reimbTotal, makeRecordId,
 } from "./ledgerStore";
@@ -101,6 +105,18 @@ export class LedgerPage {
   private overlay: HTMLElement | null = null;
   private sheetEl: HTMLElement | null = null;
   private sheetAdvOpen = false;
+  /** 记一笔草稿（浮层内切到分类管理再回来时不丢） */
+  private sheetDraft: Draft | null = null;
+  /** 单条记录编辑页（null = 不在编辑）：整页二级页不弹 sheet，移动端可视面积不再被浮层压掉 */
+  private editRec: Draft | null = null;
+  private editSentinelArmed = false;
+  /** 编辑页的表单容器（分类管理就地替换它） */
+  private editFormEl: HTMLElement | null = null;
+  /** 浮层当前显示的是分类管理页 */
+  private mgrOpen = false;
+  private mgrSentinelArmed = false;
+  /** 分类管理页签记忆（设置页与浮层共用） */
+  private catMgrKind: "expense" | "income" = "expense";
   /** 当前设置二级页（null = 设置菜单页本身）；sentinel 支持安卓返回键退回菜单 */
   private settingsSub: SettingsSub | null = null;
   private subSentinelArmed = false;
@@ -127,6 +143,23 @@ export class LedgerPage {
   ) {
     this.store = new LedgerStore(app, plugin.settings);
     this.onPop = () => {
+      /* 分类管理压在记一笔 sheet / 编辑页之上：返回键先退回表单（下层哨兵仍压着） */
+      if ((this.overlay || this.editRec) && this.mgrSentinelArmed) {
+        this.mgrSentinelArmed = false;
+        this.mgrOpen = false;
+        if (this.editRec) { this.render(); return; }
+        if (this.sheetEl && this.sheetDraft) this.buildSheet(this.sheetEl, this.sheetDraft, false);
+        this.render();
+        return;
+      }
+      /* 编辑单条记录的整页压在列表之上：返回键先退回列表（改动不落库，与 sheet 的关闭一致） */
+      if (this.editRec) {
+        this.editSentinelArmed = false;
+        this.editRec = null;
+        this.editFormEl = null;
+        this.render();
+        return;
+      }
       if (this.overlay && this.sentinelArmed) {
         this.sentinelArmed = false;
         this.closeOverlay(false);
@@ -175,6 +208,8 @@ export class LedgerPage {
     window.removeEventListener("popstate", this.onPop);
     if (this.overlay) { const armed = this.sentinelArmed; this.sentinelArmed = false; this.overlay.remove(); this.overlay = null; if (armed && Platform.isMobileApp) window.history.back(); }
     let back = 0;
+    if (this.editSentinelArmed) { back++; this.editSentinelArmed = false; this.editRec = null; }
+    if (this.mgrSentinelArmed) { back++; this.mgrSentinelArmed = false; this.mgrOpen = false; }
     if (this.drillSentinelArmed) { back++; this.drillSentinelArmed = false; this.reportDrill = null; }
     if (this.iconSentinelArmed) { back++; this.iconSentinelArmed = false; this.iconPickFor = null; }
     if (this.subSentinelArmed) { back++; this.subSentinelArmed = false; this.settingsSub = null; }
@@ -182,6 +217,7 @@ export class LedgerPage {
     this.dataPage?.destroy();
     this.dataPage = null;
     this.sheetEl = null;
+    this.editFormEl = null;
     this.detachVpListener();
   }
 
@@ -192,8 +228,19 @@ export class LedgerPage {
 
   setPage(p: PageKind): void {
     if (this.page === p) return;
-    /* 从设置二级页切走时回收哨兵并回到菜单层，避免残留 history 记录 */
+    /* 从二级页切走时回收哨兵，避免残留 history 记录（编辑页打开时顶栏仍可直达） */
     let back = 0;
+    if (this.mgrOpen) {
+      if (this.mgrSentinelArmed) back++;
+      this.mgrOpen = false;
+      this.mgrSentinelArmed = false;
+    }
+    if (this.editRec) {
+      if (this.editSentinelArmed) back++;
+      this.editSentinelArmed = false;
+      this.editRec = null;
+      this.editFormEl = null;
+    }
     if (this.reportDrill) {
       if (this.drillSentinelArmed) back++;
       this.drillSentinelArmed = false;
@@ -276,6 +323,7 @@ export class LedgerPage {
     host.empty();
     host.addClass("db-led-root");
     this.onPageTitle?.(PAGE_TITLES[this.page]);
+    if (this.editRec) { this.renderRecordEditor(host); return; }
     if (this.settingsSub) { this.renderSettingsSub(host); return; }
     if (this.reportDrill) { this.renderReportDrill(host); return; }
 
@@ -317,8 +365,9 @@ export class LedgerPage {
     const isTr = r.kind === "transfer";
     const kls = this.kindClass(r.kind);
     const cat = this.catOf(r.categoryId);
-    const initial = isTr ? "转" : (cat?.name ?? "未")[0];
-    row.createDiv({ cls: `db-led-row-icon ${kls}`, text: initial });
+    const rowIcon = row.createDiv({ cls: `db-led-row-icon ${kls}` });
+    if (!isTr && cat) renderCategoryIcon(rowIcon, cat.icon || guessCategoryIcon(cat.name), cat.name);
+    else rowIcon.setText(isTr ? "转" : (cat?.name ?? "未")[0]);
     const mid = row.createDiv({ cls: "db-led-row-mid" });
     mid.createDiv({ cls: "db-led-row-title", text: isTr ? "转账" : this.catLabel(r) });
     const subBits: string[] = [];
@@ -363,7 +412,7 @@ export class LedgerPage {
     part("支", daySum.expense, "is-out");
     if (trSum > 0) part("转", trSum, "is-tr");
     const card = wrap.createDiv({ cls: "db-led-card db-led-day-card" });
-    dayRecs.forEach(r => this.recordRow(card, r, () => this.openRecordSheet(this.draftFrom(r))));
+    dayRecs.forEach(r => this.recordRow(card, r, () => this.openRecordEditor(this.draftFrom(r))));
   }
 
   /** 按日期分组（新→旧）渲染一组记录 */
@@ -1212,54 +1261,18 @@ export class LedgerPage {
     });
   }
 
-  /** 分类管理内容：折叠区内按 支出 / 收入 两组，类别本身用原生手风琴条目 */
+  /**
+   * 分类管理（P2 风格）：支出/收入页签 + 新增分类 + 可展开/拖拽排序的卡片。
+   * 与「记一笔」右上角「编辑」共用同一个 CategoryManager 组件。
+   */
   private renderCategorySection(parent: HTMLElement, refresh: () => void): void {
-    const cfg = this.cfg;
-    (["expense", "income"] as LedgerKind[]).forEach(kind => {
-      const gc = parent.createDiv({ cls: "db-led-group-inner" });
-      gc.createDiv({ cls: "db-led-group-hint", text: kind === "expense" ? "支出类别" : "收入类别" });
-      const cats = cfg.categories.filter(c => c.kind === kind);
-      cats.forEach(cat => {
-        const item = gc.createDiv({ cls: "db-set-item db-led-cat-item" });
-        const headEl = item.createDiv({ cls: "db-set-item-head", attr: { role: "button", tabindex: "0", "aria-expanded": "false" } });
-        const name = headEl.createEl("input", { cls: "db-led-input", attr: { type: "text", "aria-label": "类别名" } });
-        name.value = cat.name;
-        name.addEventListener("change", async () => { const v = name.value.trim(); if (v) { cat.name = v; await this.saveCfg(); } });
-        headEl.createSpan({ cls: "db-led-sub-count", text: cat.subs.length ? `${cat.subs.length} 个二级` : "无二级" });
-        const chev = headEl.createDiv({ cls: "db-set-item-chev" });
-        setIcon(chev, "chevron-right");
-        this.delBtn(headEl, async () => {
-          new ConfirmModal(this.app, "删除类别", `确定删除「${cat.name}」及其二级分类？已有记录不受影响，将显示为“未分类”。`, "删除", () => {
-            void (async () => {
-              const idx = cfg.categories.indexOf(cat);
-              if (idx >= 0) cfg.categories.splice(idx, 1);
-              await this.saveCfg(); refresh();
-            })();
-          }).open();
-        });
-        const inner = item.createDiv({ cls: "db-set-item-body" });
-        cat.subs.forEach((s, si) => {
-          const srow = inner.createDiv({ cls: "db-led-subrow" });
-          const sname = srow.createEl("input", { cls: "db-led-input", attr: { type: "text", "aria-label": "二级分类名" } });
-          sname.value = s.name;
-          sname.addEventListener("change", async () => { const v = sname.value.trim(); if (v) { s.name = v; await this.saveCfg(); } });
-          this.delBtn(srow, async () => { cat.subs.splice(si, 1); await this.saveCfg(); refresh(); });
-        });
-        const addSub = inner.createEl("button", { cls: "db-led-add", attr: { type: "button" }, text: "+ 添加二级分类" });
-        addSub.addEventListener("click", async () => { cat.subs.push({ id: uid(), name: "新分类" }); await this.saveCfg(); refresh(); });
-        const toggle = () => {
-          const open = !item.hasClass("is-open");
-          item.toggleClass("is-open", open);
-          chev.toggleClass("is-open", open);
-          headEl.setAttribute("aria-expanded", String(open));
-        };
-        headEl.addEventListener("click", e => { if ((e.target as HTMLElement).closest("input, button, select")) return; toggle(); });
-      });
-      this.addLink(gc, kind === "expense" ? "添加支出类别" : "添加收入类别", async () => {
-        cfg.categories.push({ id: uid(), name: "新类别", kind, subs: [] });
-        await this.saveCfg(); refresh();
-      });
-    });
+    void refresh;   // 管理器原地重绘自身，页面其它部分不依赖此处
+    new CategoryManager(this.app, parent, {
+      store: this.store,
+      save: () => this.saveCfg(),
+      startKind: this.catMgrKind,
+      onKindChange: k => { this.catMgrKind = k; },
+    }).render();
   }
 
   /** 账本管理内容（折叠区内，直接排行） */
@@ -1296,10 +1309,13 @@ export class LedgerPage {
         await this.saveCfg();
         if (!a.icon) renderAccountIcon(iconBtn, accountIconKey(a), a.name);   // 自动匹配时跟着改名换图标
       });
-      const cur = row.createEl("select", { cls: "db-led-select", attr: { "aria-label": "账户币种" } });
-      cfg.currencies.forEach(c => cur.createEl("option", { value: c.code, text: c.code }));
-      cur.value = a.currency;
-      cur.addEventListener("change", async () => { a.currency = cur.value; await this.saveCfg(); });
+      new NotionSelect(row, {
+        options: () => cfg.currencies.map(c => ({ value: c.code, label: `${c.code} · ${c.name}` })),
+        value: a.currency,
+        searchPlaceholder: "搜索币种…",
+        ariaLabel: "账户币种",
+        onSelect: v => void (async () => { a.currency = v; await this.saveCfg(); })(),
+      });
       const open = row.createEl("input", { cls: "db-led-input db-led-input-num", attr: { type: "text", inputMode: "decimal", placeholder: "期初", "aria-label": "期初余额" } });
       open.value = String(a.opening || "");
       open.addEventListener("change", async () => { const v = parseFloat(open.value); a.opening = isFinite(v) ? round2(v) : 0; await this.saveCfg(); });
@@ -1364,7 +1380,7 @@ export class LedgerPage {
     b.addEventListener("click", onClick);
   }
 
-  /* ────────────────────────── 记一笔 / 编辑 sheet ────────────────────────── */
+  /* ────────────────────────── 记一笔 sheet / 编辑记录页 ────────────────────────── */
 
   private blankDraft(kind: LedgerKind): Draft {
     const firstLedger = this.cfg.ledgers[0]?.id ?? "";
@@ -1423,8 +1439,10 @@ export class LedgerPage {
     if (reclaim && armed && Platform.isMobileApp) window.history.back();
   }
 
-  /** 打开记一笔/编辑 sheet：只创建一次浮层，之后靠 buildSheet 原地重绘，避免反复 push/back history 产生竞态 */
+  /** 打开「记一笔」sheet（新建专用；编辑单条记录走 openRecordEditor 整页）：只创建一次浮层，之后靠 buildSheet 原地重绘，避免反复 push/back history 产生竞态 */
   private openRecordSheet(draft: Draft): void {
+    this.sheetDraft = draft;
+    this.mgrOpen = false;
     const overlay = this.openOverlay();
     this.sheetEl = overlay.createDiv({ cls: "db-led-sheet" });
     this.buildSheet(this.sheetEl, draft, true);
@@ -1433,29 +1451,139 @@ export class LedgerPage {
   /** 关闭 sheet 浮层（回收返回键哨兵）并清空引用 */
   private closeSheet(): void {
     this.sheetEl = null;
+    this.sheetDraft = null;
+    this.mgrOpen = false;
+    const mgrArmed = this.mgrSentinelArmed;
+    this.mgrSentinelArmed = false;
     this.closeOverlay();
+    if (mgrArmed) this.reclaimHistory(1);
+  }
+
+  /* ────────────────────────── 编辑单条记录（整页二级页） ────────────────────────── */
+
+  /**
+   * 点列表里的一条记录：进整页二级页编辑，不再弹 sheet——浮层悬在视口底部，
+   * 移动端顶部空一截遮罩、可视面积被压掉一截；整页铺开后表单从页头排到页尾。
+   * 表单本体与「记一笔」共用 buildSheet（is-embed 只去掉浮层专属的限高 / 圆角 / 动画）。
+   */
+  private openRecordEditor(draft: Draft): void {
+    this.editRec = draft;
+    this.mgrOpen = false;
+    /* 高级区沿用「记一笔」的规则：记录里高级字段有值就展开，空记录收着 */
+    this.sheetAdvOpen = !!(draft.refund || draft.discount || draft.reimbAmount || draft.rate || draft.address || draft.other || draft.files);
+    if (Platform.isMobileApp) {
+      this.editSentinelArmed = true;
+      window.history.pushState({ daybookBack: "ledger-record-edit" }, "");
+    }
+    this.render();
+    this.host.scrollIntoView({ block: "start" });
+  }
+
+  /** 返回列表；reclaim=false 用于 popstate 路径（哨兵已被系统消费）。改动不落库，与 sheet 的关闭一致 */
+  private closeRecordEditor(reclaim = true): void {
+    let back = 0;
+    if (this.mgrOpen && this.mgrSentinelArmed) back++;   // 分类管理还压在编辑页上
+    if (this.editSentinelArmed) back++;
+    this.mgrOpen = false;
+    this.mgrSentinelArmed = false;
+    this.editSentinelArmed = false;
+    this.editRec = null;
+    this.editFormEl = null;
+    this.render();
+    if (reclaim) this.reclaimHistory(back);
+  }
+
+  /** 编辑页：返回 + 标题 + 表单卡（buildSheet 原样复用，表单自带的保存 / 删除条在卡内吸底） */
+  private renderRecordEditor(host: HTMLElement): void {
+    const draft = this.editRec;
+    if (!draft) return;
+    const head = host.createDiv({ cls: "db-led-subhead" });
+    const back = head.createEl("button", { cls: "db-led-back", attr: { type: "button", "aria-label": "返回列表" } });
+    setIcon(back.createSpan({ cls: "db-led-back-icon" }), "chevron-left");
+    back.createSpan({ text: "返回" });
+    back.addEventListener("click", () => this.closeRecordEditor());
+    head.createSpan({ cls: "db-led-subhead-title", text: "编辑记录" });
+
+    const body = host.createDiv({ cls: "db-led-body" });
+    const form = body.createDiv({ cls: "db-led-sheet is-embed" });
+    this.editFormEl = form;
+    this.buildSheet(form, draft, false);
+  }
+
+  /** 保存 / 删除成功后的收尾：整页编辑页自己会重绘，sheet 则关浮层再刷列表 */
+  private dismissRecordUi(reclaim = true): void {
+    if (this.editRec) { this.closeRecordEditor(reclaim); return; }
+    this.closeSheet();
+    this.render();
+  }
+
+  /**
+   * 表单右上角「编辑」：就地切到分类管理页（P2）——记一笔 sheet 与整页编辑页共用。
+   * 草稿留在原处（sheetDraft / editRec），返回时原地重建表单；返回键为此另压一枚哨兵。
+   */
+  private openCategoryMgr(): void {
+    const draft = this.editRec ?? this.sheetDraft;
+    const holder = this.editRec ? this.editFormEl : this.sheetEl;
+    if (!draft || !holder) return;
+    this.mgrOpen = true;
+    if (Platform.isMobileApp) {
+      this.mgrSentinelArmed = true;
+      window.history.pushState({ daybookBack: "ledger-catmgr" }, "");
+    }
+    holder.empty();
+    holder.addClass("is-mgr");
+    new CategoryManager(this.app, holder, {
+      store: this.store,
+      save: () => this.saveCfg(),
+      onChange: () => { /* 管理器自己会原地重绘；回到表单时整层重建 */ },
+      onBack: () => this.closeCategoryMgr(),
+      startKind: draft.kind === "income" ? "income" : "expense",
+      startOpenId: draft.categoryId || null,
+    }).render();
+  }
+
+  /**
+   * 从分类管理退回表单。手机端有哨兵时交给 history.back()——popstate 会进
+   * onPop 的 mgr 分支完成重建；桌面端没有哨兵，直接原地重建。
+   * 不能用 history.go(-1) 静默丢弃哨兵：随后到达的 popstate 会被表单层
+   * 自己的哨兵分支误消费，把整个 sheet / 编辑页关掉。
+   */
+  private closeCategoryMgr(): void {
+    if (Platform.isMobileApp && this.mgrSentinelArmed) { window.history.back(); return; }
+    this.mgrSentinelArmed = false;
+    this.mgrOpen = false;
+    if (this.editRec) { this.render(); return; }
+    const sheet = this.sheetEl;
+    if (!sheet || !this.sheetDraft) { this.closeOverlay(); return; }
+    this.buildSheet(sheet, this.sheetDraft, false);
+    this.render();
   }
 
   /** 原地重绘 sheet 内容。chip 点击只改 draft 后调用本方法，不触碰 overlay / history。 */
   private buildSheet(sheet: HTMLElement, draft: Draft, isInitial: boolean): void {
     const cfg = this.cfg;
     const isNew = !draft.id;
+    // 分类可能刚在管理页被删/二级被删：清掉草稿里的失效引用
+    const draftCat = draft.categoryId ? cfg.categories.find(c => c.id === draft.categoryId) : undefined;
+    if (draft.categoryId && !draftCat) { draft.categoryId = ""; draft.subId = ""; }
+    else if (draftCat && draft.subId && !draftCat.subs.find(s => s.id === draft.subId)) draft.subId = "";
     sheet.empty();
+    sheet.removeClass("is-mgr");
 
+    /* 头部：关闭 + 收支切换（P1 顶栏样式：文字 + 下划线）+ 编辑分类。
+       整页编辑页没有关闭叉——页头已有「返回」，这里只剩页签和编辑分类 */
     const head = sheet.createDiv({ cls: "db-led-sheet-head" });
-    head.createSpan({ cls: "db-led-sheet-title", text: isNew ? "记一笔" : "编辑记录" });
-    const close = head.createDiv({ cls: "db-led-sheet-close", attr: { role: "button", "aria-label": "关闭" } });
-    setIcon(close, "x");
-    close.addEventListener("click", () => this.closeSheet());
-
-    const body = sheet.createDiv({ cls: "db-led-sheet-body" });
-
-    /* 收支切换（支出 / 收入 / 转账） */
-    const isTr = draft.kind === "transfer";
-    const seg = body.createDiv({ cls: "db-led-seg" });
-    const mk = (label: string, kind: LedgerKind) => {
-      const b = seg.createDiv({ cls: `db-led-seg-btn ${this.kindClass(kind)}${draft.kind === kind ? " is-active" : ""}`, text: label });
-      b.addEventListener("click", () => {
+    if (!this.editRec) {
+      const close = head.createDiv({ cls: "db-led-sheet-close", attr: { role: "button", tabindex: "0", "aria-label": "关闭" } });
+      setIcon(close, "x");
+      close.addEventListener("click", () => this.closeSheet());
+      close.addEventListener("keydown", e => {
+        if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); this.closeSheet(); }
+      });
+    }
+    const tabs = head.createDiv({ cls: "db-led-ktabs" });
+    const mkTab = (label: string, kind: LedgerKind) => {
+      const pick = () => {
         if (draft.kind === kind) return;
         draft.kind = kind;
         draft.categoryId = "";
@@ -1464,11 +1592,21 @@ export class LedgerPage {
           draft.toAccountId = cfg.accounts.find(a => !a.archived && a.id !== draft.accountId)?.id ?? "";
         }
         this.buildSheet(sheet, draft, false);
-      });
+      };
+      activatable(tabs.createDiv({
+        cls: `db-led-ktab ${this.kindClass(kind)}${draft.kind === kind ? " is-active" : ""}`,
+        text: label,
+      }), label).addEventListener("click", pick);
     };
-    mk("支出", "expense");
-    mk("收入", "income");
-    mk("转账", "transfer");
+    mkTab("支出", "expense");
+    mkTab("收入", "income");
+    mkTab("转账", "transfer");
+    const editBtn = head.createEl("button", { cls: "db-led-sheet-edit", attr: { type: "button", "aria-label": "编辑分类" } });
+    editBtn.setText("编辑");
+    editBtn.addEventListener("click", () => this.openCategoryMgr());
+
+    const body = sheet.createDiv({ cls: "db-led-sheet-body" });
+    const isTr = draft.kind === "transfer";
 
     /* 金额 + 日期 */
     const amtRow = body.createDiv({ cls: "db-led-amount-row" });
@@ -1490,63 +1628,146 @@ export class LedgerPage {
       });
     }
 
-    /* 类别 + 二级（转账无类别，只显示金额流转方向） */
+    /* 类别宫格（P1：圆图标 + 文字，有二级的带「···」角标；转账无类别） */
     if (!isTr) {
       body.createDiv({ cls: "db-led-field-label", text: "类别" });
       const cats = cfg.categories.filter(c => c.kind === draft.kind);
-      const catGrid = body.createDiv({ cls: "db-led-cats" });
+      const COLS = 5;                     // 与 .db-led-catgrid 的列数保持一致，子类面板按行插入
+      const grid = body.createDiv({ cls: "db-led-catgrid" });
       cats.forEach(c => {
-        const chip = catGrid.createDiv({ cls: `db-led-cat${draft.categoryId === c.id ? " is-active" : ""}`, text: c.name });
-        chip.addEventListener("click", () => {
-          draft.categoryId = draft.categoryId === c.id ? "" : c.id;
-          if (draft.subId && c.subs.find(s => s.id === draft.subId) === undefined) draft.subId = "";
+        const cell = activatable(grid.createDiv({ cls: `db-led-catcell${draft.categoryId === c.id ? " is-active" : ""}` }), c.name);
+        const circle = cell.createDiv({ cls: "db-led-catcircle" });
+        renderCategoryIcon(circle, c.icon || guessCategoryIcon(c.name), c.name);
+        if (c.subs.length) circle.createDiv({ cls: "db-led-catdot", text: "···" });
+        cell.createDiv({ cls: "db-led-catname", text: c.name });
+        cell.addEventListener("click", () => {
+          const on = draft.categoryId !== c.id;
+          draft.categoryId = on ? c.id : "";
+          if (!on) draft.subId = "";
+          else if (draft.subId && !c.subs.find(s => s.id === draft.subId)) draft.subId = "";
           this.buildSheet(sheet, draft, false);
         });
       });
+
+      /* 末尾「新增」= 新增大类（选完图标起名后直接选中） */
+      const addCell = activatable(grid.createDiv({ cls: "db-led-catcell is-add" }), "新增分类");
+      setIcon(addCell.createDiv({ cls: "db-led-catcircle" }), "plus");
+      addCell.createDiv({ cls: "db-led-catname", text: "新增" });
+      addCell.addEventListener("click", () => {
+        new CategoryEditModal(this.app, {
+          title: "新增分类",
+          name: "",
+          icon: "",
+          kind: draft.kind === "income" ? "income" : "expense",
+          canDelete: false,
+          onSave: (name, icon) => void (async () => {
+            const created: LedgerCategory = { id: uid(), name, icon, kind: draft.kind, subs: [] };
+            cfg.categories.push(created);
+            await this.saveCfg();
+            draft.categoryId = created.id;
+            draft.subId = "";
+            this.buildSheet(sheet, draft, false);
+          })(),
+        }).open();
+      });
+
+      /* 子类面板：插到选中格所在行的行尾（固定 5 列跨整行），可选子类、可新增子类 */
       const selCat = cats.find(c => c.id === draft.categoryId);
       if (selCat && selCat.subs.length) {
-        body.createDiv({ cls: "db-led-field-label", text: "二级分类" });
-        const subGrid = body.createDiv({ cls: "db-led-cats" });
-        const mkChip = (label: string, id: string) => {
-          const chip = subGrid.createDiv({ cls: `db-led-chip${draft.subId === id ? " is-active" : ""}`, text: label });
-          chip.addEventListener("click", () => { draft.subId = draft.subId === id ? "" : id; this.buildSheet(sheet, draft, false); });
-        };
-        selCat.subs.forEach(s => mkChip(s.name, s.id));
+        const panel = grid.createDiv({ cls: "db-led-catpanel" });
+        const selIdx = cats.indexOf(selCat);
+        const rowEnd = Math.min(grid.children.length - 1, (Math.floor(selIdx / COLS) + 1) * COLS - 1);
+        grid.insertBefore(panel, grid.children[rowEnd + 1] ?? null);
+        selCat.subs.forEach(s => {
+          const cell = activatable(
+            panel.createDiv({ cls: `db-led-catcell is-sub${draft.subId === s.id ? " is-active" : ""}` }),
+            `${selCat.name} · ${s.name}`,
+          );
+          cell.createDiv({ cls: "db-led-catcircle", text: s.name.trim().slice(0, 1) || "?" });
+          cell.createDiv({ cls: "db-led-catname", text: s.name });
+          cell.addEventListener("click", () => {
+            draft.subId = draft.subId === s.id ? "" : s.id;
+            this.buildSheet(sheet, draft, false);
+          });
+        });
+        const addSub = activatable(panel.createDiv({ cls: "db-led-catcell is-add is-sub" }), "新增二级分类");
+        setIcon(addSub.createDiv({ cls: "db-led-catcircle" }), "plus");
+        addSub.createDiv({ cls: "db-led-catname", text: "新增" });
+        addSub.addEventListener("click", () => {
+          new PromptModal(this.app, {
+            title: `「${selCat.name}」添加二级分类`,
+            placeholder: "二级分类名称",
+            onConfirm: v => void (async () => {
+              const sub = { id: uid(), name: v };
+              selCat.subs.push(sub);
+              await this.saveCfg();
+              draft.categoryId = selCat.id;
+              draft.subId = sub.id;
+              this.buildSheet(sheet, draft, false);
+            })(),
+          }).open();
+        });
       }
     }
 
-    /* 账户 / 转入账户 / 账本 */
+    /* 账户 / 转入账户 / 账本（Notion 风格可搜索下拉） */
     const two = body.createDiv({ cls: "db-led-two" });
     const activeAccts = cfg.accounts.filter(a => !a.archived);
     const f1 = two.createDiv({ cls: "db-led-field" });
     f1.createDiv({ cls: "db-led-field-label", text: isTr ? "转出账户" : "账户" });
-    const acctSel = f1.createEl("select", { cls: "db-led-select", attr: { "aria-label": "账户" } });
-    activeAccts.forEach(a => acctSel.createEl("option", { value: a.id, text: a.name }));
-    acctSel.value = draft.accountId;
-    acctSel.addEventListener("change", () => { draft.accountId = acctSel.value; });
+    new NotionSelect(f1, {
+      options: () => cfg.accounts.filter(a => !a.archived).map(a => ({ value: a.id, label: a.name })),
+      value: draft.accountId,
+      placeholder: "请选择",
+      searchPlaceholder: "搜索账户…",
+      ariaLabel: isTr ? "转出账户" : "账户",
+      onSelect: v => { draft.accountId = v; },
+    });
     if (isTr) {
       const f3 = two.createDiv({ cls: "db-led-field" });
       f3.createDiv({ cls: "db-led-field-label", text: "转入账户" });
-      const toSel = f3.createEl("select", { cls: "db-led-select", attr: { "aria-label": "转入账户" } });
-      toSel.createEl("option", { value: "", text: "请选择" });
-      activeAccts.forEach(a => toSel.createEl("option", { value: a.id, text: a.name }));
-      toSel.value = draft.toAccountId;
-      toSel.addEventListener("change", () => { draft.toAccountId = toSel.value; });
+      new NotionSelect(f3, {
+        options: [{ value: "", label: "请选择" }, ...activeAccts.map(a => ({ value: a.id, label: a.name }))],
+        value: draft.toAccountId,
+        placeholder: "请选择",
+        searchPlaceholder: "搜索账户…",
+        ariaLabel: "转入账户",
+        onSelect: v => { draft.toAccountId = v; },
+      });
     }
     const f2 = two.createDiv({ cls: "db-led-field" });
     f2.createDiv({ cls: "db-led-field-label", text: "账本" });
-    const ledSel = f2.createEl("select", { cls: "db-led-select", attr: { "aria-label": "账本" } });
-    cfg.ledgers.forEach(l => ledSel.createEl("option", { value: l.id, text: l.name }));
-    ledSel.value = draft.ledgerId;
-    ledSel.addEventListener("change", () => { draft.ledgerId = ledSel.value; });
+    new NotionSelect(f2, {
+      options: () => cfg.ledgers.map(l => ({ value: l.id, label: l.name })),
+      value: draft.ledgerId,
+      placeholder: "请选择",
+      searchPlaceholder: "搜索账本…",
+      ariaLabel: "账本",
+      allowCreate: true,
+      onSelect: v => { draft.ledgerId = v; },
+      onCreate: name => {
+        const ledger = { id: uid(), name };
+        cfg.ledgers.push(ledger);
+        void this.saveCfg();
+        return { value: ledger.id, label: ledger.name };
+      },
+    });
 
     /* 备注 / 标签 */
     const note = body.createEl("textarea", { cls: "db-led-textarea", attr: { placeholder: "备注", rows: "2", "aria-label": "备注" } });
     note.value = draft.note;
     note.addEventListener("input", () => { draft.note = note.value; });
-    const tags = body.createEl("input", { cls: "db-led-input", attr: { type: "text", placeholder: "标签，逗号分隔", "aria-label": "标签" } });
-    tags.value = draft.tags;
-    tags.addEventListener("input", () => { draft.tags = tags.value; });
+    /* 标签：Notion 多选（彩色 chip，搜索历史标签或现场新建） */
+    new NotionMultiSelect(body, {
+      options: () => this.store.allTags(),
+      values: draft.tags.split(/[,，]/).map(t => t.trim()).filter(Boolean),
+      placeholder: "添加标签",
+      searchPlaceholder: "搜索标签…",
+      allowCreate: true,
+      ariaLabel: "标签",
+      onChange: vs => { draft.tags = vs.join(","); },
+      onCreate: q => q.replace(/[,，#]/g, "").trim(),
+    });
 
     /* 高级区（展开状态记在实例上，重绘后不丢） */
     if (isInitial) {
@@ -1575,11 +1796,14 @@ export class LedgerPage {
       mkField("优惠", "优惠/折扣金额", "discount", true);
       const fr = advBody.createDiv({ cls: "db-led-field" });
       fr.createDiv({ cls: "db-led-field-label", text: "报销账户（垫付归属）" });
-      const reimbSel = fr.createEl("select", { cls: "db-led-select", attr: { "aria-label": "报销账户" } });
-      reimbSel.createEl("option", { value: "", text: "不报销" });
-      cfg.accounts.filter(a => !a.archived).forEach(a => reimbSel.createEl("option", { value: a.id, text: a.name }));
-      reimbSel.value = draft.reimbAccountId;
-      reimbSel.addEventListener("change", () => { draft.reimbAccountId = reimbSel.value; });
+      new NotionSelect(fr, {
+        options: [{ value: "", label: "不报销" }, ...activeAccts.map(a => ({ value: a.id, label: a.name }))],
+        value: draft.reimbAccountId,
+        placeholder: "不报销",
+        searchPlaceholder: "搜索账户…",
+        ariaLabel: "报销账户",
+        onSelect: v => { draft.reimbAccountId = v; },
+      });
       mkField("报销金额", "可报销的金额", "reimbAmount", true);
       mkField("报销明细", "发票号 / 明细说明", "reimbDetail");
     }
@@ -1595,7 +1819,7 @@ export class LedgerPage {
       const del = foot.createEl("button", { cls: "db-led-del-big", attr: { type: "button" }, text: "删除" });
       del.addEventListener("click", () => {
         new ConfirmModal(this.app, "删除记录", "确定删除这笔记录吗？", "删除", () => {
-          void (async () => { await this.store.deleteRecord(draft.id!); this.closeSheet(); this.render(); })();
+          void (async () => { await this.store.deleteRecord(draft.id!); this.dismissRecordUi(); })();
         }).open();
       });
     }
@@ -1638,8 +1862,7 @@ export class LedgerPage {
       void (async () => {
         try {
           if (isNew) await this.store.addRecord(rec); else await this.store.updateRecord(rec);
-          this.closeSheet();
-          this.render();
+          this.dismissRecordUi();
         } catch (e) {
           new Notice(`保存失败：${e instanceof Error ? e.message : String(e)}`);
         }

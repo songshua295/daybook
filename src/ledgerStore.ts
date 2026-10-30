@@ -70,6 +70,7 @@ export interface LedgerCategory {
   name: string;
   kind: LedgerKind;
   subs: { id: string; name: string }[];
+  icon?: string;             // 图标 key（见 categoryIcons）；空 = 按分类名自动匹配
 }
 
 export interface LedgerCurrency {
@@ -366,6 +367,38 @@ export class LedgerStore {
   async saveBatches(): Promise<void> {
     await this.ensureDir();
     await this.app.vault.adapter.write(this.pathOf("imports.json"), JSON.stringify(this.batches, null, 2));
+  }
+
+  /**
+   * 把某类别的全部记录转移到另一类别（删除分类时用）。
+   * 二级分类属于原类别，转移后一并清掉；返回转移条数。
+   */
+  async retargetCategory(fromId: string, toId: string): Promise<number> {
+    const years = new Set<string>();
+    let n = 0;
+    this.records.forEach(r => {
+      if (r.categoryId !== fromId) return;
+      r.categoryId = toId;
+      if (r.subId) r.subId = undefined;
+      years.add(yearOf(r.date));
+      n++;
+    });
+    for (const y of years) await this.persistYear(y);
+    return n;
+  }
+
+  /** 清掉引用某二级分类的记录的 subId（删除二级分类时用），记录保留在一级分类下 */
+  async clearSubRecords(categoryId: string, subId: string): Promise<number> {
+    const years = new Set<string>();
+    let n = 0;
+    this.records.forEach(r => {
+      if (r.categoryId !== categoryId || r.subId !== subId) return;
+      r.subId = undefined;
+      years.add(yearOf(r.date));
+      n++;
+    });
+    for (const y of years) await this.persistYear(y);
+    return n;
   }
 
   /** 导出账单文件到 <日记目录>/ledger/export/，返回仓库内路径 */
