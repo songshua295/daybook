@@ -132,6 +132,8 @@ export function isExecuteDay(habit: Pick<HabitConfig, "executeDays">, dateStr: s
 /* ── 文件路径 ── */
 
 export function habitsFolderPath(settings: DaybookSettings): string {
+  const custom = (settings.habitsFolder ?? "").trim().replace(/\/+$/, "");
+  if (custom) return normalizePath(custom);
   const folder = settings.diaryFolder.trim().replace(/\/$/, "");
   return normalizePath(folder ? `${folder}/habits` : "habits");
 }
@@ -661,6 +663,146 @@ export function dayCount(rows: CheckinRow[], habitId: string, date: string): num
 /** 某天是否存在跳过标记 */
 export function daySkipped(rows: CheckinRow[], habitId: string, date: string): boolean {
   return rows.some(r => r.habitId === habitId && r.date === date && r.skipped);
+}
+
+/* ── 上下班班次（attendance）与打卡月历 ──
+ * 班次按打卡时间顺序两两配对：第 1、3、5…次为上班，第 2、4、6…次为下班。
+ * 下班卡允许跨天：凌晨 00:30 的打卡记录在当天的 `### 日期` 下（文件保持真实日历日期），
+ * 配对时自动归入前一天开始的未闭合班次，时长按完整日期时间相减。 */
+
+export interface AttendanceShift {
+  habitId: string;
+  inDate: string;       // 上班日期 YYYY-MM-DD
+  inTime: string;       // 上班时间 HH:mm
+  outDate?: string;     // 下班日期（跨天时为次日）
+  outTime?: string;     // 下班时间 HH:mm
+  crossDay: boolean;    // 下班卡落在次日
+  minutes?: number;     // 班次时长（下班已打才有）
+  open: boolean;        // 尚未打下班卡
+  note?: string;        // 上班行备注
+  outNote?: string;     // 下班行备注
+}
+
+/** 打卡行 → 班次列表（顺序配对；跳过行不参与） */
+export function attendanceShifts(rows: CheckinRow[], habitId: string): AttendanceShift[] {
+  const list = rows
+    .filter(r => r.habitId === habitId && !r.skipped)
+    .sort((a, b) => `${a.date} ${a.time ?? ""}`.localeCompare(`${b.date} ${b.time ?? ""}`));
+  const shifts: AttendanceShift[] = [];
+  for (const r of list) {
+    const open = shifts.length > 0 ? shifts[shifts.length - 1] : null;
+    if (open && open.open) {
+      open.outDate = r.date;
+      open.outTime = r.time ?? "00:00";
+      open.outNote = r.note;
+      open.crossDay = r.date !== open.inDate;
+      open.open = false;
+      open.minutes = Math.round((
+        moment(`${r.date} ${open.outTime}`, "YYYY-MM-DD HH:mm").valueOf() -
+        moment(`${open.inDate} ${open.inTime}`, "YYYY-MM-DD HH:mm").valueOf()
+      ) / 60000);
+    } else {
+      shifts.push({
+        habitId,
+        inDate: r.date,
+        inTime: r.time ?? "00:00",
+        crossDay: false,
+        open: true,
+        note: r.note,
+      });
+    }
+  }
+  return shifts;
+}
+
+/** 最近一个未闭合的班次（没有则 null） */
+export function lastOpenShift(rows: CheckinRow[], habitId: string): AttendanceShift | null {
+  const shifts = attendanceShifts(rows, habitId);
+  return shifts.length > 0 && shifts[shifts.length - 1].open ? shifts[shifts.length - 1] : null;
+}
+
+/** 班次时长 → "11小时30分" / "45分钟" */
+export function fmtShiftDuration(minutes: number): string {
+  const m = Math.max(0, Math.round(minutes));
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  if (h === 0) return `${mm}分钟`;
+  return mm === 0 ? `${h}小时` : `${h}小时${mm}分`;
+}
+
+/** 月历单格 */
+export interface HabitMonthCell {
+  date: string;
+  day: number;
+  inMonth: boolean;
+  skipped: boolean;
+  rest: boolean;        // 非执行日
+  future: boolean;
+  today: boolean;
+  times: { time?: string; note?: string; skipped: boolean }[];  // 当日全部打卡（按时间升序）
+  count: number;        // 有效打卡次数
+  met: boolean;         // 达标
+  shifts: AttendanceShift[];      // attendance：以该日为上班日的班次
+  crossDayOuts: string[];         // attendance：落在该日的「昨班下班卡」时间（HH:mm）
+  openFromBefore?: { inDate: string; inTime: string }; // attendance：更早开始、进行中的班次（today 提示用）
+}
+
+/**
+ * 月历数据：覆盖 YYYY-MM 的整周网格（周一开头，含前后月补位）。
+ * attendance 习惯附带班次信息；普通习惯只有 times/count。
+ */
+export function monthCalendarCells(
+  rows: CheckinRow[],
+  habit: HabitConfig,
+  month: string,          // YYYY-MM
+  todayStr: string
+): HabitMonthCell[] {
+  const target = Math.max(1, habit.timesPerDay || 1);
+  const byDate = new Map<string, CheckinRow[]>();
+  for (const r of rows) {
+    if (r.habitId !== habit.id) continue;
+    if (!byDate.has(r.date)) byDate.set(r.date, []);
+    byDate.get(r.date)!.push(r);
+  }
+  const shifts = habit.attendance ? attendanceShifts(rows, habit.id) : [];
+
+  const first = moment(`${month}-01`, "YYYY-MM-DD");
+  const lead = (first.isoWeekday() + 6) % 7;   // 周一=0 … 周日=6
+  const gridStart = first.clone().subtract(lead, "days");
+  const total = Math.ceil((lead + first.daysInMonth()) / 7) * 7;
+
+  const cells: HabitMonthCell[] = [];
+  for (let i = 0; i < total; i++) {
+    const d = gridStart.clone().add(i, "days");
+    const date = d.format("YYYY-MM-DD");
+    const dayRows = (byDate.get(date) ?? [])
+      .slice()
+      .sort((a, b) => (a.time ?? "").localeCompare(b.time ?? ""));
+    const skipped = dayRows.some(r => r.skipped);
+    const count = dayRows.filter(r => !r.skipped).length;
+    const rest = !isExecuteDay(habit, date);
+    const dayShifts = shifts.filter(s => s.inDate === date);
+    const crossDayOuts = shifts
+      .filter(s => s.crossDay && s.outDate === date && s.outTime)
+      .map(s => s.outTime!);
+    const openBefore = shifts.find(s => s.open && s.inDate < date);
+    cells.push({
+      date,
+      day: d.date(),
+      inMonth: date.startsWith(month),
+      skipped,
+      rest,
+      future: date > todayStr,
+      today: date === todayStr,
+      times: dayRows.map(r => ({ time: r.time, note: r.note, skipped: r.skipped })),
+      count,
+      met: !rest && count >= target,
+      shifts: dayShifts,
+      crossDayOuts,
+      openFromBefore: openBefore ? { inDate: openBefore.inDate, inTime: openBefore.inTime } : undefined,
+    });
+  }
+  return cells;
 }
 
 /** 查询某天状态：checked / skipped / rest / none（有任意一次打卡即 checked） */

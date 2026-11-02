@@ -38,14 +38,15 @@ import {
   removeSkip,
   setCheckinNote,
   computeHabitStats,
-  weeksHeatData,
+  monthCalendarCells,
+  lastOpenShift,
+  fmtShiftDuration,
   dayCheckins,
   daySkipped,
   isExecuteDay,
   trendBuckets,
   shiftAnchor,
   type CheckinRow,
-  type HeatCell,
   type HabitConfig,
   type HabitData,
   type TrendBucket,
@@ -403,6 +404,7 @@ export class CheckinTimeModal extends Modal {
     app: any,
     private habit: HabitConfig,
     private date: string,
+    private rows: CheckinRow[] | null,
     private onPick: (time: string) => Promise<void>
   ) {
     super(app);
@@ -414,6 +416,20 @@ export class CheckinTimeModal extends Modal {
     contentEl.addClass("db-checkin-time-modal");
     contentEl.createEl("h3", { text: `${this.habit.icon} ${this.habit.name}` });
     contentEl.createDiv({ cls: "db-checkin-time-date", text: this.date });
+
+    // 上下班打卡：先说明这次打卡会记成什么（上班 / 下班 / 昨班跨天下班）
+    if (this.habit.attendance) {
+      const open = lastOpenShift(this.rows ?? [], this.habit.id);
+      let hint: string;
+      if (open && open.inDate === this.date) {
+        hint = `本次打卡将记为下班卡（上班 ${open.inTime}）`;
+      } else if (open) {
+        hint = `${open.inDate} ${open.inTime} 的班次还在进行中 · 本次打卡将记为它的下班卡（跨天，记录在今天）`;
+      } else {
+        hint = "本次打卡将记为上班卡";
+      }
+      contentEl.createDiv({ cls: "db-checkin-time-hint", text: hint });
+    }
 
     const timeInput = contentEl.createEl("input", {
       cls: "db-checkin-time-input",
@@ -490,14 +506,18 @@ export class HabitDayDetailModal extends Modal {
       addBtn = addRow;
       const doAdd = async () => {
         if (addRow.classList.contains("busy")) return;
-        // 上下班型：补打也要选时刻，不直接落当前时间
+        // 上下班型：补打也要选时刻，不直接落当前时间（带上班/下班提示）
         if (this.habit.attendance) {
-          new CheckinTimeModal(this.app, this.habit, this.date, async (t) => {
-            await checkinHabit(this.app, this.habit, this.date, t);
-            new Notice(`✅ 已补打卡 ${this.date} ${t}`);
-            this.onChanged?.();
-            render();
-          }).open();
+          void (async () => {
+            let rows: CheckinRow[] = [];
+            try { rows = (await readHabitFile(this.app, this.habit)).rows; } catch { /* 读不到按无班次提示 */ }
+            new CheckinTimeModal(this.app, this.habit, this.date, rows, async (t) => {
+              await checkinHabit(this.app, this.habit, this.date, t);
+              new Notice(`✅ 已补打卡 ${this.date} ${t}`);
+              this.onChanged?.();
+              render();
+            }).open();
+          })();
           return;
         }
         addRow.classList.add("busy");
@@ -573,13 +593,13 @@ export class HabitDayDetailModal extends Modal {
 /**
  * 习惯详情弹窗（三卡）：
  * 1) 概览卡：连续/最佳/累计统计
- * 2) 活跃度热力图卡：GitHub 贡献图风格，年份 + 月份切换，蓝色高亮，
- *    悬浮格子看打卡时间明细，点击格子 → 当日明细（逐条撤销）
+ * 2) 打卡月历卡：整月日历网格，每天格子展示打卡时间点；
+ *    上下班习惯显示班次（上班–下班 + 间隔时长，支持跨天班次），点格子 → 当日明细（逐条撤销）
  * 3) 历史记录趋势卡：周/月/年维度切换 + 日期范围翻页 + 蓝色柱状图
  */
 export class HabitDetailModal extends Modal {
   private data: HabitData | null = null;
-  private heatEnd = moment().format("YYYY-MM-DD");   // 热力图窗口右端（默认今天）
+  private heatMonth = moment().format("YYYY-MM");    // 月历当前月份（YYYY-MM）
   private trendDim: TrendDimension = "week";
   private trendAnchor = moment().format("YYYY-MM-DD");
   /** 趋势图视图：柱状图 / 折线图（记忆上次选择） */
@@ -647,7 +667,7 @@ export class HabitDetailModal extends Modal {
     const body = this.body;
     body.empty();
     this.renderOverview(body);
-    this.renderHeatmap(body);
+    this.renderCalendar(body);
     this.renderTrend(body);
   }
 
@@ -685,137 +705,144 @@ export class HabitDetailModal extends Modal {
     return count >= target ? "已达标" : `${count}/${target} 次`;
   }
 
-  /* ── 热力图卡 ── */
+  /* ── 打卡月历卡 ── */
 
-  private renderHeatmap(body: HTMLElement) {
+  private renderCalendar(body: HTMLElement) {
     const rows = this.data?.rows ?? [];
     const todayStr = moment().format("YYYY-MM-DD");
-    const target = Math.max(1, this.habit.timesPerDay || 1);
-    const weeks = this.visibleWeeks();
-    const cells = weeksHeatData(rows, this.habit.id, weeks, this.heatEnd, {
-      executeDays: this.habit.executeDays,
-      timesPerDay: target,
-    });
-    // 每列恰好一周（周一~周日），无空位
-    const cols: HeatCell[][] = [];
-    for (let i = 0; i < cells.length; i += 7) cols.push(cells.slice(i, i + 7));
+    const monthLabel = moment(`${this.heatMonth}-01`, "YYYY-MM-DD").format("YYYY年M月");
+    const cells = monthCalendarCells(rows, this.habit, this.heatMonth, todayStr);
+    const attendance = !!this.habit.attendance;
 
-    const card = this.makeCard(body, "活跃度热力图", "db-detail-heatmap", (head) => {
-      this.renderHeatmapNav(head, weeks, todayStr, cells[0]?.date ?? this.heatEnd);
+    const card = this.makeCard(body, "打卡月历", "db-detail-mcal", (head) => {
+      this.renderMonthNav(head, todayStr);
     });
 
-    // 网格：GitHub 风格小方格，纵轴周一~周日，横轴为最近 N 周
-    const main = card.createDiv({ cls: "db-heatmap-main" });
-    const grid = main.createDiv({ cls: "db-heatmap-grid" });
-    const scale = grid.createDiv({ cls: "db-heatmap-row db-heatmap-scale" });
-    scale.createSpan({ cls: "db-heatmap-weekday", text: "" });
-    cols.forEach(col => {
-      // 刻度：常规列显示周一的日期；包含某月 1 日的列改为显示月份
-      const firstOfMonth = col.find(c => c.date.slice(8) === "01");
-      const label = firstOfMonth
-        ? `${Number(firstOfMonth.date.slice(5, 7))}月`
-        : String(Number(col[0].date.slice(8)));
-      scale.createSpan({ cls: `db-heatmap-scale-cell${firstOfMonth ? " month" : ""}`, text: label });
-    });
-    for (let w = 0; w < 7; w++) {
-      const row = grid.createDiv({ cls: "db-heatmap-row" });
-      row.createSpan({ cls: "db-heatmap-weekday", text: WEEKDAY_CN[w] });
-      cols.forEach(col => {
-        const cell = col[w];
-        const isFuture = cell.date > todayStr;
-        const ratio = cell.count / target;
-        let level = 0;
-        if (!isFuture && cell.count > 0) {
-          level = ratio >= 1.5 ? 4 : ratio >= 1 ? 3 : ratio >= 0.5 ? 2 : 1;
+    const main = card.createDiv({ cls: "db-mcal-main" });
+
+    // 星期表头（周一 → 周日）
+    const headRow = main.createDiv({ cls: "db-mcal-grid db-mcal-head" });
+    WEEKDAY_CN.forEach(w => headRow.createDiv({ cls: "db-mcal-weekday", text: w }));
+
+    const grid = main.createDiv({ cls: "db-mcal-grid" });
+    cells.forEach(cell => {
+      const cls = ["db-mcal-cell"];
+      if (!cell.inMonth) cls.push("out");
+      if (cell.future) cls.push("future");
+      if (cell.today) cls.push("today");
+      if (cell.skipped && cell.count === 0) cls.push("skipped");
+      else if (cell.rest && cell.count === 0) cls.push("rest");
+      else if (cell.met) cls.push("met");
+      else if (cell.count > 0) cls.push("partial");
+      const el = makeActivatable(grid.createDiv({ cls: cls.join(" ") }), `${cell.date} 打卡明细`);
+      el.style.setProperty("--habit-color", this.habit.color);
+
+      // 日期数字行（今天有跨天班次进行中时加「昨班」角标）
+      const dayline = el.createDiv({ cls: "db-mcal-dayline" });
+      dayline.createSpan({ cls: "db-mcal-day", text: String(cell.day) });
+      if (attendance && cell.today && cell.openFromBefore) {
+        dayline.createSpan({ cls: "db-mcal-flag", text: "昨班" });
+      }
+
+      // 时间点 / 班次
+      const timesEl = el.createDiv({ cls: "db-mcal-times" });
+      if (attendance) {
+        for (const s of cell.shifts) {
+          const line = timesEl.createDiv({ cls: "db-mcal-shift" });
+          if (s.open) {
+            line.createSpan({ cls: "db-mcal-shift-range", text: `${s.inTime} 上班中` });
+          } else {
+            line.createSpan({
+              cls: "db-mcal-shift-range",
+              text: `${s.inTime}–${s.crossDay ? "次日" : ""}${s.outTime}`,
+            });
+            line.createSpan({ cls: "db-mcal-shift-dur", text: fmtShiftDuration(s.minutes ?? 0) });
+          }
         }
-        const cls = ["db-heatmap-cell"];
-        if (level > 0) cls.push(`lv${level}`);
-        else if (isFuture) cls.push("future");
-        if (cell.skipped && cell.count === 0) cls.push("skipped");
-        if (cell.rest && cell.count === 0 && !cell.skipped) cls.push("rest");
-        if (cell.date === todayStr) cls.push("today");
-        const el = makeActivatable(row.createDiv({ cls: cls.join(" ") }), `${cell.date} 打卡明细`);
-        // 悬浮提示：打卡时间明细（Obsidian 原生 aria-label tooltip）
-        let tip: string;
-        const dayTimes = dayCheckins(rows, this.habit.id, cell.date);
-        if (dayTimes.length > 0) {
-          tip = `${cell.date} · ` + dayTimes
-            .map(r => [r.time, r.note].filter(Boolean).join(" ") || "打卡")
-            .join(" · ");
-        } else if (cell.skipped) tip = `${cell.date} · 已跳过`;
-        else if (cell.rest) tip = `${cell.date} · 休息日`;
-        else tip = `${cell.date} · 未打卡`;
-        el.setAttribute("aria-label", tip);
-        el.addEventListener("click", () => {
-          new HabitDayDetailModal(this.app, this.habit, cell.date, () => {
-            void this.reload();
-            this.onChanged?.();
-          }).open();
-        });
-      });
-    }
+        for (const t of cell.times) {
+          if (t.skipped) continue;
+          const lastNightOut = cell.crossDayOuts.includes(t.time ?? "");
+          timesEl.createDiv({ cls: "db-mcal-time", text: lastNightOut ? `${t.time} 下班·昨班` : t.time ?? "打卡" });
+        }
+      } else {
+        const valid = cell.times.filter(t => !t.skipped);
+        valid.slice(0, 3).forEach(t => timesEl.createDiv({ cls: "db-mcal-time", text: t.time ?? "打卡" }));
+        if (valid.length > 3) timesEl.createDiv({ cls: "db-mcal-time more", text: `+${valid.length - 3}` });
+      }
 
-    // 右侧：窗口内统计 + 图例
-    const past = cells.filter(c => c.date <= todayStr);
-    const doneDays = past.filter(c => !c.rest && c.count >= target).length;
-    const totalCount = past.reduce((n, c) => n + c.count, 0);
-    const maxCount = past.reduce((n, c) => Math.max(n, c.count), 0);
-    const side = main.createDiv({ cls: "db-heatmap-side" });
+      el.addEventListener("click", () => {
+        new HabitDayDetailModal(this.app, this.habit, cell.date, () => {
+          void this.reload();
+          this.onChanged?.();
+        }).open();
+      });
+    });
+
+    // 本月统计（右栏 / 窄屏换行到底部）
+    const inMonth = cells.filter(c => c.inMonth && !c.future);
+    const doneDays = inMonth.filter(c => !c.rest && c.met).length;
+    const totalCount = inMonth.reduce((n, c) => n + c.count, 0);
+    const items: [string, string][] = [["达标", `${doneDays} 天`], ["打卡", `${totalCount} 次`]];
+    if (attendance) {
+      const minutes = inMonth.reduce((n, c) => n + c.shifts.reduce((m, s) => m + (s.minutes ?? 0), 0), 0);
+      items.push(["班次时长", fmtShiftDuration(minutes)]);
+    } else {
+      items.push(["单日最多", `${inMonth.reduce((n, c) => Math.max(n, c.count), 0)} 次`]);
+    }
+    const side = main.createDiv({ cls: "db-mcal-side" });
     const metrics = side.createDiv({ cls: "db-heatmap-metrics" });
-    ([["达标", `${doneDays} 天`], ["打卡", `${totalCount} 次`], ["单日最多", `${maxCount} 次`]] as [string, string][])
-      .forEach(([label, value]) => {
-        const row = metrics.createDiv({ cls: "db-heatmap-metric" });
-        row.createSpan({ cls: "db-heatmap-metric-label", text: label });
-        row.createSpan({ cls: "db-heatmap-metric-value", text: value });
-      });
-
-    const legend = side.createDiv({ cls: "db-heatmap-legend" });
-    legend.createSpan({ text: "少" });
-    for (let l = 1; l <= 4; l++) {
-      legend.createDiv({
-        cls: `db-heatmap-cell lv${l} mini`,
-        attr: { "aria-label": `完成度 ${l * 25}% 以上` },
-      });
-    }
-    legend.createSpan({ text: "多" });
-    legend.createDiv({ cls: "db-heatmap-cell skipped mini", attr: { "aria-label": "跳过" } });
-    legend.createDiv({ cls: "db-heatmap-cell rest mini", attr: { "aria-label": "休息日" } });
+    items.forEach(([label, value]) => {
+      const row = metrics.createDiv({ cls: "db-heatmap-metric" });
+      row.createSpan({ cls: "db-heatmap-metric-label", text: label });
+      row.createSpan({ cls: "db-heatmap-metric-value", text: value });
+    });
+    const legend = side.createDiv({ cls: "db-heatmap-legend db-mcal-legend" });
+    (["met:达标", "partial:未达标", "skipped:跳过"] as const).forEach(pair => {
+      const [cls, label] = pair.split(":");
+      legend.createDiv({ cls: `db-mcal-cell ${cls} mini`, attr: { "aria-label": label } });
+      legend.createSpan({ text: label });
+    });
   }
 
-  /** 依弹窗内容宽决定可见周数：每列实际 14px（11px 格 + 3px 缝），预留星期轴与内外边距约 96px；
-   *  弹窗较宽（≥620px）时右侧统计栏占约 120px，窄弹窗时统计栏经 CSS 换行到网格下方不计宽 */
-  private visibleWeeks(): number {
-    const width = this.contentEl?.clientWidth ?? 0;
-    if (width <= 0) return 10;   // 布局未完成时的回退
-    const side = width >= 620 ? 120 : 0;
-    const cols = Math.floor((width - 96 - side) / 14);
-    return Math.max(5, Math.min(26, cols));
-  }
-
-  /** 热力图标题行右侧的翻页：‹ 范围 ›，按可见周数整段平移，不能翻到未来 */
-  private renderHeatmapNav(head: HTMLElement, weeks: number, todayStr: string, rangeStart: string) {
+  /** 月历标题行右侧的翻页：‹ 2026年10月 今 ›，不能翻到未来月份 */
+  private renderMonthNav(head: HTMLElement, todayStr: string) {
     const nav = head.createDiv({ cls: "db-heatmap-range" });
-    const fmt = (ds: string) => moment(ds, "YYYY-MM-DD").format("M月D日");
-    nav.createDiv({ cls: "db-heatmap-range-label", text: `${fmt(rangeStart)} - ${fmt(this.heatEnd)}` });
+    nav.createDiv({
+      cls: "db-heatmap-range-label",
+      text: moment(`${this.heatMonth}-01`, "YYYY-MM-DD").format("YYYY年M月"),
+    });
 
-    const shift = (dir: 1 | -1) => {
-      this.heatEnd = moment(this.heatEnd, "YYYY-MM-DD").add(dir * weeks, "weeks").format("YYYY-MM-DD");
-      this.render();
-    };
     const prev = makeActivatable(nav.createDiv({
       cls: "db-heatmap-arrow",
-      attr: { "aria-label": "前一段记录" },
-    }), "前一段记录");
+      attr: { "aria-label": "上个月" },
+    }), "上个月");
     setIcon(prev, "chevron-left");
-    prev.addEventListener("click", () => shift(-1));
+    prev.addEventListener("click", () => {
+      this.heatMonth = moment(`${this.heatMonth}-01`, "YYYY-MM-DD").subtract(1, "month").format("YYYY-MM");
+      this.render();
+    });
 
-    const atToday = this.heatEnd >= todayStr;
+    const isCurrent = this.heatMonth >= moment(todayStr).format("YYYY-MM");
     const next = makeActivatable(nav.createDiv({
-      cls: `db-heatmap-arrow${atToday ? " disabled" : ""}`,
-      attr: { "aria-label": "后一段记录" },
-    }), "后一段记录");
+      cls: `db-heatmap-arrow${isCurrent ? " disabled" : ""}`,
+      attr: { "aria-label": "下个月" },
+    }), "下个月");
     setIcon(next, "chevron-right");
-    if (!atToday) next.addEventListener("click", () => shift(1));
+    if (!isCurrent) {
+      next.addEventListener("click", () => {
+        this.heatMonth = moment(`${this.heatMonth}-01`, "YYYY-MM-DD").add(1, "month").format("YYYY-MM");
+        this.render();
+      });
+      const back = makeActivatable(nav.createDiv({
+        cls: "db-heatmap-arrow db-mcal-now",
+        attr: { "aria-label": "回到本月" },
+      }), "回到本月");
+      back.setText("今");
+      back.addEventListener("click", () => {
+        this.heatMonth = moment().format("YYYY-MM");
+        this.render();
+      });
+    }
   }
 
   /* ── 趋势卡 ── */
@@ -2239,6 +2266,15 @@ export class DaybookView extends ItemView {
         const resting = !isExecuteDay(habit, todayStr);
         const todayRows = rows.filter(r => r.habitId === habit.id && r.date === todayStr);
         const note = todayRows[todayRows.length - 1]?.note;
+        // 上下班型：当前班次状态（进行中 / 未打上班卡 / 已下班），跨天班次特别标注
+        const openShift = habit.attendance ? lastOpenShift(rows, habit.id) : null;
+        const attendanceStatus = openShift
+          ? (openShift.inDate === todayStr
+            ? `上班中 ${openShift.inTime} · 今日 ${count}/${target}`
+            : `${openShift.inDate.slice(5)} ${openShift.inTime} 班次进行中`)
+          : done
+            ? `已下班 · 今日 ${count}/${target}`
+            : `未打上班卡 · 今日 ${count}/${target}`;
 
         const card = list.createDiv({
           cls: `db-habit-row${done ? " checked" : ""}${skipped ? " skipped" : ""}${resting ? " rest-day" : ""}`,
@@ -2254,9 +2290,11 @@ export class DaybookView extends ItemView {
           cls: "db-habit-row-target",
           text: resting
             ? `今日休息 · ${(habit.executeDays ?? []).map(d => "周" + WEEKDAY_CN[d - 1]).join("/")}执行`
-            : target > 1
-              ? `每日 ${target} 次 · 今日 ${count}/${target}`
-              : `每日 1 次 · ${done ? "已打卡" : skipped ? "今日跳过" : "未打卡"}`,
+            : habit.attendance
+              ? attendanceStatus
+              : target > 1
+                ? `每日 ${target} 次 · 今日 ${count}/${target}`
+                : `每日 1 次 · ${done ? "已打卡" : skipped ? "今日跳过" : "未打卡"}`,
         });
         left.addEventListener("click", () => {
           new HabitDetailModal(this.app, this.plugin, habit, refreshAll).open();
@@ -2290,8 +2328,8 @@ export class DaybookView extends ItemView {
               new Notice("↩️ 已取消今日打卡");
               refreshAll();
             } else if (habit.attendance) {
-              // 上下班型：先选时刻（默认当前时间 / 常用时间一键），再落记录
-              new CheckinTimeModal(this.app, habit, todayStr, async (t) => {
+              // 上下班型：先选时刻（默认当前时间 / 常用时间一键），再落记录；弹窗提示上班/下班与跨天
+              new CheckinTimeModal(this.app, habit, todayStr, rows, async (t) => {
                 if (count + 1 >= target) this.plugin.feedback.notify();
                 const time = await checkinHabit(this.app, habit, nowToday(), t);
                 const n = count + 1;

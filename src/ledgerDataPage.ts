@@ -738,7 +738,7 @@ export class LedgerDataPage {
         }).open();
       });
     });
-    this.note(body, "台账保存在 ledger/imports.json，撤销后仍保留这一条台账（标记已撤销），方便追溯。");
+    this.note(body, "台账保存在记账文件夹的 imports.json，撤销后仍保留这一条台账（标记已撤销），方便追溯。");
   }
 
   /* ────────────────────────── 导出 ────────────────────────── */

@@ -141,7 +141,7 @@ export class LedgerPage {
     private plugin: DaybookPlugin,
     private host: HTMLElement,
   ) {
-    this.store = new LedgerStore(app, plugin.settings);
+    this.store = new LedgerStore(app, plugin.settings, () => plugin.saveSettings());
     this.onPop = () => {
       /* 分类管理压在记一笔 sheet / 编辑页之上：返回键先退回表单（下层哨兵仍压着） */
       if ((this.overlay || this.editRec) && this.mgrSentinelArmed) {

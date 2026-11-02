@@ -1,17 +1,23 @@
 /**
  * ledgerStore.ts — 记账（ledger）类型的数据层
  *
- * 存储：<日记目录>/ledger/config.json（账本/账户/两级类别/币种/用户名）
- *       <日记目录>/ledger/records-YYYY.json（每年一个 JSON 数组文件）
+ * 存储（v5 起，hledger journal 纯文本，可肉眼阅读、可直接用 hledger 打开）：
+ *   <ledgerFolder>/config.json          账本/账户/两级类别/币种/用户名（结构配置仍是 JSON）
+ *   <ledgerFolder>/YYYY.<ext>           按年一个 journal 文件（默认 .obsidian/记账/2026.journal）
+ *   <ledgerFolder>/imports.json         批量导入台账
+ *   <ledgerFolder>/export/              导出账单
+ *   同目录 .bak = 上一次成功写入前的副本；解析失败自动回落 .bak，仍失败则停用该年份数据并提示（绝不静默清空）
  *
- * 金额口径（在页内「设置」也会向用户说明）：
- *   支出实际支出 = 金额 − 优惠 − 退款（不小于 0）；收入实际 = 金额；
- *   转账（transfer）不计收支，只在转出/转入账户间移动余额（toAccountId 为转入账户）。
+ * journal 格式详见 ledgerJournal.ts 头注释。金额口径：
+ *   支出实际支出 = 金额 − 优惠 − 退款（不小于 0），journal 分录里写实际金额；
+ *   收入实际 = 金额；转账（transfer）不计收支，只在转出/转入账户间移动余额（toAccountId 为转入账户）。
  *   多币种：记录带 currency + 可选 rate（折算 1 单位该币种 = 多少基准币），
  *   未写 rate 时取币种表当前 rate；基准币 rate 恒为 1。
  */
-import { App, normalizePath } from "obsidian";
+import { App, Notice, normalizePath } from "obsidian";
 import type { DaybookSettings } from "./settings";
+import { DEFAULT_LEDGER_EXT, DEFAULT_LEDGER_FOLDER } from "./settings";
+import { parseYearJournal, serializeYearJournal, makeNameResolver } from "./ledgerJournal";
 
 export type LedgerKind = "income" | "expense" | "transfer";
 
@@ -43,7 +49,7 @@ export interface LedgerRecord {
   importBatchId?: string;    // 属于哪一次「批量导入」，可在导入记录里整批撤销
 }
 
-/** 一次批量导入的台账（存 <日记目录>/ledger/imports.json，用于展示与整批撤销） */
+/** 一次批量导入的台账（存 <ledgerFolder>/imports.json，用于展示与整批撤销） */
 export interface LedgerImportBatch {
   id: string;
   at: number;                    // 导入时间戳
@@ -184,9 +190,7 @@ export function categoryStats(records: LedgerRecord[], cfg: LedgerConfig, kind: 
 
 export interface AccountBalance {
   account: LedgerAccount;
-  /** 按账户自身币种计的余额 */
   balance: number;
-  /** 折算到基准币的余额 */
   balanceBase: number;
 }
 
@@ -230,67 +234,33 @@ export class LedgerStore {
   batches: LedgerImportBatch[] = [];
   private loaded = false;
 
-  constructor(private app: App, private settings: DaybookSettings) {}
+  constructor(
+    private app: App,
+    private settings: DaybookSettings,
+    /** 迁移完成后把 settings.ledgerMigratedV2 等旗标落盘用 */
+    private persistSettings?: () => Promise<void>
+  ) {}
 
   get dir(): string {
-    const folder = this.settings.diaryFolder.trim().replace(/\/$/, "");
-    return normalizePath(`${folder}/ledger`);
+    const custom = (this.settings.ledgerFolder ?? "").trim().replace(/\/+$/, "");
+    return normalizePath(custom || DEFAULT_LEDGER_FOLDER);
+  }
+
+  /** journal 文件后缀（不带点）；非法值回退 journal */
+  get ext(): string {
+    const e = (this.settings.ledgerFileExt ?? DEFAULT_LEDGER_EXT).trim().replace(/^\.+/, "");
+    return /^[A-Za-z0-9]{1,8}$/.test(e) ? e : DEFAULT_LEDGER_EXT;
   }
 
   private pathOf(file: string): string {
     return normalizePath(`${this.dir}/${file}`);
   }
 
-  async load(): Promise<void> {
-    const adapter = this.app.vault.adapter;
-    this.config = defaultLedgerConfig();
-    this.records = [];
-    this.batches = [];
-    try {
-      if (await adapter.exists(this.pathOf("config.json"))) {
-        const raw = JSON.parse(await adapter.read(this.pathOf("config.json")));
-        this.config = {
-          ...defaultLedgerConfig(),
-          ...raw,
-          ledgers: Array.isArray(raw.ledgers) && raw.ledgers.length ? raw.ledgers : defaultLedgerConfig().ledgers,
-          accounts: Array.isArray(raw.accounts) ? raw.accounts : [],
-          categories: Array.isArray(raw.categories) ? raw.categories : [],
-          currencies: Array.isArray(raw.currencies) && raw.currencies.length ? raw.currencies : defaultLedgerConfig().currencies,
-        };
-      }
-      if (await adapter.exists(this.dir)) {
-        const listing = await adapter.list(this.dir);
-        if (await adapter.exists(this.pathOf("imports.json"))) {
-          try {
-            const arr = JSON.parse(await adapter.read(this.pathOf("imports.json")));
-            if (Array.isArray(arr)) this.batches = arr;
-          } catch (e) { /* 坏文件按无台账处理 */ }
-        }
-        const files = listing.files
-          .filter(f => /records-\d{4}\.json$/.test(f))
-          .sort();
-        for (const f of files) {
-          try {
-            const arr = JSON.parse(await adapter.read(f));
-            if (Array.isArray(arr)) this.records.push(...arr);
-          } catch (e) { /* 坏文件跳过，保存时会被重写 */ }
-        }
-      }
-    } catch (e) {
-      console.error("Daybook ledger: 读取失败", e);
-    }
-    this.sortRecords();
-    this.loaded = true;
+  recordsFilePath(year: string): string {
+    return this.pathOf(`${year}.${this.ext}`);
   }
 
-  private sortRecords(): void {
-    this.records.sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
-  }
-
-  async saveConfig(): Promise<void> {
-    await this.ensureDir();
-    await this.app.vault.adapter.write(this.pathOf("config.json"), JSON.stringify(this.config, null, 2));
-  }
+  /* ── 安全读写：临时文件 + 改名原子落盘，旧内容保留为 .bak，解析失败可回落 ── */
 
   private async ensureDir(): Promise<void> {
     try {
@@ -300,12 +270,239 @@ export class LedgerStore {
     } catch (e) { /* 已存在时忽略 */ }
   }
 
-  /** 把某一年集合写回 records-YYYY.json */
+  private async writeAtomic(path: string, text: string): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    const tmp = `${path}.tmp`;
+    const bak = `${path}.bak`;
+    await this.ensureDir();
+    await adapter.write(tmp, text);
+    try { if (await adapter.exists(bak)) await adapter.remove(bak); } catch (e) { /* 清理失败不阻塞 */ }
+    try { if (await adapter.exists(path)) await adapter.rename(path, bak); } catch (e) { /* 首次写入无旧文件 */ }
+    await adapter.rename(tmp, path);
+  }
+
+  /** 读文件并解析：目标损坏时自动回落 .bak；两者都坏返回 null（调用方必须提示而不是当空数据） */
+  private async readWithBackup<T>(path: string, parse: (text: string) => T): Promise<T | null> {
+    const adapter = this.app.vault.adapter;
+    if (await adapter.exists(path)) {
+      try {
+        return await parse(await adapter.read(path));
+      } catch (e) {
+        console.error("Daybook ledger: 文件解析失败，尝试 .bak", path, e);
+      }
+    }
+    const bak = `${path}.bak`;
+    if (await adapter.exists(bak)) {
+      try {
+        const parsed = await parse(await adapter.read(bak));
+        new Notice(`⚠️ 记账文件损坏，已从备份恢复：${path}`);
+        return parsed;
+      } catch (e) {
+        console.error("Daybook ledger: 备份文件也损坏", bak, e);
+      }
+    }
+    return null;
+  }
+
+  async load(): Promise<void> {
+    this.config = defaultLedgerConfig();
+    this.records = [];
+    this.batches = [];
+    this.configDirty = false;
+    let settingsDirty = false;
+    try {
+      await this.ensureDir();
+      let justMigrated = false;
+      if (!this.settings.ledgerMigratedV2) {
+        const status = await this.migrateFromLegacyJson();
+        if (status !== "failed") {
+          this.settings.ledgerMigratedV2 = true;
+          settingsDirty = true;
+        }
+        if (status === "migrated") justMigrated = true;
+        // status === "failed"：旧 JSON 已读进内存按旧数据继续用（只读兜底），旗标不置，下次启动重试
+      }
+
+      if (justMigrated) {
+        // 迁移时已从旧数据读入内存并写好新文件，无需重复读
+      } else if (this.settings.ledgerMigratedV2) {
+        if (await this.app.vault.adapter.exists(this.pathOf("config.json"))) {
+          const raw = await this.readWithBackup<Partial<LedgerConfig> | null>(this.pathOf("config.json"), t => JSON.parse(t));
+          if (raw && typeof raw === "object") {
+            this.config = {
+              ...defaultLedgerConfig(),
+              ...raw,
+              ledgers: Array.isArray(raw.ledgers) && raw.ledgers.length ? raw.ledgers : defaultLedgerConfig().ledgers,
+              accounts: Array.isArray(raw.accounts) ? raw.accounts : [],
+              categories: Array.isArray(raw.categories) ? raw.categories : [],
+              currencies: Array.isArray(raw.currencies) && raw.currencies.length ? raw.currencies : defaultLedgerConfig().currencies,
+            };
+          }
+        }
+        if (await this.app.vault.adapter.exists(this.pathOf("imports.json"))) {
+          const raw = await this.readWithBackup<unknown>(this.pathOf("imports.json"), t => JSON.parse(t));
+          if (Array.isArray(raw)) this.batches = raw;
+        }
+        const adapter = this.app.vault.adapter;
+        if (await adapter.exists(this.dir)) {
+          const listing = await adapter.list(this.dir);
+          const files = listing.files
+            .filter(f => new RegExp(`/(\\d{4})\\.${this.ext}$`).test(f))
+            .sort();
+          for (const f of files) {
+            const parsed = await this.readWithBackup<{ records: LedgerRecord[]; configDirty: boolean }>(f, t => {
+              const out = parseYearJournal(t, this.config, makeNameResolver(this.config));
+              return out;
+            });
+            if (parsed === null) {
+              new Notice(`⚠️ 记账年份文件无法解析，已停用该年份数据（原文件与 .bak 保留）：${f}`);
+              continue;
+            }
+            this.records.push(...parsed.records);
+            if (parsed.configDirty) this.configDirty = true;
+          }
+        }
+        if (this.configDirty) await this.saveConfig();
+      }
+    } catch (e) {
+      console.error("Daybook ledger: 读取失败", e);
+      new Notice("记账数据读取失败，详见控制台");
+    }
+    this.sortRecords();
+    this.loaded = true;
+    if (settingsDirty && this.persistSettings) await this.persistSettings();
+  }
+
+  /** 解析 journal 时注册过新分类/账户（config 需要落盘） */
+  private configDirty = false;
+
+  /** 迁移期把悬空的分类/账户引用改挂到「未分类 / 未知账户」（就地修改 this.records / this.config） */
+  private normalizeOrphanRefs(): void {
+    const ensure = makeNameResolver(this.config);
+    const uncategorized: Partial<Record<LedgerKind, { categoryId: string }>> = {};
+    const unknownAccount = (currency: string): string => ensure.ensureAccount("未知账户", currency);
+    const unknownCategory = (kind: LedgerKind): string => {
+      if (!uncategorized[kind]) uncategorized[kind] = ensure.ensureCategory(kind, "未分类");
+      return uncategorized[kind]!.categoryId;
+    };
+    for (const r of this.records) {
+      const cat = this.config.categories.find(c => c.id === r.categoryId);
+      if (cat) {
+        if (r.subId && !cat.subs.some(s => s.id === r.subId)) r.subId = undefined;
+      } else if (r.kind === "transfer") {
+        r.categoryId = "";
+        r.subId = undefined;
+      } else {
+        r.categoryId = unknownCategory(r.kind);
+        r.subId = undefined;
+      }
+      if (!r.accountId || !this.config.accounts.some(a => a.id === r.accountId)) {
+        r.accountId = unknownAccount(r.currency || this.config.baseCurrency);
+      }
+      if (r.toAccountId && !this.config.accounts.some(a => a.id === r.toAccountId)) {
+        r.toAccountId = unknownAccount(r.currency || this.config.baseCurrency);
+      }
+      if (!r.ledgerId) r.ledgerId = this.config.ledgers[0]?.id ?? "";
+    }
+  }
+
+  /**
+   * 迁移结果：
+   * - "none"     没有旧数据（全新安装），直接置旗标
+   * - "migrated" 已把旧 JSON 转为 journal 并校验通过（数据已在本对象内存里）
+   * - "failed"   校验/写盘失败，本会话回退用旧 JSON 数据，旗标不置（下次启动重试）
+   */
+  private async migrateFromLegacyJson(): Promise<"none" | "migrated" | "failed"> {
+    const adapter = this.app.vault.adapter;
+    const folder = this.settings.diaryFolder.trim().replace(/\/+$/, "");
+    const oldDir = normalizePath(`${folder}/ledger`);
+    try {
+      if (!(await adapter.exists(oldDir))) return "none";
+
+      // 旧 config / imports 先读进来（无论是否有记录文件）
+      const oldConfigPath = normalizePath(`${oldDir}/config.json`);
+      if (await adapter.exists(oldConfigPath)) {
+        try {
+          const raw = JSON.parse(await adapter.read(oldConfigPath));
+          this.config = {
+            ...defaultLedgerConfig(),
+            ...raw,
+            ledgers: Array.isArray(raw.ledgers) && raw.ledgers.length ? raw.ledgers : defaultLedgerConfig().ledgers,
+            accounts: Array.isArray(raw.accounts) ? raw.accounts : [],
+            categories: Array.isArray(raw.categories) ? raw.categories : [],
+            currencies: Array.isArray(raw.currencies) && raw.currencies.length ? raw.currencies : defaultLedgerConfig().currencies,
+          };
+        } catch (e) { /* 旧 config 损坏就用默认值 */ }
+      }
+      const oldImportsPath = normalizePath(`${oldDir}/imports.json`);
+      if (await adapter.exists(oldImportsPath)) {
+        try {
+          const arr = JSON.parse(await adapter.read(oldImportsPath));
+          if (Array.isArray(arr)) this.batches = arr;
+        } catch (e) { /* 坏台账按无台账 */ }
+      }
+
+      // 读旧记录（解析失败的年份跳过，原文件保留）
+      const listing = await adapter.list(oldDir);
+      const oldFiles = listing.files.filter(f => /records-\d{4}\.json$/.test(f)).sort();
+      for (const f of oldFiles) {
+        try {
+          const arr = JSON.parse(await adapter.read(f));
+          if (Array.isArray(arr)) this.records.push(...arr);
+        } catch (e) {
+          console.warn("Daybook ledger: 迁移时旧文件解析失败，跳过", f, e);
+        }
+      }
+      this.sortRecords();
+      if (this.records.length === 0 && oldFiles.length === 0) return "none";
+
+      // 规范化悬空引用：分类/账户已被删除（或为空）的记录改挂「未分类 / 未知账户」，
+      // 与 journal 解析回读的行为一致，保证迁移后内存态与重启后 journal 读态逐字段相同
+      this.normalizeOrphanRefs();
+
+      // 内存 round-trip 校验：按年序列化再解析回读，条数必须一致，否则不写盘
+      const years = [...new Set(this.records.map(r => yearOf(r.date)).filter(y => /^\d{4}$/.test(y)))].sort();
+      const texts = new Map<string, string>();
+      for (const y of years) {
+        const yearRecords = this.records.filter(r => yearOf(r.date) === y);
+        const text = serializeYearJournal(yearRecords, this.config);
+        const back = parseYearJournal(text, this.config, makeNameResolver(this.config));
+        if (back.records.length !== yearRecords.length) {
+          new Notice(`记账迁移中止：${y} 年数据校验不一致（${yearRecords.length} → ${back.records.length}），已按旧数据继续使用`);
+          console.error("Daybook ledger: 迁移校验失败", y, yearRecords, back.records);
+          return "failed";
+        }
+        texts.set(y, text);
+      }
+
+      // 落盘：config + imports + 各年 journal
+      await this.saveConfig();
+      await this.saveBatches();
+      for (const y of years) {
+        await this.writeAtomic(this.recordsFilePath(y), texts.get(y)!);
+      }
+      new Notice(`✅ 记账数据已迁移为 hledger journal（${this.dir}）；旧 JSON 保留在 ${oldDir}，确认无误后可手动删除`);
+      return "migrated";
+    } catch (e) {
+      console.error("Daybook ledger: 迁移失败", e);
+      new Notice("记账旧数据迁移失败，本次仍按旧 JSON 读取（下次启动自动重试）");
+      return "failed";
+    }
+  }
+
+  private sortRecords(): void {
+    this.records.sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
+  }
+
+  async saveConfig(): Promise<void> {
+    await this.writeAtomic(this.pathOf("config.json"), JSON.stringify(this.config, null, 2));
+  }
+
+  /** 把某一年集合写回 YYYY.<ext> journal */
   private async persistYear(year: string): Promise<void> {
     if (!/^\d{4}$/.test(year)) return;
-    await this.ensureDir();
     const arr = this.records.filter(r => yearOf(r.date) === year);
-    await this.app.vault.adapter.write(this.pathOf(`records-${year}.json`), JSON.stringify(arr, null, 2));
+    await this.writeAtomic(this.recordsFilePath(year), serializeYearJournal(arr, this.config));
   }
 
   async addRecord(rec: LedgerRecord): Promise<void> {
@@ -365,8 +562,7 @@ export class LedgerStore {
   }
 
   async saveBatches(): Promise<void> {
-    await this.ensureDir();
-    await this.app.vault.adapter.write(this.pathOf("imports.json"), JSON.stringify(this.batches, null, 2));
+    await this.writeAtomic(this.pathOf("imports.json"), JSON.stringify(this.batches, null, 2));
   }
 
   /**
@@ -401,7 +597,7 @@ export class LedgerStore {
     return n;
   }
 
-  /** 导出账单文件到 <日记目录>/ledger/export/，返回仓库内路径 */
+  /** 导出账单文件到 <ledgerFolder>/export/，返回仓库内路径 */
   async writeExport(fileName: string, text: string): Promise<string> {
     const safe = fileName.replace(/[\\/:*?"<>|]/g, "_");
     const dir = normalizePath(`${this.dir}/export`);

@@ -8816,3 +8816,134 @@ body .db-journal-root .db-filter-q:focus {
   .db-drama-cover-del { width: 28px; height: 28px; }
   .db-drama-cover-del svg { width: 14px; height: 14px; }
 }
+
+/* ═══ 习惯打卡月历（详情页，v5：按月展示每天打卡时间点 / 上下班班次与时长） ═══ */
+.db-detail-mcal {
+  background: var(--db-surface2);
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius-lg);
+}
+.db-mcal-main {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.db-mcal-grid {
+  flex: 1 1 280px;
+  min-width: 252px;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+  align-content: start;
+}
+.db-mcal-head { margin-bottom: 2px; }
+.db-mcal-weekday {
+  text-align: center;
+  font-size: 10px;
+  color: var(--db-text-sub);
+}
+.db-mcal-cell {
+  min-height: 52px;
+  border-radius: 8px;
+  border: 1px solid var(--db-border);
+  background: var(--db-surface);
+  padding: 3px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+  cursor: pointer;
+}
+.db-mcal-cell.out { opacity: .38; }
+.db-mcal-cell.future { opacity: .45; background: transparent; border-style: dashed; }
+.db-mcal-cell.rest { background: transparent; border-style: dashed; }
+.db-mcal-cell.rest .db-mcal-day { color: var(--db-text-sub); }
+.db-mcal-cell.skipped { background: color-mix(in srgb, var(--db-text-sub) 10%, transparent); }
+.db-mcal-cell.partial { background: color-mix(in srgb, var(--habit-color, var(--db-accent)) 14%, transparent); }
+.db-mcal-cell.met {
+  background: color-mix(in srgb, var(--habit-color, var(--db-accent)) 26%, transparent);
+  border-color: color-mix(in srgb, var(--habit-color, var(--db-accent)) 45%, transparent);
+}
+.db-mcal-cell.today {
+  border-color: var(--habit-color, var(--db-accent));
+  box-shadow: 0 0 0 1px var(--habit-color, var(--db-accent)) inset;
+}
+.db-mcal-dayline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+}
+.db-mcal-day { font-size: 11px; font-weight: 600; color: var(--db-text); }
+.db-mcal-flag {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--habit-color, var(--db-accent));
+  white-space: nowrap;
+}
+.db-mcal-times {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+.db-mcal-time {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--db-text-sub);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.db-mcal-time.more { color: var(--db-text-faint); }
+.db-mcal-shift {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+.db-mcal-shift-range {
+  font-size: 10px;
+  color: var(--db-text-sub);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.db-mcal-shift-dur {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--habit-color, var(--db-accent));
+  white-space: nowrap;
+}
+.db-mcal-side {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 120px;
+}
+.db-mcal-legend { align-items: center; }
+.db-mcal-legend span { font-size: 10px; color: var(--db-text-sub); }
+.db-mcal-cell.mini {
+  min-height: 0;
+  height: 12px;
+  width: 12px;
+  padding: 0;
+  display: inline-block;
+  border-radius: 3px;
+  cursor: default;
+}
+.db-mcal-now { width: auto; padding: 0 6px; }
+.is-phone .db-mcal-main { flex-direction: column; }
+
+/* 上下班打卡弹窗：本次会记成上班/下班（含跨天）的提示 */
+.db-checkin-time-hint {
+  margin: -6px 0 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--db-accent) 10%, transparent);
+  color: var(--db-text);
+  font-size: 12px;
+  line-height: 1.5;
+}

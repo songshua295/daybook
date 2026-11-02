@@ -166,6 +166,8 @@ export class DramaStore {
   constructor(private app: App, private settings: DaybookSettings) {}
 
   get dir(): string {
+    const custom = (this.settings.dramaFolder ?? "").trim().replace(/\/+$/, "");
+    if (custom) return normalizePath(custom);
     const folder = this.settings.diaryFolder.trim().replace(/\/$/, "");
     return normalizePath(`${folder}/drama`);
   }

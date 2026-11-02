@@ -117,6 +117,12 @@ export interface DaybookSettings {
   completionSound: boolean;    // 同一时机播放完成音效
   // v4.7 界面状态
   lastSectionId?: string;           // 最近使用的章节（打开视图时恢复；章节失效时回退首个）
+  // v5.0 数据存储位置（统一在设置页「数据存储」分组管理；空字符串 = 用默认值）
+  habitsFolder?: string;            // 习惯文件夹；空 = <日记目录>/habits/<习惯名>.md
+  ledgerFolder?: string;            // 记账数据文件夹（hledger journal）；默认 .obsidian/记账
+  ledgerFileExt?: string;           // 记账记录文件后缀（不带点）：journal / md / text；默认 journal
+  dramaFolder?: string;             // 追剧数据文件夹；空 = <日记目录>/drama
+  ledgerMigratedV2?: boolean;       // 旧 records-YYYY.json 已迁移为 hledger journal（一次性）
 }
 
 export const DEFAULT_SETTINGS: DaybookSettings = {
@@ -175,10 +181,18 @@ export const DEFAULT_SETTINGS: DaybookSettings = {
   },
   completionHaptic: true,
   completionSound: true,
+  habitsFolder: "",
+  ledgerFolder: ".obsidian/记账",
+  ledgerFileExt: "journal",
+  dramaFolder: "",
 };
 
 /** 心情数量上限（一行 4 个，最多两行） */
 export const MAX_CUSTOM_MOODS = 8;
+
+/** 记账数据默认目录与文件后缀（journal 文件按年命名：2026.journal） */
+export const DEFAULT_LEDGER_FOLDER = ".obsidian/记账";
+export const DEFAULT_LEDGER_EXT = "journal";
 
 /** 章节数量上限 */
 export const MAX_SECTIONS = 8;
@@ -187,8 +201,8 @@ export const MAX_SECTIONS = 8;
 export const SECTION_TYPE_INFO: Record<SectionType, { label: string; emoji: string; desc: string }> = {
   memos: { label: "闪念", emoji: "⚡", desc: "快速记录，支持加粗/删除线/双链/图片/标签" },
   plans: { label: "待办计划", emoji: "\u{1F4C5}", desc: "待办输入 + 日期提取 + 优先级 + 子任务" },
-  habits: { label: "习惯打卡", emoji: "\u{1F4A7}", desc: "每习惯一个 md（<日记目录>/habits/，可手动编辑）· 详情页含活跃度热力图 + 周/月/年趋势图" },
-  ledger: { label: "记账", emoji: "\u{1F4B0}", desc: "记一笔/视图/资产/统计/设置 五页 · 数据存 <日记目录>/ledger/*.json" },
+  habits: { label: "习惯打卡", emoji: "\u{1F4A7}", desc: "每习惯一个 md（默认 <日记目录>/habits/习惯名.md，可手动编辑）· 详情页含打卡月历 + 周/月/年趋势图" },
+  ledger: { label: "记账", emoji: "\u{1F4B0}", desc: "记一笔/视图/资产/统计/设置 五页 · 数据存 hledger journal（默认 .obsidian/记账/，后缀可在设置中改）" },
   drama: { label: "追剧", emoji: "\u{1F4FA}", desc: "剧集卡片列表 + 页内编辑 · 数据存 <日记目录>/drama/shows.json（不写日记正文）" },
 };
 
@@ -338,8 +352,15 @@ export class DaybookSettingTab extends PluginSettingTab {
           await reopenView();
         }));
 
-    new Setting(gGeneral)
-      .setName("日记文件夹")
+    /* ══ 分组 1.5：数据存储（各模块文件夹统一在此管理） ══ */
+    const gStorage = this.group(root, "数据存储", "folder");
+    gStorage.createDiv({
+      cls: "db-settings-hint",
+      text: "闪念/计划按「文件夹/日期.md」存储，文件内用「# 标题」分段；日期可用 {{YYYY-MM-DD}}、{{YYYY/MM}} 等 moment 变量。改路径只影响之后的新数据，旧文件不会自动搬移。",
+    });
+
+    new Setting(gStorage)
+      .setName("日记文件夹（闪念 / 计划默认位置）")
       .setDesc("日记文件存放的文件夹（相对库根目录）")
       .addText(text => text
         .setPlaceholder("例如: Daily 或 Journal/Daily")
@@ -349,14 +370,60 @@ export class DaybookSettingTab extends PluginSettingTab {
           await save();
         }));
 
-    new Setting(gGeneral)
-      .setName("日期格式")
-      .setDesc("日记文件名的日期格式（YYYY MM DD）")
+    new Setting(gStorage)
+      .setName("日期格式（日记文件名）")
+      .setDesc("闪念/计划文件名的日期变量格式（YYYY MM DD）")
       .addText(text => text
         .setPlaceholder("YYYY-MM-DD")
         .setValue(this.plugin.settings.dateFormat)
         .onChange(async (value) => {
           this.plugin.settings.dateFormat = value.trim() || "YYYY-MM-DD";
+          await save();
+        }));
+
+    new Setting(gStorage)
+      .setName("习惯文件夹")
+      .setDesc("每习惯一个 md；留空 = 日记文件夹/habits/习惯名.md")
+      .addText(text => text
+        .setPlaceholder("Daily/habits")
+        .setValue(this.plugin.settings.habitsFolder ?? "")
+        .onChange(async (value) => {
+          this.plugin.settings.habitsFolder = value.trim();
+          await save();
+        }));
+
+    new Setting(gStorage)
+      .setName("记账文件夹（hledger）")
+      .setDesc("记账记录存为 hledger journal 纯文本；留空 = .obsidian/记账")
+      .addText(text => text
+        .setPlaceholder(".obsidian/记账")
+        .setValue(this.plugin.settings.ledgerFolder ?? "")
+        .onChange(async (value) => {
+          this.plugin.settings.ledgerFolder = value.trim();
+          await save();
+        }));
+
+    new Setting(gStorage)
+      .setName("记账记录文件后缀")
+      .setDesc("按年分文件，如 2026.journal；换后缀后旧后缀文件需手动改名")
+      .addDropdown(dropdown => dropdown
+        .addOption("journal", "journal（hledger 标准）")
+        .addOption("md", "md（Obsidian 笔记）")
+        .addOption("text", "text（纯文本）")
+        .setValue(this.plugin.settings.ledgerFileExt ?? "journal")
+        .onChange(async value => {
+          this.plugin.settings.ledgerFileExt = value;
+          await save();
+        }));
+
+    new Setting(gStorage)
+      .setName("追剧文件夹")
+      .setDesc("追剧数据（shows.json + 封面）；留空 = 日记文件夹/drama")
+      .addText(text => text
+        .setPlaceholder("Daily/drama")
+        .setValue(this.plugin.settings.dramaFolder ?? "")
+        .onChange(async (value) => {
+          this.plugin.settings.dramaFolder = value.trim();
           await save();
         }));
 
