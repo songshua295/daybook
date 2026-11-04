@@ -2,13 +2,16 @@
  * accountIcons.ts — 账户图标库（品牌 logo + 通用图标）
  *
  * 品牌 SVG 路径取自 simple-icons v16（CC0 公共领域，https://github.com/simple-icons/simple-icons），
- * 只内置国内记账常见的支付 / 卡组织 / 电商品牌；用 createElementNS 现场拼，不写 innerHTML。
+ * 内置国内记账常见的支付 / 卡组织 / 电商品牌；国内银行用真实行标（bankLogos.ts ←
+ * cellier/bank-icon-cn，Ping++ 银行图标库）。自动匹配只认有真实 logo 的品牌与银行，
+ * 都不中时落到账户名首字徽标；通用图标（Lucide）仅供手动选择。用 createElementNS 现场拼，不写 innerHTML。
  * 通用图标走 Obsidian 自带的 Lucide（setIcon）。万一某个图标名在当前 Obsidian 版本里不存在，
  * renderAccountIcon 会退回账户名首字，不会留空白格子。
  *
  * 账户的 icon 字段存这里的 key；空 = 按账户名自动匹配（guessAccountIcon）。
  */
 import { setIcon } from "obsidian";
+import { BANK_LOGOS } from "./bankLogos";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -54,7 +57,43 @@ const GENERICS: GenericDef[] = [
 const GENERIC_BY_KEY: Record<string, GenericDef> = {};
 GENERICS.forEach(g => { GENERIC_BY_KEY[g.key] = g; });
 
-/** 按账户名猜图标：先品牌、再专用通用项，最后落到「银行 / 卡」这类常见说法 */
+interface BankDef { key: string; label: string; re: RegExp }
+
+/**
+ * 国内银行（真实行标，多色 SVG 来自 bankLogos.ts ← cellier/bank-icon-cn）。
+ * re 按顺序匹配，先于通用兜底；自动匹配不中时由 renderAccountIcon 落到「账户名首字」徽标。
+ */
+const BANKS: BankDef[] = [
+  { key: "icbc", label: "工商银行", re: /工商银行|工行|icbc/i },
+  { key: "abc", label: "农业银行", re: /农业银行|农行/i },
+  { key: "boc", label: "中国银行", re: /中国银行|中行|boc(?![a-z])/i },
+  { key: "ccb", label: "建设银行", re: /建设银行|建行|ccb(?![a-z])/i },
+  { key: "bocom", label: "交通银行", re: /交通银行|交行/i },
+  { key: "psbc", label: "邮储银行", re: /邮储|邮政储蓄|邮政银行|中国邮政/i },
+  { key: "cmb", label: "招商银行", re: /招商银行|招行|cmb(?![a-z])/i },
+  { key: "citic", label: "中信银行", re: /中信银行|中信(?![a-z])/i },
+  { key: "spdb", label: "浦发银行", re: /浦发|浦东发展/i },
+  { key: "cib", label: "兴业银行", re: /兴业银行|兴业(?![a-z])/i },
+  { key: "cmbc", label: "民生银行", re: /民生银行|民生(?![a-z])/i },
+  { key: "ceb", label: "光大银行", re: /光大银行|光大(?![a-z])/i },
+  { key: "cgb", label: "广发银行", re: /广发银行|广发/i },
+  { key: "spabank", label: "平安银行", re: /平安银行|平安/i },
+  { key: "hxb", label: "华夏银行", re: /华夏银行|华夏(?![a-z])/i },
+  { key: "bob", label: "北京银行", re: /北京银行/i },
+  { key: "bosh", label: "上海银行", re: /上海银行/i },
+  { key: "czb", label: "浙商银行", re: /浙商银行|浙商/i },
+  { key: "jl", label: "吉林银行", re: /吉林银行/i },
+  { key: "dl", label: "大连银行", re: /大连银行/i },
+  { key: "rcu", label: "农商 / 信用社", re: /农商|农信|农村信用|信用社/i },
+];
+
+const BANK_BY_KEY: Record<string, BankDef> = {};
+BANKS.forEach(b => { BANK_BY_KEY[b.key] = b; });
+
+/**
+ * 按账户名猜图标：只匹配「有真实 logo 的品牌 / 银行」；
+ * 都不中返回空 = 自动兜底用账户名文字首字（通用图标不再自动猜，改为手动选择）。
+ */
 const AUTO_RULES: { re: RegExp; key: string }[] = [
   { re: /支付宝|蚂蚁|花呗|余额宝|网商|alipay/i, key: "alipay" },
   { re: /微信|wechat|零钱/i, key: "wechat" },
@@ -67,28 +106,15 @@ const AUTO_RULES: { re: RegExp; key: string }[] = [
   { re: /淘宝|天猫/i, key: "taobao" },
   { re: /美团/i, key: "meituan" },
   { re: /比特币|bitcoin|btc/i, key: "bitcoin" },
-  { re: /现金|纸币|数字人民币|e-?cny|money/i, key: "cash" },
-  { re: /存折|存单/i, key: "passbook" },
-  { re: /储蓄|定期|存款|大金库/i, key: "piggy" },
-  { re: /工资|薪资|薪|发薪/i, key: "salary" },
-  { re: /公积金|房贷|房租|房产|物业/i, key: "house" },
-  { re: /股票|基金|理财|证券|投资|期货|私募/i, key: "invest" },
-  { re: /红包|礼金/i, key: "redpacket" },
-  { re: /报销|票据|发票/i, key: "receipt" },
-  { re: /京东|拼多多|电商|购物|商超|超市/i, key: "shopping" },
-  { re: /云闪付|闪付|unionpay|银行卡|储蓄卡|借记卡|信用卡|贷记卡/i, key: "bankcard" },
-  { re: /车贷|购车|加油|车辆/i, key: "car" },
-  { re: /银行|农商|招行|工行|农行|中行|建行|交行|邮储|中信|浦发|民生|光大|华夏|平安|兴业|广发|浙商|渤海|恒丰/i, key: "bank" },
-  { re: /钱包|wallet/i, key: "wallet" },
-  { re: /手机|电话/i, key: "phone" },
 ];
 
-/** 账户名 → 图标 key（猜不出来给「钱包」，中性且一定有图） */
+/** 账户名 → 图标 key（空字符串 = 自动兜底：账户名首字徽标） */
 export function guessAccountIcon(name: string): string {
   const n = (name || "").trim();
   if (BRANDS[n.toLowerCase()]) return n.toLowerCase();
   for (let i = 0; i < AUTO_RULES.length; i++) if (AUTO_RULES[i].re.test(n)) return AUTO_RULES[i].key;
-  return "wallet";
+  for (let i = 0; i < BANKS.length; i++) if (BANKS[i].re.test(n)) return BANKS[i].key;
+  return "";
 }
 
 /** 账户实际用的图标 key：手动选过的优先（认不出的旧 key 忽略），否则按名字猜 */
@@ -98,25 +124,31 @@ export function accountIconKey(a: { name: string; icon?: string }): string {
 
 export interface IconChoice { key: string; label: string }
 
-/** 图标选择页要列的全部图标（品牌在前，通用在后） */
+/** 图标选择页要列的全部图标（品牌在前，银行行标次之，通用在后） */
 export function allIconChoices(): IconChoice[] {
   const out: IconChoice[] = [];
   Object.keys(BRANDS).forEach(k => out.push({ key: k, label: BRANDS[k].label }));
+  BANKS.forEach(b => out.push({ key: b.key, label: b.label }));
   GENERICS.forEach(g => out.push({ key: g.key, label: g.label }));
   return out;
 }
 
 /** 某个 key 是否还在库里（改库、导入旧配置时用来校验） */
 export function isKnownIcon(key: string): boolean {
-  return !!BRANDS[key] || !!GENERIC_BY_KEY[key];
+  return !!BRANDS[key] || !!BANK_BY_KEY[key] || !!GENERIC_BY_KEY[key];
 }
 
 /** 图标 key 的中文名（找不到返回「通用」） */
 export function iconLabel(key: string): string {
-  return BRANDS[key] ? BRANDS[key].label : (GENERIC_BY_KEY[key] ? GENERIC_BY_KEY[key].label : "通用");
+  return BRANDS[key] ? BRANDS[key].label
+    : BANK_BY_KEY[key] ? BANK_BY_KEY[key].label
+      : (GENERIC_BY_KEY[key] ? GENERIC_BY_KEY[key].label : "通用");
 }
 
-/** 画图标：品牌用官方路径 + 主题自适应色，通用用 Lucide，都没有就用首字兜底 */
+/**
+ * 画图标：支付 / 卡组织品牌用 simple-icons 路径 + 主题自适应色；
+ * 国内银行用 bank-icon-cn 的多色行标；自动兜底 = 账户名（或传入文字）的首字徽标。
+ */
 export function renderAccountIcon(el: HTMLElement, key: string, fallbackText: string): void {
   el.style.color = "";
   const brand = BRANDS[key];
@@ -136,6 +168,16 @@ export function renderAccountIcon(el: HTMLElement, key: string, fallbackText: st
     el.style.color = `color-mix(in srgb, ${brand.hex} 72%, var(--text-normal))`;
     return;
   }
+  const bankSvg = BANK_LOGOS[key];
+  if (bankSvg) {
+    el.empty();
+    const wrap = document.createElement("span");
+    wrap.className = "db-bank-logo";
+    /* bankLogos.ts 是构建期内联的库常量（非用户输入），innerHTML 在此安全 */
+    wrap.innerHTML = bankSvg;
+    el.appendChild(wrap);
+    return;
+  }
   const g = GENERIC_BY_KEY[key];
   if (g) {
     el.empty();
@@ -143,5 +185,9 @@ export function renderAccountIcon(el: HTMLElement, key: string, fallbackText: st
     if (el.querySelector("svg")) return;
   }
   el.empty();
-  el.setText((fallbackText || "?").trim().slice(0, 1));
+  /* 自动兜底 = 文字首字徽标（中性配色，与品牌/银行 logo 同一尺寸体系） */
+  const auto = document.createElement("span");
+  auto.className = "db-bank-mark";
+  auto.textContent = (fallbackText || "?").trim().slice(0, 1) || "?";
+  el.appendChild(auto);
 }

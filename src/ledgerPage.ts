@@ -6,21 +6,23 @@
  * 安卓返回键经 popstate 哨兵逐层剥离。
  * 金额口径说明见 ledgerStore 头注释；页内「设置」同步展示给用户。
  */
-import { App, Notice, Platform, moment, setIcon } from "obsidian";
+import { App, Menu, Modal, Notice, Platform, moment, setIcon } from "obsidian";
 import type DaybookPlugin from "./main";
 import { ConfirmModal } from "./TodayPanel";
 import { LedgerDataPage } from "./ledgerDataPage";
 import { lunarLabel } from "./lunar";
 import { accountIconKey, allIconChoices, guessAccountIcon, iconLabel, renderAccountIcon } from "./accountIcons";
 import { guessCategoryIcon, renderCategoryIcon } from "./categoryIcons";
-import { activatable, CategoryEditModal, CategoryManager, PromptModal } from "./ledgerCategoryUI";
+import { activatable, CategoryEditModal, CategoryManager, editCategoryDialogs } from "./ledgerCategoryUI";
 import { NotionMultiSelect, NotionSelect } from "./notionSelect";
+import { scrollPageToTop } from "./pageScroll";
+import { keywordMatch } from "./filters";
+import type { SearchHit } from "./memoSearch";
 import {
   EXPENSE_COLORS, INCOME_COLORS, Box, Slice,
   compactMoney, donutArcs, niceCeil, pctText, seriesPoints, smoothAreaPath, smoothPath, toSlices,
-} from "./ledgerCharts";
-import {
-  LedgerStore, LedgerRecord, LedgerConfig, LedgerKind, LedgerCategory,
+} from "./ledgerCharts";import {
+  LedgerStore, LedgerRecord, LedgerConfig, LedgerKind, LedgerCategory, LedgerAccount,
   actualAmount, baseAmount, fmtMoney, round2, summarize, categoryStats,
   accountBalances, reimbTotal, makeRecordId,
 } from "./ledgerStore";
@@ -75,6 +77,58 @@ const uid = () => `l${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).
 const num = (s: string): number => { const n = parseFloat(s); return isFinite(n) && n > 0 ? n : 0; };
 const WEEK = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 
+/** 长按触发时的轻微震动（参照 TodayPanel 的内联做法，仅移动端有效，失败静默） */
+function hapticTick(): void {
+  try {
+    const win = activeWindow as unknown as {
+      Capacitor?: { Plugins?: Record<string, { impactLight?: (o: { style: string }) => Promise<unknown> } | undefined> };
+      navigator?: { vibrate?: (pattern: number | number[]) => boolean };
+    };
+    void Promise.resolve(win.Capacitor?.Plugins?.Haptics?.impactLight?.({ style: "light" })).catch(() => {});
+    win.navigator?.vibrate?.(10);
+  } catch { /* 不支持则忽略 */ }
+}
+
+/**
+ * 长按手势（移动端长按类别格子 = 编辑该分类；桌面按住鼠标左键同理）：
+ * 按住 ~500ms 触发；提前松手或滑动超过 8px 视为普通点按 / 滚动，不触发。
+ * 触发后吞掉松手紧跟的 click（先注册先执行，拦在格子自己的选中监听之前），
+ * 否则编辑弹窗底下又把分类选中。contextmenu 一并拦掉，免得安卓长按弹系统菜单。
+ */
+function longPress(el: HTMLElement, run: () => void): void {
+  let timer: number | null = null;
+  let fired = false;
+  let sx = 0;
+  let sy = 0;
+  const cancel = () => { if (timer !== null) { activeWindow.clearTimeout(timer); timer = null; } };
+  el.addEventListener("click", e => {
+    if (!fired) return;
+    fired = false;
+    e.stopImmediatePropagation();
+    e.preventDefault();
+  });
+  el.addEventListener("pointerdown", (e: PointerEvent) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    fired = false;
+    sx = e.clientX;
+    sy = e.clientY;
+    /* 指针捕获：手指 / 鼠标滑出格子后 move / up 仍送达这里，滚动误触才能正确取消 */
+    try { el.setPointerCapture(e.pointerId); } catch { /* 部分环境不支持，仍可用 */ }
+    timer = activeWindow.setTimeout(() => {
+      timer = null;
+      fired = true;
+      hapticTick();
+      run();
+    }, 500);
+  });
+  el.addEventListener("pointermove", e => {
+    if (timer !== null && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) cancel();
+  });
+  el.addEventListener("pointerup", cancel);
+  el.addEventListener("pointercancel", cancel);
+  el.addEventListener("contextmenu", e => e.preventDefault());
+}
+
 interface Draft {
   id?: string; createdAt: number;
   date: string; kind: LedgerKind; amount: string; currency: string; rate: string;
@@ -83,6 +137,97 @@ interface Draft {
   reimbAccountId: string; reimbAmount: string; reimbDetail: string;
   address: string; creator: string; other: string; files: string;
   clock?: string; importBatchId?: string;
+}
+
+/**
+ * 调整资产余额：差额二选一——「生成记录」记一条收入 / 支出（流水可追溯这笔调整），
+ * 或「直接调整」改期初余额（不产生记录）。差额为正记收入、为负记支出。
+ */
+class AssetBalanceModal extends Modal {
+  constructor(
+    app: App,
+    private opts: {
+      store: LedgerStore;
+      account: LedgerAccount;
+      current: number;
+      save: () => Promise<void>;
+      onDone: () => void;
+    },
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    const acct = this.opts.account;
+    const sym = symbolOf(acct.currency || this.opts.store.config.baseCurrency);
+    contentEl.createEl("h3", { text: `调整「${acct.name}」余额` });
+    contentEl.createDiv({
+      cls: "db-led-field-label",
+      text: `当前余额 ${sym}${fmtMoney(this.opts.current)}，填入调整后的新余额。`,
+    });
+    const input = contentEl.createEl("input", {
+      cls: "db-led-input db-led-input-num",
+      attr: { type: "text", inputMode: "decimal", "aria-label": "新余额", placeholder: sym },
+    });
+    input.value = String(this.opts.current);
+    input.focus();
+    input.select();
+    contentEl.createDiv({
+      cls: "db-led-note",
+      text: "「生成记录」：差额自动记为收入（调增）或支出（调减），流水里可追溯；「直接调整」：只改期初余额，不产生任何记录。",
+    });
+
+    const submit = (mode: "record" | "direct"): void => {
+      const target = round2(parseFloat(input.value));
+      if (!isFinite(target) || target < 0) { new Notice("请输入正确的余额"); return; }
+      const delta = round2(target - this.opts.current);
+      this.close();
+      if (delta === 0) return;
+      void (async () => {
+        const store = this.opts.store;
+        if (mode === "direct") {
+          acct.opening = round2((acct.opening || 0) + delta);
+          await this.opts.save();
+          new Notice(`「${acct.name}」余额已调整为 ${sym}${fmtMoney(target)}（未生成记录）`);
+        } else {
+          const kind: LedgerKind = delta > 0 ? "income" : "expense";
+          const cat = store.config.categories.find(c => c.kind === kind);
+          await store.addRecord({
+            id: makeRecordId(),
+            date: moment().format("YYYY-MM-DD"),
+            kind,
+            amount: round2(Math.abs(delta)),
+            categoryId: cat?.id ?? "",
+            accountId: acct.id,
+            ledgerId: store.config.ledgers[0]?.id ?? "",
+            refund: 0,
+            discount: 0,
+            note: `余额调整：${sym}${fmtMoney(this.opts.current)} → ${sym}${fmtMoney(target)}`,
+            tags: [],
+            currency: acct.currency || store.config.baseCurrency,
+            address: "",
+            creator: store.config.username || "余额调整",
+            other: "",
+            files: [],
+            createdAt: Date.now(),
+          });
+          new Notice(`差额 ${sym}${fmtMoney(Math.abs(delta))} 已记为${kind === "income" ? "收入" : "支出"}`);
+        }
+        this.opts.onDone();
+      })();
+    };
+
+    const btns = contentEl.createDiv({ cls: "db-mood-modal-btns" });
+    const cancel = btns.createEl("button", { text: "取消" });
+    cancel.onclick = () => this.close();
+    const direct = btns.createEl("button", { text: "直接调整" });
+    direct.onclick = () => submit("direct");
+    const rec = btns.createEl("button", { text: "生成记录", cls: "mod-cta" });
+    rec.onclick = () => submit("record");
+  }
+
+  onClose(): void { this.contentEl.empty(); }
 }
 
 export class LedgerPage {
@@ -99,6 +244,10 @@ export class LedgerPage {
   /** 报表下钻页（null = 在报表主页）；哨兵让安卓返回键先退回报表主页 */
   private reportDrill: ReportDrill | null = null;
   private drillSentinelArmed = false;
+  /** 资产详情二级页（账户 id，null = 不在详情）；统计 / 流水切换记在 assetView */
+  private assetDetailId: string | null = null;
+  private assetSentinelArmed = false;
+  private assetView: "flow" | "stats" = "flow";
   /** SVG clipPath 需要文档内唯一 id，自增一次即可（整页重渲染也不复用旧节点） */
   private clipSeq = 0;
   private statsRange: "month" | "quarter" | "year" = "month";
@@ -160,6 +309,13 @@ export class LedgerPage {
         this.render();
         return;
       }
+      /* 资产详情压在资产页之上（详情里点流水还会再压一层记录编辑页）：返回键先退回资产页 */
+      if (this.assetDetailId) {
+        this.assetSentinelArmed = false;
+        this.assetDetailId = null;
+        this.render();
+        return;
+      }
       if (this.overlay && this.sentinelArmed) {
         this.sentinelArmed = false;
         this.closeOverlay(false);
@@ -209,6 +365,7 @@ export class LedgerPage {
     if (this.overlay) { const armed = this.sentinelArmed; this.sentinelArmed = false; this.overlay.remove(); this.overlay = null; if (armed && Platform.isMobileApp) window.history.back(); }
     let back = 0;
     if (this.editSentinelArmed) { back++; this.editSentinelArmed = false; this.editRec = null; }
+    if (this.assetSentinelArmed) { back++; this.assetSentinelArmed = false; this.assetDetailId = null; }
     if (this.mgrSentinelArmed) { back++; this.mgrSentinelArmed = false; this.mgrOpen = false; }
     if (this.drillSentinelArmed) { back++; this.drillSentinelArmed = false; this.reportDrill = null; }
     if (this.iconSentinelArmed) { back++; this.iconSentinelArmed = false; this.iconPickFor = null; }
@@ -241,6 +398,11 @@ export class LedgerPage {
       this.editRec = null;
       this.editFormEl = null;
     }
+    if (this.assetDetailId) {
+      if (this.assetSentinelArmed) back++;
+      this.assetSentinelArmed = false;
+      this.assetDetailId = null;
+    }
     if (this.reportDrill) {
       if (this.drillSentinelArmed) back++;
       this.drillSentinelArmed = false;
@@ -259,7 +421,77 @@ export class LedgerPage {
     this.reclaimHistory(back);
     this.page = p;
     this.render();
-    this.host.scrollIntoView({ block: "start" });
+    scrollPageToTop(this.host);
+  }
+
+  /**
+   * 顶栏「···」→ 搜索记账：是否有未完成的记录编辑（整页编辑页 / 记一笔浮层）。
+   * 搜索跳转会直接进另一条记录的编辑页，先把当前改动挡在门外。
+   */
+  isEditing(): boolean {
+    return !!this.editRec || !!this.overlay;
+  }
+
+  /**
+   * 全量记录关键词搜索：匹配备注 / 分类 / 账户 / 账本 / 标签 / 金额 / 日期。
+   * 空关键词返回最近记录（弹窗打开时就有内容可看）。
+   */
+  searchRecords(keyword: string): SearchHit[] {
+    const q = keyword.trim();
+    return this.store.records
+      .filter(r => !q || keywordMatch(this.recordSearchText(r), q))
+      .slice()
+      .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt)
+      .slice(0, 300)
+      .map((r): SearchHit => {
+        const isTr = r.kind === "transfer";
+        const cat = this.catOf(r.categoryId);
+        const sub = cat?.subs.find(s => s.id === r.subId);
+        const from = this.acctOf(r.accountId)?.name ?? "";
+        const to = this.acctOf(r.toAccountId ?? "")?.name ?? "";
+        const bits = [
+          r.clock,
+          isTr ? `${from} → ${to}` : from,
+          r.note,
+          r.tags?.map(t => `#${t}`).join(" "),
+        ].filter((v): v is string => !!v);
+        const sym = symbolOf(r.currency || this.cfg.baseCurrency);
+        const sign = isTr ? "" : r.kind === "income" ? "+" : "-";
+        return {
+          id: r.id,
+          date: r.date.slice(5),
+          text: isTr ? "转账" : [cat?.name ?? "未分类", sub?.name].filter(Boolean).join(" · "),
+          meta: bits.join(" · "),
+          badge: `${sign}${sym}${fmtMoney(actualAmount(r))}`,
+          badgeTone: isTr ? "tr" : r.kind === "income" ? "in" : "out",
+        };
+      });
+  }
+
+  /** 搜索里点中的记录：直接进整页编辑（与列表点行同一条路径） */
+  openRecordById(id: string): void {
+    const r = this.store.records.find(x => x.id === id);
+    if (!r) return;
+    this.openRecordEditor(this.draftFrom(r));
+  }
+
+  private recordSearchText(r: LedgerRecord): string {
+    const cat = this.catOf(r.categoryId);
+    const sub = cat?.subs.find(s => s.id === r.subId);
+    return [
+      r.date,
+      r.clock ?? "",
+      r.note,
+      (r.tags ?? []).join(" "),
+      cat?.name ?? "",
+      sub?.name ?? "",
+      this.acctOf(r.accountId)?.name ?? "",
+      this.acctOf(r.toAccountId ?? "")?.name ?? "",
+      this.ledgerName(r.ledgerId),
+      r.kind === "expense" ? "支出" : r.kind === "income" ? "收入" : "转账",
+      String(actualAmount(r)),
+      r.currency || this.cfg.baseCurrency,
+    ].join("\n");
   }
 
   /** 退掉 n 枚自己压进去的返回键哨兵（只在手机端有历史可退） */
@@ -324,6 +556,7 @@ export class LedgerPage {
     host.addClass("db-led-root");
     this.onPageTitle?.(PAGE_TITLES[this.page]);
     if (this.editRec) { this.renderRecordEditor(host); return; }
+    if (this.assetDetailId) { this.renderAssetDetail(host); return; }
     if (this.settingsSub) { this.renderSettingsSub(host); return; }
     if (this.reportDrill) { this.renderReportDrill(host); return; }
 
@@ -459,7 +692,7 @@ export class LedgerPage {
 
   private renderList(body: HTMLElement): void {
     this.renderViewTabs(body);
-    this.renderMonthNav(body);
+    this.renderMonthNav(body, ym => this.store.monthRecords(ym, this.listLedgerId || undefined).length > 0);
 
     const filters = body.createDiv({ cls: "db-led-filters" });
     const ledgerSel = filters.createEl("select", { cls: "db-led-select", attr: { "aria-label": "选择账本" } });
@@ -564,6 +797,8 @@ export class LedgerPage {
         if (g.tr) line("is-tr", `转${calMoney(g.tr)}`);
         if (!g.exp && !g.inc && !g.tr) line("", lunarLabel(ds));
       } else {
+        /* 没流水的日子整体降淡（日期数字变浅），和有账的日子一眼区分 */
+        cell.addClass("is-norec");
         const lab = lunarLabel(ds);
         if (lab) line("", lab);
       }
@@ -594,7 +829,8 @@ export class LedgerPage {
 
     const c2 = this.card(body, "账户");
     bals.forEach(b => {
-      const row = c2.createDiv({ cls: "db-led-acct-row" });
+      /* 整行可点 → 资产详情（历史流水 + 走势 / 转入转出 / 分类环形图 + 调整余额） */
+      const row = c2.createDiv({ cls: "db-led-acct-row is-link" });
       const ic = row.createSpan({ cls: "db-led-acct-icon" });
       renderAccountIcon(ic, accountIconKey(b.account), b.account.name);
       row.createSpan({ cls: "db-led-acct-name", text: b.account.name });
@@ -606,11 +842,274 @@ export class LedgerPage {
         val.createSpan({ cls: "db-led-acct-conv", text: `≈${symbolOf(base)}${fmtMoney(b.balanceBase)}` });
       }
       val.toggleClass("is-neg", b.balanceBase < 0);
+      const chev = row.createSpan({ cls: "db-led-acct-chev" });
+      setIcon(chev, "chevron-right");
+      row.addEventListener("click", () => this.openAssetDetail(b.account.id));
     });
     body.createDiv({
       cls: "db-led-note",
-      text: "余额 = 期初余额 + 收入 − 实际支出（支出按 金额−优惠−退款 计）；转账只移动账户间余额，不计收支。期初与账户在「设置」里修改。",
+      text: "余额 = 期初余额 + 收入 − 实际支出（支出按 金额−优惠−退款 计）；转账只移动账户间余额，不计收支。点账户看历史流水与走势；期初与账户在「设置」里修改，余额也可在详情页调整。",
     });
+  }
+
+  /* ────────────────────────── 资产详情 ────────────────────────── */
+
+  /** 点资产行：进整页二级页（历史流水 / 统计），安卓返回键经哨兵退回资产页 */
+  private openAssetDetail(id: string): void {
+    if (this.assetDetailId === id) return;
+    this.assetDetailId = id;
+    this.assetView = "flow";
+    if (Platform.isMobileApp) {
+      this.assetSentinelArmed = true;
+      window.history.pushState({ daybookBack: "ledger-asset" }, "");
+    }
+    this.render();
+    this.host.scrollIntoView({ block: "start" });
+  }
+
+  /** 返回资产页；reclaim=false 用于 popstate 路径（哨兵已被系统消费） */
+  private closeAssetDetail(reclaim = true): void {
+    const armed = this.assetSentinelArmed;
+    this.assetSentinelArmed = false;
+    this.assetDetailId = null;
+    this.render();
+    if (reclaim && armed) this.reclaimHistory(1);
+  }
+
+  /** 账户在某日（含当日）为止的余额；dateStr 空 = 含全部记录。口径与 accountBalances 完全一致 */
+  private accountBalanceAt(accountId: string, dateStr: string): number {
+    const acct = this.cfg.accounts.find(a => a.id === accountId);
+    let bal = acct?.opening || 0;
+    for (const r of this.store.records) {
+      if (dateStr && r.date > dateStr) continue;
+      const v = actualAmount(r);
+      if (r.kind === "transfer") {
+        if (r.accountId === accountId) bal -= v;
+        else if (r.toAccountId === accountId) bal += v;
+        continue;
+      }
+      if (r.accountId !== accountId) continue;
+      bal += r.kind === "income" ? v : -v;
+    }
+    return round2(bal);
+  }
+
+  /** 资产详情：返回 + 标题 + 余额卡（可调整）+ 流水 / 统计两个视图 */
+  private renderAssetDetail(host: HTMLElement): void {
+    const acct = this.cfg.accounts.find(a => a.id === this.assetDetailId);
+    if (!acct) { this.assetDetailId = null; this.render(); return; }
+    const head = host.createDiv({ cls: "db-led-subhead" });
+    const back = head.createEl("button", { cls: "db-led-back", attr: { type: "button", "aria-label": "返回资产" } });
+    setIcon(back.createSpan({ cls: "db-led-back-icon" }), "chevron-left");
+    back.createSpan({ text: "返回" });
+    back.addEventListener("click", () => this.closeAssetDetail());
+    head.createSpan({ cls: "db-led-subhead-title", text: acct.name });
+
+    const body = host.createDiv({ cls: "db-led-body" });
+
+    /* 余额卡：当前余额 + 本月转入转出小字 + 「调整余额」入口 */
+    const monthRecs = this.store.records.filter(r =>
+      (r.accountId === acct.id || r.toAccountId === acct.id) && r.date.slice(0, 7) === this.month);
+    let inSum = 0;
+    let outSum = 0;
+    monthRecs.forEach(r => {
+      const v = actualAmount(r);
+      if (r.kind === "transfer") {
+        if (r.toAccountId === acct.id) inSum += v;
+        else if (r.accountId === acct.id) outSum += v;
+      } else if (r.kind === "income") inSum += v;
+      else outSum += v;
+    });
+    const hero = this.card(body, "");
+    hero.addClass("db-led-asset-hero");
+    const heroRow = hero.createDiv({ cls: "db-led-asset-hero-row" });
+    heroRow.createDiv({
+      cls: "db-led-asset-balance",
+      text: `${symbolOf(acct.currency)}${fmtMoney(this.accountBalanceAt(acct.id, ""))}`,
+    });
+    const editBtn = heroRow.createEl("button", {
+      cls: "db-led-btn-ghost", attr: { type: "button", "aria-label": "调整余额" },
+    });
+    setIcon(editBtn.createSpan({ cls: "db-cat-upload-icon" }), "pencil");
+    editBtn.createSpan({ text: "调整余额" });
+    editBtn.addEventListener("click", () => new AssetBalanceModal(this.app, {
+      store: this.store,
+      account: acct,
+      current: this.accountBalanceAt(acct.id, ""),
+      save: () => this.saveCfg(),
+      onDone: () => this.render(),
+    }).open());
+    hero.createDiv({
+      cls: `db-led-asset-hero-sub${monthRecs.length ? "" : " is-empty"}`,
+      text: monthRecs.length
+        ? `${this.month.replace("-", "年")}月　转入 ${fmtMoney(round2(inSum))} · 转出 ${fmtMoney(round2(outSum))}`
+        : `${this.month.replace("-", "年")}月暂无流水`,
+    });
+
+    /* 视图切换：流水（全部历史）/ 统计（走势 + 两张环形图） */
+    const seg = body.createDiv({ cls: "db-led-seg is-tabs" });
+    ([{ key: "flow" as const, label: "流水" }, { key: "stats" as const, label: "统计" }]).forEach(v => {
+      const b = seg.createDiv({
+        cls: `db-led-seg-btn${this.assetView === v.key ? " is-active" : ""}`, text: v.label,
+      });
+      b.addEventListener("click", () => {
+        if (this.assetView === v.key) return;
+        this.assetView = v.key;
+        this.render();
+      });
+    });
+
+    if (this.assetView === "flow") this.renderAssetFlow(body, acct);
+    else this.renderAssetStats(body, acct);
+  }
+
+  /** 流水视图：该账户的全部历史，按天分组（点一条进记录编辑页） */
+  private renderAssetFlow(body: HTMLElement, acct: LedgerAccount): void {
+    const recs = this.store.records
+      .filter(r => r.accountId === acct.id || r.toAccountId === acct.id)
+      .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
+    if (!recs.length) {
+      body.createDiv({ cls: "db-led-empty", text: "该账户还没有流水记录。" });
+      return;
+    }
+    this.renderDayGroups(body, recs);
+  }
+
+  /** 统计视图：所选月份的每日余额走势 + 本月转入 / 转出环形 + 本月支出分类环形（顶部月份导航切换） */
+  private renderAssetStats(body: HTMLElement, acct: LedgerAccount): void {
+    this.renderMonthNav(body, ym =>
+      this.store.records.some(r => (r.accountId === acct.id || r.toAccountId === acct.id) && r.date.slice(0, 7) === ym));
+
+    /* 1) 资产走势：所选月份内每一天的收盘余额（左右箭头切月） */
+    const trendCard = this.card(body, "资产走势");
+    this.renderDailyBalanceChart(trendCard, acct, this.month);
+
+    /* 本月流水（转入 / 转出与分类图共用） */
+    const recs = this.store.records.filter(r =>
+      (r.accountId === acct.id || r.toAccountId === acct.id) && r.date.slice(0, 7) === this.month);
+    let moneyIn = 0;
+    let moneyOut = 0;
+    let inCount = 0;
+    let outCount = 0;
+    recs.forEach(r => {
+      const v = actualAmount(r);
+      if (r.kind === "transfer") {
+        if (r.toAccountId === acct.id) { moneyIn += v; inCount++; }
+        else if (r.accountId === acct.id) { moneyOut += v; outCount++; }
+      } else if (r.kind === "income") { moneyIn += v; inCount++; }
+      else { moneyOut += v; outCount++; }
+    });
+    moneyIn = round2(moneyIn);
+    moneyOut = round2(moneyOut);
+
+    /* 2) 转入 / 转出环形（按月）：颜色按语义固定，不随大小换位 */
+    const total = round2(moneyIn + moneyOut);
+    const ioSlices: Slice[] = [];
+    if (moneyIn > 0) {
+      ioSlices.push({ label: "转入", total: moneyIn, count: inCount, frac: total > 0 ? moneyIn / total : 0, color: INCOME_COLORS[0] });
+    }
+    if (moneyOut > 0) {
+      ioSlices.push({ label: "转出", total: moneyOut, count: outCount, frac: total > 0 ? moneyOut / total : 0, color: EXPENSE_COLORS[0] });
+    }
+    const ioCard = this.card(body, `${this.month.replace("-", "年")}月 转入 / 转出`);
+    ioCard.addClass("db-led-rpt-card");
+    const ioTop = ioCard.createDiv({ cls: "db-led-rpt-top" });
+    this.reportDonut(ioTop.createDiv({ cls: "db-led-rpt-donut" }), ioSlices, "净流入", fmtMoney(round2(moneyIn - moneyOut)));
+    const ioLegend = ioTop.createDiv({ cls: "db-led-rpt-legend" });
+    if (!ioSlices.length) ioLegend.createDiv({ cls: "db-led-rpt-legend-empty", text: "本月暂无流水" });
+    ioSlices.forEach(s => {
+      const lrow = ioLegend.createDiv({ cls: "db-led-rpt-lg-row" });
+      lrow.createSpan({ cls: "db-led-rpt-lg-dot" }).style.background = s.color;
+      lrow.createSpan({ cls: "db-led-rpt-lg-name", text: s.label });
+      lrow.createSpan({ cls: "db-led-rpt-lg-val", text: fmtMoney(s.total) });
+      lrow.createSpan({ cls: "db-led-rpt-lg-pct", text: `${s.count}笔` });
+    });
+
+    /* 3) 支出分类环形（按月，仅该账户的支出） */
+    const groups = new Map<string, number>();
+    let expTotal = 0;
+    recs.filter(r => r.kind === "expense").forEach(r => {
+      const key = this.catOf(r.categoryId)?.name ?? "未分类";
+      groups.set(key, round2((groups.get(key) || 0) + baseAmount(r, this.cfg)));
+      expTotal += baseAmount(r, this.cfg);
+    });
+    const catCard = this.card(body, `${this.month.replace("-", "年")}月 支出分类`);
+    catCard.addClass("db-led-rpt-card");
+    const catTop = catCard.createDiv({ cls: "db-led-rpt-top" });
+    const catSlices = toSlices([...groups].map(([label, t]) => ({ label, total: t })), EXPENSE_COLORS, REPORT_SLICES);
+    this.reportDonut(catTop.createDiv({ cls: "db-led-rpt-donut" }), catSlices, "支出", fmtMoney(round2(expTotal)));
+    const catLegend = catTop.createDiv({ cls: "db-led-rpt-legend" });
+    if (!catSlices.length) catLegend.createDiv({ cls: "db-led-rpt-legend-empty", text: "本月暂无支出" });
+    catSlices.forEach(s => {
+      const lrow = catLegend.createDiv({ cls: "db-led-rpt-lg-row" });
+      lrow.createSpan({ cls: "db-led-rpt-lg-dot" }).style.background = s.color;
+      lrow.createSpan({ cls: "db-led-rpt-lg-name", text: s.label });
+      lrow.createSpan({ cls: "db-led-rpt-lg-val", text: fmtMoney(s.total) });
+      lrow.createSpan({ cls: "db-led-rpt-lg-pct", text: pctText(s.frac) });
+    });
+  }
+
+  /**
+   * 每日余额曲线：所选月份内 1 号到月末，每一天的收盘余额（含当日及之前的全部流水）。
+   * 本月尚未过完的日子余额自然持平（没有未来流水），曲线到月末一路走平。
+   * 走 reportTrend 的同一套图表 CSS，横轴只标 1 / 5 / 10 … / 月末，31 天全标会叠字。
+   */
+  private renderDailyBalanceChart(card: HTMLElement, acct: LedgerAccount, ym: string): void {
+    const days = moment(`${ym}-01`).daysInMonth();
+    const values: number[] = [];
+    for (let d = 1; d <= days; d++) values.push(this.accountBalanceAt(acct.id, `${ym}-${pad2(d)}`));
+
+    const head = card.createDiv({ cls: "db-led-rpt-chart-head" });
+    head.createSpan({ cls: "db-led-rpt-chart-title", text: "每日余额" });
+    head.createSpan({
+      cls: "db-led-rpt-chart-sub",
+      text: `${ym.replace("-", "年")}月 · 月初 ${fmtMoney(values[0])} → 月末 ${fmtMoney(values[values.length - 1])}`,
+    });
+
+    const chart = card.createDiv({ cls: "db-led-rpt-chart is-in" });
+    const W = Math.max(240, Math.round(chart.clientWidth) || 320);
+    const H = 150;
+    const padT = 24;
+    const right = 12;
+    const box: Box = { x: 12, y: padT, w: W - 12 - right, h: H - padT - 26 };
+    /* 余额曲线不强制 0 基线：按当月波动范围自适应，波动太小时也给足可视高度避免一条直线贴边 */
+    const vMax = Math.max(...values);
+    const vMin = Math.min(...values);
+    const span = Math.max(vMax - vMin, Math.abs(vMax) * 0.02, 1);
+    const hi = vMax + span * 0.1;
+    const lo = vMin - span * 0.1;
+    const pts = seriesPoints(values, box, hi, lo);
+
+    const svg = this.svg(chart, "svg", {
+      viewBox: `0 0 ${W} ${H}`, class: "db-led-rpt-svg", preserveAspectRatio: "xMidYMid meet",
+    });
+    const area = smoothAreaPath(pts, box.y + box.h);
+    if (area) this.svg(svg, "path", { d: area, class: "db-led-rpt-area is-in" });
+    const line = smoothPath(pts);
+    if (line) this.svg(svg, "path", { d: line, class: "db-led-rpt-line is-in" });
+    /* 数值标在 1 / 5 / 10 … / 月末这几天的点上（31 天全标必重叠），其余点只画点 */
+    pts.forEach((p, i) => {
+      const d = i + 1;
+      const labeled = d === 1 || d === days || d % 5 === 0;
+      this.svg(svg, "circle", {
+        cx: p.x, cy: p.y, r: labeled ? 2.6 : 2,
+        class: `db-led-rpt-pt${values[i] < 0 ? " is-neg" : ""}`,
+      });
+      if (!labeled) return;
+      const t = this.svg(svg, "text", {
+        x: Math.min(W - 14, Math.max(14, p.x)),
+        y: Math.max(11, p.y - 7),
+        class: "db-led-rpt-vtxt",
+      });
+      t.textContent = compactMoney(values[i]);
+    });
+    values.forEach((_, i) => {
+      const d = i + 1;
+      const t = this.svg(svg, "text", { x: pts[i] ? pts[i].x : 0, y: H - 6, class: "db-led-rpt-axis" });
+      t.textContent = d === 1 || d === days || d % 5 === 0 ? String(d) : "";
+    });
+    const foot = chart.createDiv({ cls: "db-led-rpt-chart-foot" });
+    foot.setText(`${ym.replace("-", "年")}月每日收盘余额；用上方箭头切换月份。`);
   }
 
   /* ────────────────────────── 统计 ────────────────────────── */
@@ -693,7 +1192,8 @@ export class LedgerPage {
 
   /**
    * 报表页：最上面是统计字段切换（小类 / 大类 / 账户），下面依次是
-   * 支出卡（环形图 + 明细 + 逐月面积图）、收入卡（同结构）、收支对比横向柱、月收支差面积图。
+   * 支出卡（环形图 + 明细）、收入卡（同结构）、逐月收支双线面积图、收支对比横向柱、月收支差面积图。
+   * 支出 / 收入不再各配一张走势图：两张图合并成一张双线图，省下一整块高度。
    * 环形图与逐月图都按当前字段口径走，金额一律折算基准币。
    */
   private renderReport(body: HTMLElement): void {
@@ -706,23 +1206,30 @@ export class LedgerPage {
         this.render();
       });
     });
-    this.renderMonthNav(body);
-    body.createDiv({ cls: "db-led-group-hint", text: "点环形图看分类明细，点面积图看逐月明细。" });
+    this.renderMonthNav(body, ym => this.store.monthRecords(ym).length > 0);
+    body.createDiv({ cls: "db-led-group-hint", text: "点环形图看分类明细，点逐月收支图看支出 / 收入明细。" });
 
     const months = this.reportMonths();
     const recs = this.store.monthRecords(this.month);
-    (["expense", "income"] as LedgerKind[]).forEach(kind => this.reportSplitCard(body, kind, months, recs));
+    (["expense", "income"] as LedgerKind[]).forEach(kind => this.reportSplitCard(body, kind, recs));
+    this.reportFlowCard(body, months);
     this.reportCompareCard(body, recs);
     this.reportDiffCard(body, months);
   }
 
-  /** 月份切换条（视图页与报表页共用，切月走 stepMonth） */
-  private renderMonthNav(parent: HTMLElement): void {
+  /**
+   * 月份切换条（视图页与报表页共用，切月走 stepMonth）。
+   * hasData：传入时对「选中的这个月没有数据」降淡显示月份名，一眼区分有账 / 没账的月份。
+   */
+  private renderMonthNav(parent: HTMLElement, hasData?: (ym: string) => boolean): void {
     const nav = parent.createDiv({ cls: "db-led-monthnav" });
     const prev = nav.createEl("button", { cls: "db-led-nav-btn", attr: { type: "button", "aria-label": "上一月" } });
     setIcon(prev, "chevron-left");
     prev.addEventListener("click", () => this.stepMonth(-1));
-    nav.createSpan({ cls: "db-led-nav-label", text: `${this.month.replace("-", "年")}月` });
+    nav.createSpan({
+      cls: `db-led-nav-label${hasData && !hasData(this.month) ? " is-empty" : ""}`,
+      text: `${this.month.replace("-", "年")}月`,
+    });
     const next = nav.createEl("button", { cls: "db-led-nav-btn", attr: { type: "button", "aria-label": "下一月" } });
     setIcon(next, "chevron-right");
     next.addEventListener("click", () => this.stepMonth(1));
@@ -780,8 +1287,8 @@ export class LedgerPage {
 
   private monthLabel(ym: string): string { return `${parseInt(ym.slice(5), 10)}月`; }
 
-  /** 支出 / 收入卡：环形图 + 右侧明细，下面接该方向的逐月面积图 */
-  private reportSplitCard(body: HTMLElement, kind: LedgerKind, months: string[], recs: LedgerRecord[]): void {
+  /** 支出 / 收入卡：环形图 + 右侧明细（逐月走势统一放到下面的「逐月收支」双线图） */
+  private reportSplitCard(body: HTMLElement, kind: LedgerKind, recs: LedgerRecord[]): void {
     const isOut = kind === "expense";
     const slices = toSlices(this.reportGroups(kind, recs), isOut ? EXPENSE_COLORS : INCOME_COLORS, REPORT_SLICES);
     const total = round2(slices.reduce((s, x) => s + x.total, 0));
@@ -806,11 +1313,6 @@ export class LedgerPage {
       row.createSpan({ cls: "db-led-rpt-lg-val", text: fmtMoney(s.total) });
       row.createSpan({ cls: "db-led-rpt-lg-pct", text: pctText(s.frac) });
     });
-
-    const series = months.map(ym => this.reportMonthTotal(ym, kind));
-    const chart = this.reportTrend(card, isOut ? "逐月支出" : "逐月收入", months, series, isOut ? "out" : "in");
-    this.tappable(chart, isOut ? "查看逐月支出明细" : "查看逐月收入明细",
-      () => this.openReportDrill(isOut ? "trend-out" : "trend-in"));
   }
 
   /** 环形图：扇区由 ledgerCharts 算好角度，中心文字用 HTML 叠一层（不跟 SVG 缩放） */
@@ -917,6 +1419,112 @@ export class LedgerPage {
     return chart;
   }
 
+  /**
+   * 逐月收支双线面积图：收入 / 支出共用一条 0 基线、一套纵轴刻度，
+   * 一眼看出两条曲线的量级与走势；点图弹菜单挑方向进各自的逐月明细。
+   */
+  private reportFlowCard(body: HTMLElement, months: string[]): void {
+    const card = this.card(body, "逐月收支");
+    card.addClass("db-led-rpt-card db-led-rpt-flow");
+    const outVals = months.map(ym => this.reportMonthTotal(ym, "expense"));
+    const inVals = months.map(ym => this.reportMonthTotal(ym, "income"));
+    const hasData = outVals.some(v => v !== 0) || inVals.some(v => v !== 0);
+
+    const head = card.createDiv({ cls: "db-led-rpt-chart-head" });
+    head.createSpan({ cls: "db-led-rpt-chart-title", text: "收支走势" });
+    const key = head.createSpan({ cls: "db-led-rpt-chart-sub db-led-rpt-flow-key" });
+    (["out", "in"] as const).forEach(tone => {
+      const item = key.createSpan({ cls: "db-led-rpt-flow-key-item" });
+      item.createSpan({ cls: `db-led-rpt-lg-dot is-${tone}` });
+      item.createSpan({ text: tone === "out" ? "支出" : "收入" });
+    });
+    if (!hasData) key.createSpan({ text: "暂无数据" });
+
+    const chart = card.createDiv({ cls: "db-led-rpt-chart is-flow" });
+    const W = Math.max(240, Math.round(chart.clientWidth) || 320);
+    const H = 164;
+    const padT = 26;          // 顶部留出点上的数值标注
+    const gutter = 12;
+    const right = 12;
+    const box: Box = { x: gutter, y: padT, w: W - gutter - right, h: H - padT - 24 };
+    const hi = niceCeil(Math.max(0, ...outVals, ...inVals));
+    const outPts = seriesPoints(outVals, box, hi, 0);
+    const inPts = seriesPoints(inVals, box, hi, 0);
+    const baseY = box.y + box.h;
+
+    const svg = this.svg(chart, "svg", {
+      viewBox: `0 0 ${W} ${H}`, class: "db-led-rpt-svg", preserveAspectRatio: "xMidYMid meet",
+    });
+
+    // 三条等分参考线 + 0 基线：两条曲线共用刻度，靠参考线读量级
+    if (hasData) {
+      [0.25, 0.5, 0.75].forEach(frac => {
+        const y = baseY - box.h * frac;
+        this.svg(svg, "line", { x1: box.x, y1: y, x2: W - right, y2: y, class: "db-led-rpt-grid" });
+      });
+      this.svg(svg, "line", { x1: box.x, y1: baseY, x2: W - right, y2: baseY, class: "db-led-rpt-zero" });
+    }
+
+    // 面积先画（收入在下、支出在上，交叠处自然混色），曲线后画保证清晰
+    const outArea = smoothAreaPath(outPts, baseY);
+    const inArea = smoothAreaPath(inPts, baseY);
+    if (inArea) this.svg(svg, "path", { d: inArea, class: "db-led-rpt-area is-in" });
+    if (outArea) this.svg(svg, "path", { d: outArea, class: "db-led-rpt-area is-out" });
+    const inLine = smoothPath(inPts);
+    const outLine = smoothPath(outPts);
+    if (inLine) this.svg(svg, "path", { d: inLine, class: "db-led-rpt-line is-in" });
+    if (outLine) this.svg(svg, "path", { d: outLine, class: "db-led-rpt-line is-out" });
+
+    // 数值标注：两条线太近时，高的标在上、低的标在下，避免叠字
+    const label = (p: { x: number; y: number }, v: number, tone: "out" | "in", below: boolean) => {
+      const y = below ? Math.min(H - 21, p.y + 12) : Math.max(11, p.y - 7);
+      const t = this.svg(svg, "text", {
+        x: Math.min(W - 18, Math.max(18, p.x)), y, class: `db-led-rpt-vtxt is-${tone}`,
+      });
+      t.textContent = compactMoney(v);
+    };
+    if (hasData) {
+      months.forEach((_, i) => {
+        const o = outPts[i];
+        const n = inPts[i];
+        this.svg(svg, "circle", { cx: o.x, cy: o.y, r: 2.6, class: "db-led-rpt-pt is-out" });
+        this.svg(svg, "circle", { cx: n.x, cy: n.y, r: 2.6, class: "db-led-rpt-pt is-in" });
+        if (Math.abs(o.y - n.y) < 16) {
+          const outIsUpper = o.y <= n.y;
+          label(outIsUpper ? o : n, outIsUpper ? outVals[i] : inVals[i], outIsUpper ? "out" : "in", false);
+          label(outIsUpper ? n : o, outIsUpper ? inVals[i] : outVals[i], outIsUpper ? "in" : "out", true);
+        } else {
+          label(o, outVals[i], "out", false);
+          label(n, inVals[i], "in", false);
+        }
+      });
+    }
+    months.forEach((ym, i) => {
+      const t = this.svg(svg, "text", {
+        x: outPts[i] ? outPts[i].x : 0, y: H - 6, class: "db-led-rpt-axis",
+      });
+      t.textContent = this.monthLabel(ym);
+    });
+
+    const avg = (vals: number[]) => round2(vals.reduce((s, v) => s + v, 0) / (vals.length || 1));
+    const foot = chart.createDiv({ cls: "db-led-rpt-chart-foot" });
+    foot.setText(`支出月均 ${fmtMoney(avg(outVals))} ｜ 收入月均 ${fmtMoney(avg(inVals))}，点图看明细。`);
+
+    this.tappable(chart, "查看逐月收支明细", () => {
+      const menu = new Menu();
+      menu.addItem(item => {
+        item.setTitle("逐月支出明细").setIcon("trending-down");
+        item.onClick(() => this.openReportDrill("trend-out"));
+      });
+      menu.addItem(item => {
+        item.setTitle("逐月收入明细").setIcon("trending-up");
+        item.onClick(() => this.openReportDrill("trend-in"));
+      });
+      const rect = chart.getBoundingClientRect();
+      menu.showAtPosition({ x: rect.left + 12, y: rect.top + 12 });
+    });
+  }
+
   /** 本月 支出 / 收入 / 结余 横向柱对比（长度按三者最大绝对值归一） */
   private reportCompareCard(body: HTMLElement, recs: LedgerRecord[]): void {
     const sum = summarize(recs, this.cfg);
@@ -981,7 +1589,7 @@ export class LedgerPage {
       window.history.pushState({ daybookBack: "ledger-report-drill" }, "");
     }
     this.render();
-    this.host.scrollIntoView({ block: "start" });
+    scrollPageToTop(this.host);
   }
 
   /** 返回报表主页；reclaim=false 用于 popstate 路径（哨兵已被系统消费） */
@@ -1005,7 +1613,7 @@ export class LedgerPage {
     head.createSpan({ cls: "db-led-subhead-title", text: this.reportDrillTitle(d) });
 
     const body = host.createDiv({ cls: "db-led-body" });
-    this.renderMonthNav(body);
+    this.renderMonthNav(body, ym => this.store.monthRecords(ym).length > 0);
     const months = this.reportMonths();
     if (d === "donut-out" || d === "donut-in") this.reportDrillPie(body, d === "donut-out" ? "expense" : "income");
     else this.reportDrillTrend(body, d, months);
@@ -1149,7 +1757,7 @@ export class LedgerPage {
       window.history.pushState({ daybookBack: "ledger-settings-sub" }, "");
     }
     this.render();
-    this.host.scrollIntoView({ block: "start" });
+    scrollPageToTop(this.host);
   }
 
   /** 返回设置菜单；reclaim=false 用于 popstate 路径（哨兵已被系统消费） */
@@ -1174,7 +1782,7 @@ export class LedgerPage {
       window.history.pushState({ daybookBack: "ledger-icon-pick" }, "");
     }
     this.render();
-    this.host.scrollIntoView({ block: "start" });
+    scrollPageToTop(this.host);
   }
 
   private closeIconPicker(): void {
@@ -1242,7 +1850,7 @@ export class LedgerPage {
       });
     };
     const guess = guessAccountIcon(acct.name);
-    choice("", `自动 · ${iconLabel(guess)}`, guess);
+    choice("", guess ? `自动 · ${iconLabel(guess)}` : "自动 · 首字", guess);
     allIconChoices().forEach(c => choice(c.key, c.label, c.key));
   }
 
@@ -1476,7 +2084,7 @@ export class LedgerPage {
       window.history.pushState({ daybookBack: "ledger-record-edit" }, "");
     }
     this.render();
-    this.host.scrollIntoView({ block: "start" });
+    scrollPageToTop(this.host);
   }
 
   /** 返回列表；reclaim=false 用于 popstate 路径（哨兵已被系统消费）。改动不落库，与 sheet 的关闭一致 */
@@ -1628,7 +2236,8 @@ export class LedgerPage {
       });
     }
 
-    /* 类别宫格（P1：圆图标 + 文字，有二级的带「···」角标；转账无类别） */
+    /* 类别宫格（P1：圆图标 + 文字，有二级的带「···」角标；转账无类别）。
+       点按 = 选中分类；长按 = 编辑该分类（一级 / 二级同一套弹窗，含删除迁移） */
     if (!isTr) {
       body.createDiv({ cls: "db-led-field-label", text: "类别" });
       const cats = cfg.categories.filter(c => c.kind === draft.kind);
@@ -1640,6 +2249,13 @@ export class LedgerPage {
         renderCategoryIcon(circle, c.icon || guessCategoryIcon(c.name), c.name);
         if (c.subs.length) circle.createDiv({ cls: "db-led-catdot", text: "···" });
         cell.createDiv({ cls: "db-led-catname", text: c.name });
+        /* 长按 = 编辑该分类（改名 / 图标 / 删除），与分类管理同一套弹窗；要先于 click 注册才能拦住误触 */
+        longPress(cell, () => editCategoryDialogs(this.app, {
+          store: this.store,
+          save: () => this.saveCfg(),
+          cat: c,
+          onDone: () => this.buildSheet(sheet, draft, false),
+        }));
         cell.addEventListener("click", () => {
           const on = draft.categoryId !== c.id;
           draft.categoryId = on ? c.id : "";
@@ -1683,8 +2299,17 @@ export class LedgerPage {
             panel.createDiv({ cls: `db-led-catcell is-sub${draft.subId === s.id ? " is-active" : ""}` }),
             `${selCat.name} · ${s.name}`,
           );
-          cell.createDiv({ cls: "db-led-catcircle", text: s.name.trim().slice(0, 1) || "?" });
+          const circle = cell.createDiv({ cls: "db-led-catcircle" });
+          renderCategoryIcon(circle, s.icon || guessCategoryIcon(s.name), s.name);
           cell.createDiv({ cls: "db-led-catname", text: s.name });
+          /* 长按 = 编辑二级分类（改名 / 图标 / 删除） */
+          longPress(cell, () => editCategoryDialogs(this.app, {
+            store: this.store,
+            save: () => this.saveCfg(),
+            cat: selCat,
+            sub: s,
+            onDone: () => this.buildSheet(sheet, draft, false),
+          }));
           cell.addEventListener("click", () => {
             draft.subId = draft.subId === s.id ? "" : s.id;
             this.buildSheet(sheet, draft, false);
@@ -1694,11 +2319,14 @@ export class LedgerPage {
         setIcon(addSub.createDiv({ cls: "db-led-catcircle" }), "plus");
         addSub.createDiv({ cls: "db-led-catname", text: "新增" });
         addSub.addEventListener("click", () => {
-          new PromptModal(this.app, {
-            title: `「${selCat.name}」添加二级分类`,
-            placeholder: "二级分类名称",
-            onConfirm: v => void (async () => {
-              const sub = { id: uid(), name: v };
+          new CategoryEditModal(this.app, {
+            title: `「${selCat.name}」新增二级分类`,
+            name: "",
+            icon: "",
+            kind: selCat.kind === "income" ? "income" : "expense",
+            canDelete: false,
+            onSave: (name, icon) => void (async () => {
+              const sub = { id: uid(), name, icon };
               selCat.subs.push(sub);
               await this.saveCfg();
               draft.categoryId = selCat.id;

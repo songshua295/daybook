@@ -3,12 +3,15 @@
  *
  * 存储形式（纯文本，肉眼可读、可直接用 hledger 记账软件打开）：
  *
- *   2026-10-19 12:36 * 沙县小吃 ; id:x1, kind:expense, acc:a2, disc:5.00, at:1697...
+ *   2026-10-19 12:36 * 沙县小吃 ; id:x1, led:l1, cur:CNY, disc:5.00, at:1697...
  *       expenses:餐饮:午餐            ¥95.00
  *       assets:支付宝                 ¥-95.00
  *
  * 口径约定：
  * - 每笔交易 = 一条 hledger transaction，日期行 = 日期 [HH:mm] * 描述；行尾 `;` 后是插件元数据标签。
+ * - 标签只保留分录表达不了的信息：id（身份）、led（账本）、cur/rate（币种折算）、disc/ref（优惠/退款原貌）、
+ *   reb/ramt/rdet（报销）、t（标签）、addr/by/oth/f（地址/创建人/其他/附件）、at（创建时间）、batch（导入批次）。
+ *   类型与分类/账户由分录账户名推导，时间由日期行表达，不再重复写 kind/cat/sub/acc/to/clock。
  * - 分录金额一律是「实际金额」：支出 = 金额 − 优惠 − 退款（写入分录，便于直接观看与 hledger 统计）；
  *   优惠/退款等原貌保存在标签里（disc/ref），解析时反推回 amount。
  * - 支出分录 expenses:分类[:子分类]，收入分录 incomes:分类，账户分录 assets:账户。
@@ -167,14 +170,11 @@ export function makeNameResolver(cfg: LedgerConfig): JournalNameResolver {
 /* ── 序列化 ── */
 
 function recordTags(r: LedgerRecord): Tags {
+  // 只写「分录本身表达不了」的信息（身份、账本、币种、优惠/退款、报销、标签、附件、排序）。
+  // kind / cat / sub / acc / to 都能从分录账户名推导，clock 已写在日期行里，不再重复写入。
   const tags: Tags = {
     id: r.id,
-    kind: r.kind,
     led: r.ledgerId,
-    cat: r.categoryId,
-    sub: r.subId ?? "",
-    acc: r.accountId,
-    to: r.kind === "transfer" ? (r.toAccountId ?? "") : "",
     cur: r.currency,
     rate: r.rate !== undefined ? String(r.rate) : "",
     disc: r.discount ? r.discount.toFixed(2) : "",
@@ -187,7 +187,6 @@ function recordTags(r: LedgerRecord): Tags {
     by: r.creator ?? "",
     oth: r.other ?? "",
     at: String(r.createdAt ?? ""),
-    clock: r.clock ?? "",
     batch: r.importBatchId ?? "",
     f: (r.files ?? []).join("|"),
   };

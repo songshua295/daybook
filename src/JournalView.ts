@@ -7,19 +7,21 @@ import { openPlanSortSheet } from "./planSortSheet";
 import { DEFAULT_SETTINGS, getVisibleSections, type SectionConfig, type MoodOption } from "./settings";
 import { ConfirmModal, TodayPanel } from "./TodayPanel";
 import { FilterPanel } from "./FilterPanel";
-import { MemoSearchModal } from "./memoSearch";
+import { MemoSearchModal, type SearchHit } from "./memoSearch";
 import { MemoSidebar } from "./memoSidebar";
 import {
   activeDimensions,
   collectTags,
   emptyFilter,
   isFilterActive,
+  keywordMatch,
   matchHabit,
   type SectionFilter,
   type StatusFilter,
 } from "./filters";
 import { attachMemoEditor } from "./memoEditor";
 import { DashboardPage } from "./DashboardView";
+import { AiChatPage } from "./aiPage";
 import { LedgerPage } from "./ledgerPage";
 import { DramaPage } from "./dramaPage";
 import { DRAMA_FIELDS, dramaFieldOn } from "./dramaStore";
@@ -1184,6 +1186,23 @@ export class DaybookView extends ItemView {
   private dashPage: DashboardPage | null = null;
   private dashHiddenEls: HTMLElement[] = [];
   private dashSentinelArmed = false;
+  /* ── 页内新页面：AI 助手（与 Dashboard 同一套返回键哨兵） ── */
+  private aiEl: HTMLElement | null = null;
+  private aiPage: AiChatPage | null = null;
+  private aiHiddenEls: HTMLElement[] = [];
+  private aiSentinelArmed = false;
+  /** AI 悬浮球：底部居中真悬浮（挂在视图内容容器上，不进滚动容器），一键进出 */
+  private aiFabEl: HTMLElement | null = null;
+  /** 软键盘是否弹出：弹出期间悬浮球收起，别浮在打字区上方碍事 */
+  private aiKbVisible = false;
+  /** AI 页输入框聚焦中：桌面端没有键盘事件，靠焦点感知编辑态收起悬浮球 */
+  private aiEditing = false;
+  /* 悬浮球长按拖动状态：计时器 / 是否拖动中 / 拖后吞掉紧跟的 click */
+  private fabPressTimer: number | null = null;
+  private fabDragging = false;
+  private fabSuppressClick = false;
+  /** AI 写过文件：关闭本页时整页重建，让当前章节读到新内容 */
+  private aiDirty = false;
   /** 记账章节：五页浮层实例（视图重建 / 关闭时销毁） */
   private ledgerPage: LedgerPage | null = null;
   /** 追剧章节：列表页 + 页内编辑二级页实例 */
@@ -1203,11 +1222,16 @@ export class DaybookView extends ItemView {
     this.activeSectionId = this.plugin.settings.lastSectionId || this.activeSectionId;
     this.buildUI();
     this.setupViewportAdapter();
+    this.ensureAiFab();
     // Android 返回键哨兵弹出（Dashboard 新页打开期间 armed）：揭开新页而不是退出应用
     this.registerDomEvent(window, "popstate", () => {
       if (this.dashSentinelArmed) {
         this.dashSentinelArmed = false;
         this.closeDashboard(false);
+      }
+      if (this.aiSentinelArmed) {
+        this.aiSentinelArmed = false;
+        this.closeAiPage(false);
       }
       // 追剧「显示字段」抽屉：哨兵被弹出（返回键）就收抽屉，浮层由 close 负责移除
       if (this.dramaFieldsSentinelArmed) this.closeDramaFieldsPanel(false);
@@ -1223,6 +1247,12 @@ export class DaybookView extends ItemView {
     this.ledgerPage = null;
     this.dramaPage?.destroy();
     this.dramaPage = null;
+    this.aiPage?.destroy();
+    this.aiPage = null;
+    this.aiFabEl?.remove();
+    this.aiFabEl = null;
+    this.cancelFabPress();
+    this.fabDragging = false;
     // 停止录音并释放资源
     if (this.mediaRecorder && this.isRecording) {
       try {
@@ -1236,11 +1266,15 @@ export class DaybookView extends ItemView {
 
   private setupViewportAdapter() {
     const vp = activeWindow.visualViewport;
-    this._vpResizeHandler = () => this.applyViewportSize();
+    this._vpResizeHandler = () => {
+      this.applyViewportSize();
+      this.applyAiFabPos();   // 容器尺寸变了（转屏 / 分栏拖拽）：位置按比例重夹
+    };
     vp?.addEventListener("resize", this._vpResizeHandler);
     // 工作区尺寸变化（分栏拖拽、旋转屏幕、原生头部显隐）时重算避让与折叠
     this.registerEvent(this.app.workspace.on("resize", () => {
       this.applyViewportSize();
+      this.applyAiFabPos();
     }));
     // 安卓端 Obsidian 滚动/键盘时会显隐底部导航栏、设置键盘高度（body class/style 变化），
     // 几何有变化时重算根容器高度与底部让位，保证固定输入栏/面板不被遮挡
@@ -1257,12 +1291,16 @@ export class DaybookView extends ItemView {
     // 与自带移动工具栏用的是同一事件源——是键盘弹出/收起最确定、最及时的信号
     this._kbShowHandler = () => {
       this.applyViewportSize();
+      this.aiKbVisible = true;
+      this.syncAiFab();
       // 原生层先派发事件、后落地 --keyboard-height 与动画，连续补测对齐
       activeWindow.setTimeout(() => this.applyViewportSize(), 80);
       activeWindow.setTimeout(() => this.applyViewportSize(), 300);
     };
     this._kbHideHandler = () => {
       this.applyViewportSize();
+      this.aiKbVisible = false;
+      this.syncAiFab();
       activeWindow.setTimeout(() => this.applyViewportSize(), 150);
     };
     activeWindow.addEventListener("keyboardWillShow", this._kbShowHandler as EventListener);
@@ -1472,8 +1510,9 @@ export class DaybookView extends ItemView {
   }
 
   buildUI() {
-    // 整页重建会清空 DOM：先揭开并释放 Dashboard 新页，避免残留死引用与哨兵历史
+    // 整页重建会清空 DOM：先揭开并释放页内新页，避免残留死引用与哨兵历史
     this.closeDashboard();
+    this.closeAiPage(true, false);
     const root = this.containerEl.children[1] as HTMLElement;
     this.renderedDate = moment().format("YYYY-MM-DD");
     this.destroyLiveEditors();
@@ -1556,6 +1595,8 @@ export class DaybookView extends ItemView {
     if (this.filterOpen) this.openFilterPanel();
     // 重建后立即让位底部导航栏（等不到下一次视口 resize）
     this.applyViewportSize();
+    // 切章节会销毁旧页面实例（不走它们的渲染回调）：这里兜底重算悬浮球显隐
+    this.syncAiFab();
   }
 
   /** 顶栏（memos 式三区）：左=筛选、中=章节切换标题、右=操作；窄屏溢出折进「＋」菜单 */
@@ -1681,9 +1722,15 @@ export class DaybookView extends ItemView {
     const specs: { icon: string; label: string; run: () => void; el?: HTMLElement }[] =
       active?.type === "memos"
         ? [{ icon: "search", label: "搜索闪念", run: () => this.openMemoSearch(active) }]
-        : active?.type === "ledger"
-          ? [{ icon: "arrow-left-right", label: "切换页面", run: () => this.openLedgerPageMenu() }]
-          : [];
+        : active?.type === "plans"
+          ? [{ icon: "search", label: "搜索计划", run: () => this.openPlansSearch(active) }]
+          : active?.type === "habits"
+            ? [{ icon: "search", label: "搜索习惯", run: () => this.openHabitSearch(active) }]
+            : active?.type === "drama"
+              ? [{ icon: "search", label: "搜索追剧", run: () => this.openDramaSearch(active) }]
+              : active?.type === "ledger"
+                ? [{ icon: "arrow-left-right", label: "切换页面", run: () => this.openLedgerPageMenu() }]
+                : [];
     specs.forEach(a => {
       const el = right.createEl("button", {
         cls: "db-topbar-btn",
@@ -1733,6 +1780,14 @@ export class DaybookView extends ItemView {
           v => { rs.planShowDetail = v; });
         grouped = true;
       }
+      // 记账已有「切换页面」占着右区，搜索收进「···」（每章最多 2 个按钮）
+      if (active?.type === "ledger" && !this.ledgerPage?.isEditing()) {
+        menu.addItem(item => {
+          item.setTitle("搜索记账").setIcon("search");
+          item.onClick(() => this.openLedgerSearch(active));
+        });
+        grouped = true;
+      }
       this.topbarActions.forEach(a => {
         if (!a.el?.hasClass("is-folded")) return;
         menu.addItem(item => item.setTitle(a.label).setIcon(a.icon).onClick(() => a.run()));
@@ -1747,6 +1802,10 @@ export class DaybookView extends ItemView {
         grouped = true;
       }
       if (grouped) menu.addSeparator();
+      menu.addItem(item => {
+        item.setTitle("AI 助手").setIcon("sparkles");
+        item.onClick(() => this.openAiPage());
+      });
       menu.addItem(item => {
         item.setTitle("打开统计面板").setIcon("layout-dashboard");
         item.onClick(() => void this.plugin.activateDashboard());
@@ -2006,6 +2065,7 @@ export class DaybookView extends ItemView {
     this.dashEl = host;
     this.dashPage = new DashboardPage(this.app, this.plugin, host, this.containerEl, "db-page-dashboard", () => this.closeDashboard());
     void this.dashPage.open();
+    this.syncAiFab();
     // 哨兵历史条目：返回键弹出它 → popstate 揭开新页；没有条目时返回键会直接退出应用
     if (Platform.isMobileApp) {
       this.dashSentinelArmed = true;
@@ -2030,6 +2090,214 @@ export class DaybookView extends ItemView {
     this.dashHiddenEls = [];
     // 顶栏刚从 display:none 恢复，重测折叠布局
     this.fitTopbar();
+    this.syncAiFab();
+  }
+
+  /* ── 页内新页面：AI 助手 ──
+     与 Dashboard 同构：隐藏顶栏与滚动区（只隐藏不销毁），聊天页放进文档流；
+     安卓返回键通过哨兵历史揭开本页。期间写过文件的话，关闭时整页重建，
+     让当前章节立即读到新数据（习惯列表、今日记录流、记账/追剧都会重新加载）。 */
+  openAiPage(): void {
+    if (this.aiEl) return;
+    const root = this.containerEl.children[1] as HTMLElement;
+    this.closeFilterPanel();
+    const candidates = [
+      root.querySelector(".db-topbar"),
+      root.querySelector(".db-scroll"),
+    ];
+    this.aiHiddenEls = candidates.filter(
+      (el): el is HTMLElement => el instanceof HTMLElement && el.style.display !== "none"
+    );
+    this.aiHiddenEls.forEach(el => {
+      el.dataset.dbPrevDisplay = el.style.display;
+      el.style.display = "none";
+    });
+    const host = root.createDiv({ cls: "db-page-ai" });
+    this.aiEl = host;
+    this.aiDirty = false;
+    /* 输入框聚焦 = 编辑态：悬浮球收起（点击别处 / 键盘收起失焦后还原）。
+       监听挂在 AI 页宿主上，随 aiEl.remove() 一起消失，不用手动清理。 */
+    host.addEventListener("focusin", (e: FocusEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT")) { this.aiEditing = true; this.syncAiFab(); }
+    });
+    host.addEventListener("focusout", (e: FocusEvent) => {
+      const next = e.relatedTarget as HTMLElement | null;
+      if (next && (next.tagName === "TEXTAREA" || next.tagName === "INPUT")) return;
+      this.aiEditing = false;
+      this.syncAiFab();
+    });
+    this.aiPage = new AiChatPage(
+      this.app, this.plugin, host, this.containerEl,
+      () => this.closeAiPage(),
+      () => { this.aiDirty = true; },
+    );
+    void this.aiPage.open();
+    this.syncAiFab();
+    if (Platform.isMobileApp) {
+      this.aiSentinelArmed = true;
+      window.history.pushState({ daybookBack: "ai-page" }, "");
+    }
+  }
+
+  closeAiPage(reclaimSentinel = true, refresh = true): void {
+    if (!this.aiEl) return;
+    const armed = this.aiSentinelArmed;
+    this.aiSentinelArmed = false;
+    this.aiEditing = false;   // 焦点监听随 aiEl 移除，编辑态标记在这里归零
+    // 非返回键路径关闭（菜单返回、切章节、关视图）：回收未消费的哨兵
+    if (reclaimSentinel && armed) window.history.back();
+    this.aiPage?.destroy();
+    this.aiPage = null;
+    this.aiEl.remove();
+    this.aiEl = null;
+    this.aiHiddenEls.forEach(el => {
+      el.style.display = el.dataset.dbPrevDisplay || "";
+      delete el.dataset.dbPrevDisplay;
+    });
+    this.aiHiddenEls = [];
+    const dirty = this.aiDirty;
+    this.aiDirty = false;
+    if (refresh && dirty) {
+      this.buildUI();
+      return;
+    }
+    this.fitTopbar();
+    this.syncAiFab();
+  }
+
+  /**
+   * AI 悬浮球：挂在视图内容容器（containerEl）上绝对定位——root（.view-content）本身就是
+   * 滚动容器，往它里面放只会「随内容滚 / 占一行」，算不上悬浮。整页重建（buildUI 的
+   * root.empty()）动不到它，所以只在 onOpen 建一次。顺带保证容器有定位上下文可锚。
+   * 点击 = 进出 AI 页；长按（~300ms）进入拖动，位置按「x 宽度比例 + y 像素」持久化。
+   */
+  private ensureAiFab(): void {
+    if (this.aiFabEl?.isConnected) return;
+    if (getComputedStyle(this.containerEl).position === "static") {
+      this.containerEl.style.position = "relative";
+    }
+    const fab = this.containerEl.createDiv({
+      cls: "db-ai-fab",
+      attr: { role: "button", tabindex: "0", "aria-label": "打开 AI 助手", title: "AI 助手" },
+    });
+    setIcon(fab, "sparkles");
+    fab.addEventListener("click", () => {
+      /* 拖完松手的那一下 pointerup 会跟发一个 click：吞掉，别当成「点按」 */
+      if (this.fabSuppressClick) { this.fabSuppressClick = false; return; }
+      if (this.aiEl) this.closeAiPage(); else this.openAiPage();
+    });
+    fab.addEventListener("keydown", (e: KeyboardEvent) => {
+      if ((e.key === "Enter" || e.key === " ") && !e.repeat) {
+        e.preventDefault();
+        if (this.aiEl) this.closeAiPage(); else this.openAiPage();
+      }
+    });
+    /* 长按拖动：按住 ~300ms 进拖动态，跟手移动并实时记忆；轻移 / 抬手则还是普通点按。
+       监听挂 window（不 setPointerCapture），手指移出球也能继续拖。 */
+    fab.addEventListener("pointerdown", (e: PointerEvent) => {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      const startX = e.clientX;
+      const startY = e.clientY;
+      /* 抓取偏移：拖动保持手指相对球的位置，而不是把球瞬移到指尖 */
+      const rect0 = this.containerEl.getBoundingClientRect();
+      const grabDx = (parseFloat(fab.style.left) || rect0.width / 2) - (startX - rect0.left);
+      const grabDy = (parseFloat(fab.style.bottom) || 22) - (rect0.bottom - startY);
+      this.fabPressTimer = activeWindow.setTimeout(() => {
+        this.fabPressTimer = null;
+        this.fabDragging = true;
+        fab.addClass("is-drag");
+      }, 300);
+      const move = (ev: PointerEvent) => {
+        if (!this.fabDragging) {
+          /* 还没进入拖动就滑走 = 用户在滚动页面：撤掉长按计时，别拦着 */
+          if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 8) this.cancelFabPress();
+          return;
+        }
+        ev.preventDefault();
+        this.dragAiFabTo(ev.clientX, ev.clientY, grabDx, grabDy);
+      };
+      const up = () => {
+        this.cancelFabPress();
+        if (this.fabDragging) {
+          this.fabDragging = false;
+          fab.removeClass("is-drag");
+          this.fabSuppressClick = true;
+          this.applyAiFabPos();
+          void this.plugin.saveSettings();
+        }
+        cleanup();
+      };
+      const cleanup = () => {
+        activeWindow.removeEventListener("pointermove", move);
+        activeWindow.removeEventListener("pointerup", up);
+        activeWindow.removeEventListener("pointercancel", up);
+      };
+      activeWindow.addEventListener("pointermove", move, { passive: false });
+      activeWindow.addEventListener("pointerup", up);
+      activeWindow.addEventListener("pointercancel", up);
+    });
+    /* 手机长按会弹系统菜单 / 选中文字：球上全部拦掉（右键同理） */
+    fab.addEventListener("contextmenu", e => e.preventDefault());
+    this.aiFabEl = fab;
+    this.syncAiFab();
+  }
+
+  /** 取消未触发的长按计时 */
+  private cancelFabPress(): void {
+    if (this.fabPressTimer) { activeWindow.clearTimeout(this.fabPressTimer); this.fabPressTimer = null; }
+  }
+
+  /** 拖动中：球心跟随手指（保持抓取偏移），夹在容器内，位置实时写进设置（松手才落盘） */
+  private dragAiFabTo(cx: number, cy: number, grabDx: number, grabDy: number): void {
+    const fab = this.aiFabEl;
+    if (!fab) return;
+    const rect = this.containerEl.getBoundingClientRect();
+    const w = this.containerEl.clientWidth || 1;
+    const h = this.containerEl.clientHeight || 1;
+    const r = 20;
+    const x = Math.min(Math.max(cx - rect.left + grabDx, r), Math.max(r, w - r));
+    const yBottom = Math.min(Math.max(rect.bottom - cy + grabDy, r), Math.max(r, h - r));
+    fab.style.left = `${Math.round(x)}px`;
+    fab.style.bottom = `${Math.round(yBottom)}px`;
+    this.plugin.settings.aiFabPos = { x: x / w, y: yBottom };
+  }
+
+  /** 把持久化位置落到球上：x 存宽度比例（转屏自适应），bottom 存像素；越界夹回容器内 */
+  private applyAiFabPos(minBottom = 0): void {
+    const fab = this.aiFabEl;
+    if (!fab) return;
+    const w = this.containerEl.clientWidth || 320;
+    const h = this.containerEl.clientHeight || 480;
+    const pos = this.plugin.settings.aiFabPos;
+    const r = 20;
+    const x = pos ? pos.x * w : w / 2;
+    const y = Math.max(pos ? pos.y : 22, minBottom);
+    fab.style.left = `${Math.round(Math.min(Math.max(x, r), Math.max(r, w - r)))}px`;
+    fab.style.bottom = `${Math.round(Math.min(Math.max(y, r), Math.max(r, h - r)))}px`;
+  }
+
+  /**
+   * AI 悬浮球显隐：统计面板 / 记账、追剧编辑二级页 / 软键盘弹出时收起（前两者自带返回，
+   * 编辑页底部是全宽吸底操作条，球停底部会压住「确定」；键盘弹出时别浮在打字区上）。
+   * AI 页里保持显示——点击即退出，但位置要抬到底部输入条上方，别压住输入框。
+   * 编辑页的开 / 关通过 LedgerPage.onPageTitle 与 DramaPage.onRendered 回调同步到这里。
+   */
+  private syncAiFab(): void {
+    const fab = this.aiFabEl;
+    if (!fab) return;
+    const hide = !!(
+      this.dashEl || this.aiKbVisible || this.aiEditing ||
+      this.ledgerPage?.isEditing() || this.dramaPage?.isEditing()
+    );
+    fab.style.display = hide ? "none" : "";
+    if (hide) return;
+    let minBottom = 0;
+    if (this.aiEl) {
+      const composer = this.aiEl.querySelector(".db-ai-composer");
+      if (composer instanceof HTMLElement) minBottom = composer.offsetHeight + 10;
+    }
+    this.applyAiFabPos(minBottom);
   }
 
   /** 追剧「显示字段」抽屉：逐字段开关，点一下即时写设置并就地重排列表 */
@@ -2112,17 +2380,121 @@ export class DaybookView extends ItemView {
   /** 保存后局部刷新今日记录流（不重建输入区，保留草稿与滚动位置） */
   /** 打开闪念搜索弹窗：确认后把关键词与快捷筛选写入章节筛选并刷新记录流 */
   private openMemoSearch(section: SectionConfig) {
+    this.openEntrySearch(section);
+  }
+
+  /** 计划：与闪念同一套记录流搜索，只是占位文案按章节区分 */
+  private openPlansSearch(section: SectionConfig) {
+    this.openEntrySearch(section, "搜索计划或任务，空格分隔多个关键词");
+  }
+
+  /** 记录流章节（闪念 / 计划）共用：确认后把关键词与快捷筛选写回章节筛选 */
+  private openEntrySearch(section: SectionConfig, placeholder?: string) {
     const f = this.getFilter(section.id);
     new MemoSearchModal(this.app, {
       plugin: this.plugin,
       section,
       initialKeyword: f.q,
+      initialQuick: f.quick,
+      placeholder,
       onApply: (keyword, quick) => {
         f.q = keyword.trim();
         f.quick = quick;
         this.applyFilter();
         if (this.filterOpen) void this.openFilterPanel();
       },
+    }).open();
+  }
+
+  /** 习惯：搜习惯名与打卡备注，确认后把关键词写回章节筛选（列表按关键词过滤） */
+  private openHabitSearch(section: SectionConfig) {
+    const f = this.getFilter(section.id);
+    const status: StatusFilter = f.status === "archived" ? "archived" : "active";
+    new MemoSearchModal(this.app, {
+      plugin: this.plugin,
+      section,
+      initialKeyword: f.q,
+      placeholder: "搜索习惯名或打卡备注",
+      unit: "个习惯",
+      pills: [],
+      filterable: false,
+      load: async (keyword): Promise<{ hits: SearchHit[] }> => {
+        const q = keyword.trim();
+        const data = await loadHabits(this.app, this.plugin.settings);
+        const hits: SearchHit[] = [];
+        data.forEach(d => {
+          const h = d.config;
+          if ((h.archived ? "archived" : "active") !== status) return;
+          const doneRows = d.rows.filter(r => !r.skipped);
+          if (q) {
+            const notes = doneRows.filter(r => r.note).map(r => `${r.date} ${r.note}`).join("\n");
+            if (!keywordMatch(`${h.icon} ${h.name}\n${notes}`, q)) return;
+          }
+          const byDateDesc = (a: CheckinRow, b: CheckinRow) => b.date.localeCompare(a.date);
+          const last = doneRows.slice().sort(byDateDesc)[0];
+          const hitNote = q ? doneRows.filter(r => r.note && keywordMatch(r.note, q)).sort(byDateDesc)[0] : null;
+          hits.push({
+            id: h.id,
+            date: last ? last.date.slice(5) : "",
+            text: `${h.icon || ""} ${h.name}`.trim(),
+            meta: [
+              hitNote ? `${hitNote.date.slice(5)} ${hitNote.note}` : "",
+              doneRows.length ? `累计 ${doneRows.length} 次` : "还没有打卡",
+            ].filter(Boolean).join(" · "),
+          });
+        });
+        return { hits };
+      },
+      onApply: (keyword) => {
+        f.q = keyword.trim();
+        f.quick = [];
+        this.applyFilter();
+        if (this.filterOpen) void this.openFilterPanel();
+      },
+    }).open();
+  }
+
+  /** 记账：搜全部记录的备注 / 分类 / 账户 / 标签 / 金额，点结果直接进记录编辑页 */
+  private openLedgerSearch(section: SectionConfig) {
+    if (!this.ledgerPage) return;
+    if (this.ledgerPage.isEditing()) {
+      new Notice("请先保存或返回列表再搜索");
+      return;
+    }
+    const page = this.ledgerPage;
+    new MemoSearchModal(this.app, {
+      plugin: this.plugin,
+      section,
+      initialKeyword: "",
+      placeholder: "搜索备注、分类、账户、标签或金额",
+      unit: "笔记录",
+      pills: [],
+      filterable: false,
+      load: async (keyword) => ({ hits: page.searchRecords(keyword) }),
+      onApply: () => {},
+      onPick: (hit) => page.openRecordById(hit.id),
+    }).open();
+  }
+
+  /** 追剧：搜剧名 / 原名 / 类型 / 标签 / 状态，点结果直接进编辑二级页 */
+  private openDramaSearch(section: SectionConfig) {
+    if (!this.dramaPage) return;
+    if (this.dramaPage.isEditing()) {
+      new Notice("请先保存或返回列表再搜索");
+      return;
+    }
+    const page = this.dramaPage;
+    new MemoSearchModal(this.app, {
+      plugin: this.plugin,
+      section,
+      initialKeyword: "",
+      placeholder: "搜索剧名、原名、类型或标签",
+      unit: "部剧",
+      pills: [],
+      filterable: false,
+      load: async (keyword) => ({ hits: page.searchShows(keyword) }),
+      onApply: () => {},
+      onPick: (hit) => page.openShowById(hit.id),
     }).open();
   }
 
@@ -2149,6 +2521,8 @@ export class DaybookView extends ItemView {
       if (this._currentSection?.type !== "ledger") return;
       const lbl = this.topbarEl?.querySelector(".db-section-trigger-label");
       if (lbl) lbl.setText(`${this._currentSection.label} · ${t}`);
+      // 每次记账页渲染（含编辑二级页进出）都会走这里：顺路同步悬浮球显隐
+      this.syncAiFab();
     };
     await this.ledgerPage.mount();
   }
@@ -2159,6 +2533,8 @@ export class DaybookView extends ItemView {
     container.addClass("db-drama-tab");
     this.dramaPage?.destroy();
     this.dramaPage = new DramaPage(this.app, this.plugin, container);
+    // 追剧每次渲染（含编辑二级页进出）通知悬浮球同步显隐
+    this.dramaPage.onRendered = () => this.syncAiFab();
     await this.dramaPage.mount();
   }
 

@@ -207,6 +207,34 @@ export async function readAllJournalEntries(
 }
 
 /**
+ * 只解析指定日期的日记文件（文件名 = YYYY-MM-DD），供 AI 查询按需读取。
+ * 与 readAllJournalEntries 共用解析缓存，不额外扫描无关文件。
+ */
+export async function readJournalEntriesForDates(
+  app: App,
+  settings: DaybookSettings,
+  dates: string[],
+  filterTypes?: Set<string>
+): Promise<JournalEntry[]> {
+  const wanted = new Set(dates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)));
+  if (!wanted.size) return [];
+  const folders = getSectionFolders(settings);
+  const files = app.vault.getMarkdownFiles()
+    .filter(f => wanted.has(f.basename))
+    .filter(f => folders.some(folder => {
+      const norm = normalizePath(folder);
+      return f.path.startsWith(norm + "/") || f.path === norm;
+    }))
+    .sort((a, b) => b.basename.localeCompare(a.basename));
+  const configSig = getAllSections(settings).map(sc => `${sc.id}:${sc.label}:${sc.type}`).join("|");
+  const entries: JournalEntry[] = [];
+  for (const file of files) {
+    entries.push(...await parseJournalFile(app, file, settings, filterTypes, configSig));
+  }
+  return entries;
+}
+
+/**
  * 解析单个日记文件，提取所有条目
  * 缓存键 = 路径|筛选|章节签名，命中后再用原文全等校验才复用（cachedRead 走内存，
  * 便宜的读取换掉昂贵的重复解析）。

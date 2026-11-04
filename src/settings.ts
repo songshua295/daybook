@@ -1,8 +1,9 @@
-import { App, Modal, Notice, PluginSettingTab, Setting, setIcon } from "obsidian";
+import { App, Modal, Notice, PluginSettingTab, Setting, TextComponent, setIcon } from "obsidian";
 import type DaybookPlugin from "./main";
 import { VIEW_TYPE_JOURNAL } from "./JournalView";
 import type { LegacyHabitDef } from "./habitManager";
 import type { DramaFieldKey } from "./dramaStore";
+import { testAiConnection } from "./aiClient";
 
 /** 视图默认打开位置：left=左侧边栏（默认）/ main=主窗口新标签页 / right=右侧边栏 */
 export type OpenLocation = "left" | "main" | "right";
@@ -48,6 +49,42 @@ export interface TypeToggles {
 /** 类型是否启用（undefined 视为启用） */
 export function isTypeEnabled(settings: DaybookSettings, type: SectionType): boolean {
   return settings.typeEnabled?.[type] !== false;
+}
+
+/* ── AI 助手：第三方厂商预设 ──
+   协议只有三种：OpenAI 兼容（多数国产厂商/Ollama）、Anthropic Messages、Gemini。
+   厂商只提供默认地址与模型，用户可在设置里覆盖；留空 = 用预设。 */
+export type AiProtocol = "openai" | "anthropic" | "gemini";
+export type AiProviderId =
+  | "deepseek" | "openai" | "qwen" | "moonshot" | "zhipu" | "openrouter"
+  | "ollama" | "anthropic" | "gemini" | "custom";
+
+export interface AiVendor {
+  id: AiProviderId;
+  name: string;
+  protocol: AiProtocol;
+  baseUrl: string;
+  model: string;
+  keyHint: string;
+}
+
+export const AI_VENDORS: AiVendor[] = [
+  { id: "deepseek", name: "DeepSeek", protocol: "openai", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", keyHint: "sk-..." },
+  { id: "openai", name: "OpenAI", protocol: "openai", baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini", keyHint: "sk-..." },
+  { id: "qwen", name: "通义千问（阿里云）", protocol: "openai", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus", keyHint: "sk-..." },
+  { id: "moonshot", name: "Kimi（月之暗面）", protocol: "openai", baseUrl: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k", keyHint: "sk-..." },
+  { id: "zhipu", name: "智谱 GLM", protocol: "openai", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash", keyHint: "API Key" },
+  { id: "openrouter", name: "OpenRouter", protocol: "openai", baseUrl: "https://openrouter.ai/api/v1", model: "openai/gpt-4o-mini", keyHint: "sk-or-..." },
+  { id: "ollama", name: "Ollama（本地）", protocol: "openai", baseUrl: "http://localhost:11434/v1", model: "qwen2.5:7b", keyHint: "本地可留空" },
+  { id: "anthropic", name: "Anthropic Claude", protocol: "anthropic", baseUrl: "https://api.anthropic.com/v1", model: "claude-3-5-sonnet-20241022", keyHint: "sk-ant-..." },
+  { id: "gemini", name: "Google Gemini", protocol: "gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-2.0-flash", keyHint: "AIza..." },
+  { id: "custom", name: "自定义（OpenAI 兼容）", protocol: "openai", baseUrl: "", model: "", keyHint: "API Key" },
+];
+
+export const DEFAULT_AI_PROVIDER: AiProviderId = "deepseek";
+
+export function aiVendor(id: string | undefined): AiVendor {
+  return AI_VENDORS.find(v => v.id === id) ?? AI_VENDORS[0];
 }
 
 
@@ -123,6 +160,13 @@ export interface DaybookSettings {
   ledgerFileExt?: string;           // 记账记录文件后缀（不带点）：journal / md / text；默认 journal
   dramaFolder?: string;             // 追剧数据文件夹；空 = <日记目录>/drama
   ledgerMigratedV2?: boolean;       // 旧 records-YYYY.json 已迁移为 hledger journal（一次性）
+  // v6 AI 助手（页内聊天，帮助写入各类型源文件）
+  aiProvider?: AiProviderId;        // 厂商预设；缺省 DeepSeek
+  aiBaseUrl?: string;               // 覆盖厂商默认地址；空 = 用预设
+  aiModel?: string;                 // 覆盖厂商默认模型；空 = 用预设
+  aiApiKey?: string;                // 第三方 API Key（存在 data.json 内，仅本机）
+  /** AI 悬浮球位置：x = 容器宽度的比例（0~1），y = 距容器底部的像素；缺省 = 底部居中 22px */
+  aiFabPos?: { x: number; y: number };
 }
 
 export const DEFAULT_SETTINGS: DaybookSettings = {
@@ -185,6 +229,10 @@ export const DEFAULT_SETTINGS: DaybookSettings = {
   ledgerFolder: ".obsidian/记账",
   ledgerFileExt: "journal",
   dramaFolder: "",
+  aiProvider: DEFAULT_AI_PROVIDER,
+  aiBaseUrl: "",
+  aiModel: "",
+  aiApiKey: "",
 };
 
 /** 心情数量上限（一行 4 个，最多两行） */
@@ -426,6 +474,103 @@ export class DaybookSettingTab extends PluginSettingTab {
           this.plugin.settings.dramaFolder = value.trim();
           await save();
         }));
+
+    /* ══ 分组 1.8：AI 助手 ══ */
+    const gAi = this.group(root, "AI 助手", "sparkles");
+    gAi.createDiv({
+      cls: "db-settings-hint",
+      text: "入口在任意章节顶栏「···」→ AI 助手。可以一句话记录，也可以查询已有闪念/待办、记账、习惯打卡和追剧；写入会先给你看内容，确认后才落盘，查询只读。API Key 只保存在本仓库的 data.json 里。",
+    });
+
+    let aiBaseText: TextComponent | null = null;
+    let aiModelText: TextComponent | null = null;
+    let aiKeyText: TextComponent | null = null;
+    const aiHint = gAi.createDiv({ cls: "db-settings-hint" });
+    const refreshAiHint = () => {
+      const vendor = aiVendor(this.plugin.settings.aiProvider);
+      const proto = vendor.protocol === "openai"
+        ? "OpenAI 兼容"
+        : vendor.protocol === "anthropic" ? "Anthropic Messages" : "Gemini";
+      aiHint.setText(`协议：${proto}。地址 / 模型留空时使用 ${vendor.name} 的默认值${vendor.baseUrl ? `（${vendor.baseUrl}）` : ""}。`);
+      aiBaseText?.setPlaceholder(vendor.baseUrl || "https://...");
+      aiModelText?.setPlaceholder(vendor.model || "模型名");
+      aiKeyText?.setPlaceholder(vendor.keyHint);
+    };
+
+    new Setting(gAi)
+      .setName("厂商")
+      .setDesc("内置常用厂商；选「自定义」时地址与模型都必须填写")
+      .addDropdown(dropdown => {
+        AI_VENDORS.forEach(v => dropdown.addOption(v.id, v.name));
+        dropdown
+          .setValue(this.plugin.settings.aiProvider ?? DEFAULT_AI_PROVIDER)
+          .onChange(async value => {
+            this.plugin.settings.aiProvider = value as AiProviderId;
+            await save();
+            refreshAiHint();
+          });
+      });
+
+    new Setting(gAi)
+      .setName("API 地址")
+      .setDesc("留空 = 用厂商默认地址；本地 Ollama 一般是 http://localhost:11434/v1")
+      .addText(text => {
+        aiBaseText = text;
+        text
+          .setValue(this.plugin.settings.aiBaseUrl ?? "")
+          .onChange(async value => {
+            this.plugin.settings.aiBaseUrl = value.trim();
+            await save();
+          });
+      });
+
+    new Setting(gAi)
+      .setName("模型")
+      .setDesc("留空 = 用厂商默认模型，例如 deepseek-chat / qwen-plus / gpt-4o-mini")
+      .addText(text => {
+        aiModelText = text;
+        text
+          .setValue(this.plugin.settings.aiModel ?? "")
+          .onChange(async value => {
+            this.plugin.settings.aiModel = value.trim();
+            await save();
+          });
+      });
+
+    new Setting(gAi)
+      .setName("API Key")
+      .setDesc("保存在本仓库 data.json；本地 Ollama 可留空")
+      .addText(text => {
+        aiKeyText = text;
+        text.inputEl.type = "password";
+        text
+          .setValue(this.plugin.settings.aiApiKey ?? "")
+          .onChange(async value => {
+            this.plugin.settings.aiApiKey = value.trim();
+            await save();
+          });
+      });
+
+    new Setting(gAi)
+      .setName("连接测试")
+      .setDesc("用当前厂商 / 地址 / 模型 / Key 发一次最小请求")
+      .addButton(btn => btn
+        .setButtonText("测试")
+        .onClick(async () => {
+          btn.setDisabled(true);
+          btn.setButtonText("测试中…");
+          try {
+            const reply = await testAiConnection(this.plugin.settings);
+            new Notice(`✅ 连接成功：${reply.slice(0, 40)}`);
+          } catch (e) {
+            new Notice(`❌ ${e instanceof Error ? e.message : String(e)}`);
+          } finally {
+            btn.setDisabled(false);
+            btn.setButtonText("测试");
+          }
+        }));
+
+    refreshAiHint();
 
     /* ══ 分组 2：版块与章节 ══ */
     const gPanels = this.group(root, "版块与章节", "layers");

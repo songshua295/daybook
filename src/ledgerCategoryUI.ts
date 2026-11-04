@@ -11,7 +11,7 @@
 import { App, Modal, Notice, setIcon } from "obsidian";
 import { ConfirmModal } from "./TodayPanel";
 import { LedgerCategory, LedgerStore } from "./ledgerStore";
-import { allCategoryIconGroups, guessCategoryIcon, renderCategoryIcon } from "./categoryIcons";
+import { allCategoryIconGroups, guessCategoryIcon, isKnownCategoryIcon, renderCategoryIcon } from "./categoryIcons";
 import { NotionSelect } from "./notionSelect";
 
 const uid = () => `l${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`;
@@ -79,13 +79,13 @@ export interface CategoryEditOptions {
   icon: string;
   kind: "expense" | "income";
   canDelete: boolean;
-  /** 一级分类 false = 二级分类编辑（不显示图标库） */
+  /** 预留：false 时隐藏图标区（当前一级、二级分类都显示图标） */
   showIcon?: boolean;
   onDelete?: () => void;
   onSave: (name: string, icon: string) => void;
 }
 
-/** 分类编辑弹窗：名称 + 图标库（二级分类隐藏图标区）+ 删除 */
+/** 分类编辑弹窗：名称 + 图标库（含 emoji / 本地图片）+ 删除 */
 export class CategoryEditModal extends Modal {
   private selIcon = "";
   constructor(app: App, private opts: CategoryEditOptions) {
@@ -120,14 +120,74 @@ export class CategoryEditModal extends Modal {
         attr: { type: "button", "aria-label": "自动匹配图标" },
       });
       const autoImg = autoCell.createSpan({ cls: "db-led-icon-cell-img" });
-      renderCategoryIcon(autoImg, guessCategoryIcon(this.opts.name), this.opts.name || "自动");
       autoCell.createSpan({ cls: "db-led-icon-cell-label", text: "自动" });
-      autoCell.addEventListener("click", () => { this.selIcon = ""; clearSel(); autoCell.addClass("is-active"); });
+
+      // 自定义图标：emoji 直接输入，图片上传后压成 128px 的 data URL 存进配置
+      const customRow = content.createDiv({ cls: "db-cat-icon-custom" });
+      const preview = customRow.createSpan({
+        cls: "db-led-icon-cell-img db-cat-icon-preview",
+        attr: { "aria-label": "当前图标预览" },
+      });
+      const emoji = customRow.createEl("input", {
+        cls: "db-led-input db-cat-emoji-input",
+        attr: { type: "text", placeholder: "输入 emoji，如 🍜", "aria-label": "输入 emoji 作为图标" },
+      });
+      const upload = customRow.createEl("button", {
+        cls: "db-led-btn-ghost db-cat-upload",
+        attr: { type: "button", "aria-label": "上传图片作为图标" },
+      });
+      setIcon(upload.createSpan({ cls: "db-cat-upload-icon" }), "image-up");
+      upload.createSpan({ text: "上传图片" });
+      const file = customRow.createEl("input", {
+        cls: "db-cat-file",
+        attr: { type: "file", accept: "image/*", tabindex: "-1", "aria-hidden": "true" },
+      });
+
+      const refreshPreview = () => {
+        const autoKey = guessCategoryIcon(name.value);
+        renderCategoryIcon(autoImg, autoKey, name.value || "自动");
+        renderCategoryIcon(preview, this.selIcon || autoKey, name.value || "自动");
+      };
+      const selectAuto = () => {
+        this.selIcon = "";
+        clearSel();
+        autoCell.addClass("is-active");
+        emoji.value = "";
+        refreshPreview();
+      };
+      autoCell.addEventListener("click", selectAuto);
+
+      // 已有 emoji 回填到输入框；图标库 key / data URL 不回填
+      if (this.selIcon && !isKnownCategoryIcon(this.selIcon) && !this.selIcon.startsWith("data:")) emoji.value = this.selIcon;
+
+      emoji.addEventListener("input", () => {
+        const v = emoji.value.trim();
+        if (!v) { selectAuto(); return; }
+        this.selIcon = v;
+        clearSel();
+        refreshPreview();
+      });
+
+      upload.addEventListener("click", () => file.click());
+      file.addEventListener("change", () => {
+        const picked = file.files?.[0];
+        file.value = "";
+        if (!picked) return;
+        if (!picked.type.startsWith("image/")) { new Notice("请选择图片文件"); return; }
+        void this.readIconImage(picked).then(data => {
+          if (!data) { new Notice("读取图片失败"); return; }
+          this.selIcon = data;
+          clearSel();
+          emoji.value = "";
+          refreshPreview();
+        });
+      });
+
       // 改名时「自动」的预览跟着变
       name.addEventListener("input", () => {
-        if (this.selIcon !== "") return;
-        renderCategoryIcon(autoImg, guessCategoryIcon(name.value), name.value || "自动");
+        if (this.selIcon === "") refreshPreview();
       });
+      refreshPreview();
 
       allCategoryIconGroups().forEach(group => {
         scroll.createDiv({ cls: "db-cat-icon-group-title", text: group.title });
@@ -139,7 +199,13 @@ export class CategoryEditModal extends Modal {
           });
           renderCategoryIcon(cell.createSpan({ cls: "db-led-icon-cell-img" }), def.key, def.label);
           cell.createSpan({ cls: "db-led-icon-cell-label", text: def.label });
-          cell.addEventListener("click", () => { this.selIcon = def.key; clearSel(); cell.addClass("is-active"); });
+          cell.addEventListener("click", () => {
+            this.selIcon = def.key;
+            clearSel();
+            cell.addClass("is-active");
+            emoji.value = "";
+            refreshPreview();
+          });
         });
       });
     }
@@ -159,6 +225,45 @@ export class CategoryEditModal extends Modal {
       this.opts.onSave(v, this.selIcon);
     };
     name.focus();
+  }
+
+  /** 读本地图片并压成 128px 的 PNG data URL（避免配置里塞进几 MB 的原图） */
+  private readIconImage(file: File): Promise<string | null> {
+    return new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const raw = typeof reader.result === "string" ? reader.result : "";
+        if (!raw) { resolve(null); return; }
+        const Win = this.contentEl.ownerDocument.defaultView;
+        if (!Win) { resolve(raw); return; }
+        const img = new Win.Image();
+        img.onload = () => {
+          if (!img.naturalWidth || !img.naturalHeight) { resolve(raw); return; }
+          try {
+            const size = 128;
+            const canvas = this.contentEl.createEl("canvas", { cls: "db-cat-canvas" });
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) { canvas.remove(); resolve(raw); return; }
+            const scale = Math.max(size / img.naturalWidth, size / img.naturalHeight);
+            const w = img.naturalWidth * scale;
+            const h = img.naturalHeight * scale;
+            ctx.clearRect(0, 0, size, size);
+            ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+            const url = canvas.toDataURL("image/png");
+            canvas.remove();
+            resolve(url);
+          } catch {
+            resolve(raw);
+          }
+        };
+        img.onerror = () => resolve(raw);
+        img.src = raw;
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(file);
+    });
   }
 
   onClose(): void { this.contentEl.empty(); }
@@ -203,6 +308,90 @@ export class CategoryDeleteModal extends Modal {
   }
 
   onClose(): void { this.contentEl.empty(); }
+}
+
+/* ────────────────────────── 分类编辑 / 删除弹窗组（共用） ────────────────────────── */
+
+/**
+ * 编辑一级或二级分类的完整弹窗组：改名 / 换图标 / 删除（删除带记录的一级分类时先选转移目标，
+ * 二级分类删除时确认后清引用）。分类管理页的点按编辑与「记一笔」宫格的长按编辑共用这一套，
+ * 保证两条入口的行为（尤其删除迁移）完全一致。onDone = 保存 / 删除落盘后的重绘通知。
+ */
+export function editCategoryDialogs(
+  app: App,
+  opts: {
+    store: LedgerStore;
+    save: () => Promise<void>;
+    cat: LedgerCategory;
+    /** 传 = 编辑这条二级分类；不传 = 编辑一级分类 */
+    sub?: { id: string; name: string; icon?: string };
+    onDone: () => void;
+  },
+): void {
+  const { store, save, cat, sub, onDone } = opts;
+  if (sub) {
+    new CategoryEditModal(app, {
+      title: `编辑二级分类 · ${cat.name}`,
+      name: sub.name,
+      icon: sub.icon ?? "",
+      kind: cat.kind === "income" ? "income" : "expense",
+      canDelete: true,
+      onDelete: () => {
+        const count = store.records.filter(r => r.categoryId === cat.id && r.subId === sub.id).length;
+        new ConfirmModal(
+          app,
+          "删除二级分类",
+          count
+            ? `「${cat.name} · ${sub.name}」下有 ${count} 条记录，删除后这些记录只保留一级分类。`
+            : `确定删除二级分类「${sub.name}」？`,
+          "删除",
+          () => void (async () => {
+            if (count) await store.clearSubRecords(cat.id, sub.id);
+            cat.subs = cat.subs.filter(s => s.id !== sub.id);
+            await save();
+            onDone();
+          })(),
+        ).open();
+      },
+      onSave: (name, icon) => void (async () => {
+        sub.name = name;
+        sub.icon = icon;
+        await save();
+        onDone();
+      })(),
+    }).open();
+    return;
+  }
+  new CategoryEditModal(app, {
+    title: "编辑分类",
+    name: cat.name,
+    icon: cat.icon ?? "",
+    kind: cat.kind === "income" ? "income" : "expense",
+    canDelete: true,
+    onDelete: () => {
+      const count = store.records.filter(r => r.categoryId === cat.id).length;
+      const targets = store.config.categories.filter(c => c.kind === cat.kind && c.id !== cat.id);
+      new CategoryDeleteModal(app, {
+        catName: cat.name,
+        count,
+        targets,
+        onConfirm: targetId => void (async () => {
+          if (targetId) await store.retargetCategory(cat.id, targetId);
+          const idx = store.config.categories.indexOf(cat);
+          if (idx >= 0) store.config.categories.splice(idx, 1);
+          await save();
+          onDone();
+          new Notice(count && targetId ? `已删除「${cat.name}」，${count} 条记录已转移` : `已删除「${cat.name}」`);
+        })(),
+      }).open();
+    },
+    onSave: (name, icon) => void (async () => {
+      cat.name = name;
+      cat.icon = icon;
+      await save();
+      onDone();
+    })(),
+  }).open();
 }
 
 /* ────────────────────────── 分类管理器（P2） ────────────────────────── */
@@ -305,19 +494,29 @@ export class CategoryManager {
     const subs = body.createDiv({ cls: "db-catmgr-subs" });
     cat.subs.forEach(s => {
       const cell = activatable(subs.createDiv({ cls: "db-led-catcell is-sub" }), `编辑二级分类「${s.name}」`);
-      cell.createDiv({ cls: "db-led-catcircle", text: s.name.trim().slice(0, 1) || "?" });
+      const subCircle = cell.createDiv({ cls: "db-led-catcircle" });
+      renderCategoryIcon(subCircle, s.icon || guessCategoryIcon(s.name), s.name);
       cell.createDiv({ cls: "db-led-catname", text: s.name });
-      cell.addEventListener("click", () => this.openSubModal(cat, s));
+      cell.addEventListener("click", () => editCategoryDialogs(this.app, {
+        store: this.opts.store,
+        save: () => this.opts.save(),
+        cat,
+        sub: s,
+        onDone: () => { this.render(); this.opts.onChange?.(); },
+      }));
     });
     const addSub = activatable(subs.createDiv({ cls: "db-led-catcell is-add" }), "新增二级分类");
     setIcon(addSub.createDiv({ cls: "db-led-catcircle" }), "plus");
     addSub.createDiv({ cls: "db-led-catname", text: "新增" });
     addSub.addEventListener("click", () => {
-      new PromptModal(this.app, {
-        title: `「${cat.name}」添加二级分类`,
-        placeholder: "二级分类名称",
-        onConfirm: v => void (async () => {
-          cat.subs.push({ id: uid(), name: v });
+      new CategoryEditModal(this.app, {
+        title: `「${cat.name}」新增二级分类`,
+        name: "",
+        icon: "",
+        kind: cat.kind === "income" ? "income" : "expense",
+        canDelete: false,
+        onSave: (name, icon) => void (async () => {
+          cat.subs.push({ id: uid(), name, icon });
           this.expanded.add(cat.id);
           await this.opts.save();
           this.render();
@@ -338,82 +537,28 @@ export class CategoryManager {
     });
   }
 
-  /** 新增 / 编辑一级分类（cat = null 表示新增） */
+  /** 新增 / 编辑一级分类（cat = null 表示新增；编辑走共用弹窗组，与「记一笔」长按一致） */
   private openEditModal(cat: LedgerCategory | null): void {
     const kind = this.kind;
+    if (cat) {
+      editCategoryDialogs(this.app, {
+        store: this.opts.store,
+        save: () => this.opts.save(),
+        cat,
+        onDone: () => { this.render(); this.opts.onChange?.(); },
+      });
+      return;
+    }
     new CategoryEditModal(this.app, {
-      title: cat ? "编辑分类" : "新增分类",
-      name: cat?.name ?? "",
-      icon: cat?.icon ?? "",
-      kind,
-      canDelete: !!cat,
-      onDelete: cat ? () => this.deleteCategory(cat) : undefined,
-      onSave: (name, icon) => void (async () => {
-        if (cat) {
-          cat.name = name;
-          cat.icon = icon;
-        } else {
-          const created: LedgerCategory = { id: uid(), name, icon, kind, subs: [] };
-          this.cfg.categories.push(created);
-          this.expanded.add(created.id);
-        }
-        await this.opts.save();
-        this.render();
-        this.opts.onChange?.();
-      })(),
-    }).open();
-  }
-
-  /** 删除分类：有记录时先选转移目标，再把记录整批迁走 */
-  private deleteCategory(cat: LedgerCategory): void {
-    const count = this.opts.store.records.filter(r => r.categoryId === cat.id).length;
-    const targets = this.cfg.categories.filter(c => c.kind === cat.kind && c.id !== cat.id);
-    new CategoryDeleteModal(this.app, {
-      catName: cat.name,
-      count,
-      targets,
-      onConfirm: targetId => void (async () => {
-        if (targetId) await this.opts.store.retargetCategory(cat.id, targetId);
-        const idx = this.cfg.categories.indexOf(cat);
-        if (idx >= 0) this.cfg.categories.splice(idx, 1);
-        this.expanded.delete(cat.id);
-        await this.opts.save();
-        this.render();
-        this.opts.onChange?.();
-        new Notice(count && targetId ? `已删除「${cat.name}」，${count} 条记录已转移` : `已删除「${cat.name}」`);
-      })(),
-    }).open();
-  }
-
-  /** 编辑 / 删除二级分类 */
-  private openSubModal(cat: LedgerCategory, sub: { id: string; name: string }): void {
-    new CategoryEditModal(this.app, {
-      title: `编辑二级分类 · ${cat.name}`,
-      name: sub.name,
+      title: "新增分类",
+      name: "",
       icon: "",
-      kind: cat.kind === "income" ? "income" : "expense",
-      canDelete: true,
-      showIcon: false,
-      onDelete: () => {
-        const count = this.opts.store.records.filter(r => r.categoryId === cat.id && r.subId === sub.id).length;
-        new ConfirmModal(
-          this.app,
-          "删除二级分类",
-          count
-            ? `「${cat.name} · ${sub.name}」下有 ${count} 条记录，删除后这些记录只保留一级分类。`
-            : `确定删除二级分类「${sub.name}」？`,
-          "删除",
-          () => void (async () => {
-            if (count) await this.opts.store.clearSubRecords(cat.id, sub.id);
-            cat.subs = cat.subs.filter(s => s.id !== sub.id);
-            await this.opts.save();
-            this.render();
-            this.opts.onChange?.();
-          })(),
-        ).open();
-      },
-      onSave: name => void (async () => {
-        sub.name = name;
+      kind,
+      canDelete: false,
+      onSave: (name, icon) => void (async () => {
+        const created: LedgerCategory = { id: uid(), name, icon, kind, subs: [] };
+        this.cfg.categories.push(created);
+        this.expanded.add(created.id);
         await this.opts.save();
         this.render();
         this.opts.onChange?.();

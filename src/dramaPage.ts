@@ -28,6 +28,8 @@ import {
   tidyCoverInput, uploadCoverImage,
 } from "./dramaCover";
 import { PromptModal } from "./ledgerCategoryUI";
+import { keywordMatch } from "./filters";
+import type { SearchHit } from "./memoSearch";
 
 type StatusFilter = "all" | DramaStatus;
 const FILTERS: { key: StatusFilter; label: string }[] = [
@@ -169,6 +171,9 @@ class DramaExitModal extends Modal {
 }
 
 export class DramaPage {
+  /** 每次渲染后通知宿主（JournalView 用它同步 AI 悬浮球显隐：编辑二级页开着要收起） */
+  onRendered: (() => void) | null = null;
+
   private store: DramaStore;
   private filter: StatusFilter = "all";
   /** 编辑中的草稿（null = 在列表页）；哨兵让返回键先退出编辑页 */
@@ -257,6 +262,50 @@ export class DramaPage {
     return !!this.editing;
   }
 
+  /**
+   * 顶栏搜索：按剧名 / 原名 / 类型 / 标签 / 状态 / 日期匹配。
+   * 空关键词返回全部（弹窗打开时就有内容可看）。
+   */
+  searchShows(keyword: string): SearchHit[] {
+    const q = keyword.trim();
+    return this.store.shows
+      .filter(s => !q || keywordMatch(this.showSearchText(s), q))
+      .map((s): SearchHit => ({
+        id: s.id,
+        date: moment(s.updatedAt).format("YYYY-MM-DD").slice(5),
+        text: s.title,
+        meta: [
+          s.originalName,
+          s.category,
+          s.tags.map(t => `#${t}`).join(" "),
+          countText(s),
+        ].filter(Boolean).join(" · "),
+        badge: STATUS_INFO[s.status].label,
+      }));
+  }
+
+  /** 搜索里点中的剧：直接进编辑二级页（与点卡片标题同一条路径） */
+  openShowById(id: string): void {
+    const s = this.store.byId(id);
+    if (s) this.openEditor(s, false);
+  }
+
+  private showSearchText(s: DramaShow): string {
+    return [
+      s.title,
+      s.originalName,
+      s.category,
+      s.tags.join(" "),
+      STATUS_INFO[s.status].label,
+      s.finishedAt,
+      moment(s.createdAt).format("YYYY-MM-DD"),
+      String(s.episodes),
+      String(s.totalEpisodes),
+      s.nextEpisodeUrl,
+      s.doubanUrl,
+    ].join("\n");
+  }
+
   destroy(): void {
     this.destroyed = true;
     window.removeEventListener("popstate", this.onPop);
@@ -292,6 +341,8 @@ export class DramaPage {
     /* 浮层不在本次重建的树里，计数一并归零；旧浮层若还开着，关掉时会被钳回 0 */
     this.popCount = 0;
     host.removeClass("is-popping");
+    /* editing 在进入 render 前已是终值：编辑二级页的进出在这里一并通知宿主 */
+    this.onRendered?.();
     if (this.editing) { this.renderEditor(host); return; }
     if (this.fieldsRo) { this.fieldsRo.disconnect(); this.fieldsRo = null; }
     this.renderList(host);

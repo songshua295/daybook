@@ -50,6 +50,16 @@ export default class DaybookPlugin extends Plugin {
       name: "打开 Dashboard",
       callback: () => this.activateDashboard(),
     });
+
+    this.addCommand({
+      id: "open-ai-assistant",
+      name: "打开 AI 助手",
+      callback: () => {
+        const view = this.getJournalView();
+        if (view) { view.openAiPage(); return; }
+        void this.activateView().then(() => this.getJournalView()?.openAiPage());
+      },
+    });
   }
 
   async loadSettings() {

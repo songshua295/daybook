@@ -19,6 +19,7 @@ import {
 import type { BillField, BillSheet, ColumnMap, DetectResult, ImportPlan, ParsedBillRow, ValueMaps } from "./ledgerBillIO";
 import type { LedgerConfig, LedgerStore } from "./ledgerStore";
 import type DaybookPlugin from "./main";
+import { scrollPageToTop } from "./pageScroll";
 
 type IoStep = "menu" | "file" | "detect" | "columns" | "values" | "preview" | "imported" | "export" | "batches";
 
@@ -98,7 +99,7 @@ export class LedgerDataPage {
     this.stack.push(this.step);
     this.step = next;
     this.render();
-    this.host.scrollIntoView({ block: "start" });
+    scrollPageToTop(this.host);
   }
 
   /* ────────────────────────── 渲染骨架 ────────────────────────── */

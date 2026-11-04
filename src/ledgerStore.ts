@@ -75,8 +75,9 @@ export interface LedgerCategory {
   id: string;
   name: string;
   kind: LedgerKind;
-  subs: { id: string; name: string }[];
-  icon?: string;             // 图标 key（见 categoryIcons）；空 = 按分类名自动匹配
+  /** 二级分类；icon 可为图标库 key、emoji 或 data URL，空 = 按名称自动匹配 */
+  subs: { id: string; name: string; icon?: string }[];
+  icon?: string;             // 图标库 key、emoji 或 data URL；空 = 按分类名自动匹配
 }
 
 export interface LedgerCurrency {
@@ -228,6 +229,9 @@ export function reimbTotal(all: LedgerRecord[], cfg: LedgerConfig): number {
 
 const yearOf = (dateStr: string) => (dateStr || "").slice(0, 4);
 
+/** 旧版 journal 头行会写 kind/cat/sub/acc/to/clock 等冗余标签：检测到就整体重写一次 */
+const LEGACY_TAG_RE = /^\d{4}-\d{2}-\d{2}[^\n]*;[^\n]*\b(?:kind|cat|sub|acc|to|clock):/m;
+
 export class LedgerStore {
   config: LedgerConfig = defaultLedgerConfig();
   records: LedgerRecord[] = [];
@@ -310,6 +314,7 @@ export class LedgerStore {
     this.batches = [];
     this.configDirty = false;
     let settingsDirty = false;
+    const legacyYears = new Set<string>();
     try {
       await this.ensureDir();
       let justMigrated = false;
@@ -350,7 +355,9 @@ export class LedgerStore {
             .filter(f => new RegExp(`/(\\d{4})\\.${this.ext}$`).test(f))
             .sort();
           for (const f of files) {
+            let rawText = "";
             const parsed = await this.readWithBackup<{ records: LedgerRecord[]; configDirty: boolean }>(f, t => {
+              rawText = t;
               const out = parseYearJournal(t, this.config, makeNameResolver(this.config));
               return out;
             });
@@ -360,9 +367,13 @@ export class LedgerStore {
             }
             this.records.push(...parsed.records);
             if (parsed.configDirty) this.configDirty = true;
+            const ym = f.match(/(\d{4})\.[^/]+$/);
+            if (ym && LEGACY_TAG_RE.test(rawText)) legacyYears.add(ym[1]);
           }
         }
         if (this.configDirty) await this.saveConfig();
+        // 旧文件里的冗余标签（kind/cat/sub/acc/to/clock）一次性重写掉；校验不一致就跳过该年
+        if (legacyYears.size) await this.compactLegacyTags(legacyYears);
       }
     } catch (e) {
       console.error("Daybook ledger: 读取失败", e);
@@ -503,6 +514,36 @@ export class LedgerStore {
     if (!/^\d{4}$/.test(year)) return;
     const arr = this.records.filter(r => yearOf(r.date) === year);
     await this.writeAtomic(this.recordsFilePath(year), serializeYearJournal(arr, this.config));
+  }
+
+  /**
+   * 一次性把旧文件里的冗余标签（kind/cat/sub/acc/to/clock）重写掉。
+   * 写盘前用序列化结果再解析一遍，条数与 id 集合不一致就跳过该年（宁可留旧格式也不丢记录）。
+   */
+  private async compactLegacyTags(years: Set<string>): Promise<void> {
+    let done = 0;
+    for (const y of years) {
+      const rows = this.records.filter(r => yearOf(r.date) === y);
+      if (!rows.length) continue;
+      const text = serializeYearJournal(rows, this.config);
+      try {
+        const checkCfg = JSON.parse(JSON.stringify(this.config)) as LedgerConfig;
+        const back = parseYearJournal(text, checkCfg, makeNameResolver(checkCfg));
+        const beforeIds = rows.map(r => r.id).sort().join(",");
+        const afterIds = back.records.map(r => r.id).sort().join(",");
+        if (back.records.length !== rows.length || beforeIds !== afterIds) {
+          console.warn("Daybook ledger: 精简元数据校验不一致，跳过该年份", y);
+          continue;
+        }
+        await this.writeAtomic(this.recordsFilePath(y), text);
+        done++;
+      } catch (e) {
+        console.error("Daybook ledger: 精简元数据失败", y, e);
+      }
+    }
+    if (done) {
+      new Notice(`已精简 ${done} 个年份的记账元数据（旧文件备份为 .bak）`);
+    }
   }
 
   async addRecord(rec: LedgerRecord): Promise<void> {

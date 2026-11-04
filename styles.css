@@ -4564,6 +4564,39 @@ body .db-journal-root .db-filter-q:focus {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 两行结果（记账 / 追剧 / 习惯）：主文本 + 次要说明，右侧金额或状态 */
+.db-memo-search-hit.is-rich { align-items: center; }
+.db-memo-search-hit-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.db-memo-search-hit-main .db-memo-search-hit-text { flex: 0 0 auto; }
+.db-memo-search-hit-meta {
+  font-size: 11.5px;
+  color: var(--db-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.db-memo-search-hit-badge {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--db-text-sub);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.db-memo-search-hit-badge.is-in { color: color-mix(in srgb, var(--led-in) 80%, var(--db-text)); }
+.db-memo-search-hit-badge.is-out { color: color-mix(in srgb, var(--led-out) 80%, var(--db-text)); }
+.db-memo-search-hit-badge.is-tr { color: color-mix(in srgb, var(--led-tr) 78%, var(--db-text)); }
+.db-memo-search-empty {
+  padding: 18px 4px;
+  font-size: 12.5px;
+  color: var(--db-text-muted);
+  text-align: center;
+}
 .db-memo-search-more {
   padding: 8px 4px;
   font-size: 12px;
@@ -6524,14 +6557,16 @@ body .db-journal-root .db-filter-q:focus {
 .db-led-cal-line.is-out { color: color-mix(in srgb, var(--led-out) 78%, var(--db-text)); }
 .db-led-cal-line.is-tr { color: color-mix(in srgb, var(--led-tr) 72%, var(--db-text)); }
 .db-led-cal-cell.is-today { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--db-accent) 48%, transparent); }
+/* 选中日只换底色和描边，不覆盖金额颜色：支出保持红、收入保持绿 */
 .db-led-cal-cell.is-sel,
 .db-led-cal-cell.is-sel.is-today {
-  background: var(--db-accent);
-  box-shadow: var(--db-shadow-sm);
+  background: color-mix(in srgb, var(--db-accent) 14%, var(--db-surface));
+  box-shadow: inset 0 0 0 1.5px var(--db-accent);
 }
-.db-led-cal-cell.is-sel .db-led-cal-d,
-.db-led-cal-cell.is-sel .db-led-cal-line { color: var(--text-on-accent, #fff); }
-.db-led-cal-cell.is-sel .db-led-cal-d { font-weight: 700; }
+.db-led-cal-cell.is-sel .db-led-cal-d {
+  color: var(--db-accent);
+  font-weight: 700;
+}
 
 /* ── 资产 ── */
 .db-led-net {
@@ -6553,6 +6588,41 @@ body .db-journal-root .db-filter-q:focus {
   min-width: 0;
 }
 .db-led-acct-row + .db-led-acct-row { border-top: 1px solid color-mix(in srgb, var(--db-border) 55%, transparent); }
+/* 资产行整行可点 → 资产详情：右侧箭头提示可进 */
+.db-led-acct-row.is-link { cursor: pointer; }
+.db-led-acct-row.is-link:active { background: var(--background-modifier-hover); }
+.db-led-acct-chev { display: inline-flex; color: var(--db-text-sub); }
+.db-led-acct-chev svg { width: 16px; height: 16px; }
+
+/* 资产详情：余额卡（当前余额 + 调整入口 + 本月转入转出小字） */
+.db-led-asset-hero-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.db-led-asset-balance {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: var(--db-text);
+}
+.db-led-asset-hero-sub {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--db-text-sub);
+}
+
+/* ── 空数据降淡：没流水的日子 / 没账的月份，颜色更浅一档，和有数据的区分开 ── */
+.db-led-nav-label.is-empty {
+  color: var(--db-text-sub);
+  opacity: 0.55;
+}
+.db-led-cal-cell.is-norec .db-led-cal-d {
+  color: var(--db-text-sub);
+  opacity: 0.5;
+}
+.db-led-asset-hero-sub.is-empty { opacity: 0.55; }
 .db-led-acct-name {
   flex: 1 1 0;
   min-width: 0;
@@ -6598,6 +6668,32 @@ body .db-journal-root .db-filter-q:focus {
   overflow: hidden;
 }
 .db-led-acct-icon svg { width: 17px; height: 17px; flex: 0 0 auto; display: block; }
+
+/* 银行行标（bank-icon-cn 多色 SVG）：容器定尺寸，svg 铺满；自动兜底是账户名首字徽标（中性色） */
+.db-bank-logo {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+}
+.db-bank-logo svg { width: 100%; height: 100%; display: block; }
+.db-led-icon-cell-img .db-bank-logo { width: 26px; height: 26px; }
+.db-bank-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--text-normal) 8%, var(--db-surface, var(--background-primary)));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-normal) 12%, transparent);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.db-led-icon-cell-img .db-bank-mark { width: 22px; height: 22px; border-radius: 6px; font-size: 13px; }
 .db-led-acct-icon.is-btn {
   height: auto;
   min-width: 34px;
@@ -6661,6 +6757,38 @@ body .db-journal-root .db-filter-q:focus {
   overflow: hidden;
 }
 .db-led-icon-cell-img svg { width: 19px; height: 19px; flex: 0 0 auto; display: block; }
+/* 彩色分类图标（Fluent Emoji Flat）：按各容器给 SVG 定尺寸，不被主题 svg 规则压扁 */
+.db-icon-art { line-height: 1; }
+.db-icon-art svg { display: block; flex: 0 0 auto; }
+.db-led-icon-cell-img.db-icon-art svg { width: 28px; height: 28px; }
+.db-led-catcircle.db-icon-art svg { width: 30px; height: 30px; }
+.db-led-row-icon.db-icon-art svg { width: 24px; height: 24px; }
+.db-catmgr-icon.db-icon-art svg { width: 24px; height: 24px; }
+/* 子类图标整体比父类小一档（父：圆 46 / art 30 / emoji 25）：
+   展示口径只有两处——记一笔宫格的子类面板（.db-led-catpanel）与分类管理的子类区（.db-catmgr-subs），
+   两处都必须同档，别只改一处造成大小不一致 */
+.db-led-catpanel .db-led-catcircle.db-icon-art svg { width: 21px; height: 21px; }
+.db-catmgr-subs .db-led-catcircle.db-icon-art svg { width: 21px; height: 21px; }
+/* 自定义 emoji：彩色由系统字体自带，按容器调字号 */
+.db-icon-emoji {
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+  font-weight: 400;
+}
+.db-led-icon-cell-img.db-icon-emoji { font-size: 21px; }
+.db-led-catcircle.db-icon-emoji { font-size: 25px; }
+.db-led-row-icon.db-icon-emoji { font-size: 19px; }
+.db-catmgr-icon.db-icon-emoji { font-size: 19px; }
+.db-led-catpanel .db-led-catcircle.db-icon-emoji { font-size: 18px; }
+.db-catmgr-subs .db-led-catcircle.db-icon-emoji { font-size: 18px; }
+/* 自定义图片（data URL）：铺满所在圆/方框，不拉伸变形 */
+.db-icon-img-wrap { padding: 0; overflow: hidden; }
+.db-icon-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
 .db-led-icon-cell-label {
   flex: 0 0 auto;
   max-width: 100%;
@@ -6686,7 +6814,8 @@ body .db-journal-root .db-filter-q:focus {
 
 /* ════════════════════════════════════════════════════════
    报表页（.db-led-rpt-*）
-   ─ 支出 / 收入卡：环形图 + 右侧明细，下面接逐月平滑面积图
+   ─ 支出 / 收入卡：环形图 + 右侧明细
+   ─ 逐月收支：收入 / 支出两条线共用刻度的一张面积图（省一层布局）
    ─ 收支对比：横向柱；月收支差：以 0 为基线的正负面积图
    几何与配色在 src/ledgerCharts.ts 里算，这里只管呈现。
    ════════════════════════════════════════════════════════ */
@@ -6715,6 +6844,9 @@ body .db-journal-root .db-filter-q:focus {
 .db-led-rpt-legend { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .db-led-rpt-lg-row { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; }
 .db-led-rpt-lg-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; }
+/* 图例里的色点按方向给色（环形图那侧仍是各分类自己的 inline 色） */
+.db-led-rpt-lg-dot.is-out { background: var(--led-out); }
+.db-led-rpt-lg-dot.is-in { background: var(--led-in); }
 .db-led-rpt-lg-name {
   flex: 1 1 0;
   min-width: 0;
@@ -6731,6 +6863,9 @@ body .db-journal-root .db-filter-q:focus {
 .db-led-rpt-chart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; margin-top: 2px; }
 .db-led-rpt-chart-title { font-size: 12.5px; font-weight: 600; color: var(--db-text-muted); }
 .db-led-rpt-chart-sub { flex: 0 0 auto; font-size: 11.5px; color: var(--db-text-sub); }
+/* 双线图图例：支出 / 收入两个圆点 + 名称，靠标题右侧 */
+.db-led-rpt-flow-key { display: inline-flex; align-items: center; gap: 10px; }
+.db-led-rpt-flow-key-item { display: inline-flex; align-items: center; gap: 4px; color: var(--db-text-sub); }
 .db-led-rpt-chart { min-width: 0; }
 /* viewBox 宽度按容器实测（1:1 像素），所以这里等比铺满也不会糊掉文字 */
 .db-led-rpt-svg { display: block; width: 100%; height: auto; }
@@ -6746,9 +6881,14 @@ body .db-journal-root .db-filter-q:focus {
 .db-led-rpt-chart.is-out .db-led-rpt-pt { fill: var(--led-out); }
 .db-led-rpt-chart.is-in .db-led-rpt-pt { fill: var(--led-in); }
 .db-led-rpt-chart.is-diff .db-led-rpt-pt { fill: var(--db-accent); }
+.db-led-rpt-chart.is-flow .db-led-rpt-pt.is-out { fill: var(--led-out); }
+.db-led-rpt-chart.is-flow .db-led-rpt-pt.is-in { fill: var(--led-in); }
 .db-led-rpt-pt.is-neg { fill: var(--led-out); }
 .db-led-rpt-zero { stroke: var(--db-border); stroke-width: 1; stroke-dasharray: 3 3; }
 .db-led-rpt-vtxt { font-size: 9.5px; fill: var(--db-text-muted); text-anchor: middle; }
+/* 双线图同一列两组数字，按方向着色，才分得清哪条是哪条 */
+.db-led-rpt-vtxt.is-out { fill: color-mix(in srgb, var(--led-out) 80%, var(--db-text)); }
+.db-led-rpt-vtxt.is-in { fill: color-mix(in srgb, var(--led-in) 80%, var(--db-text)); }
 .db-led-rpt-axis { font-size: 9.5px; fill: var(--db-text-sub); text-anchor: middle; }
 .db-led-rpt-chart-foot { font-size: 11px; color: var(--db-text-sub); }
 
@@ -7371,9 +7511,9 @@ body .db-journal-root .db-filter-q:focus {
   white-space: nowrap;
 }
 .db-led-catcell.is-active .db-led-catcircle {
-  background: var(--db-accent);
-  color: var(--text-on-accent, #fff);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--db-accent) 35%, transparent);
+  background: color-mix(in srgb, var(--db-accent) 14%, var(--db-surface));
+  color: color-mix(in srgb, var(--db-accent) 80%, var(--db-text));
+  box-shadow: inset 0 0 0 1.5px var(--db-accent);
 }
 .db-led-catcell.is-active .db-led-catname {
   color: color-mix(in srgb, var(--db-accent) 72%, var(--db-text));
@@ -7420,8 +7560,9 @@ body .db-journal-root .db-filter-q:focus {
   border-radius: var(--db-radius-lg);
   background: color-mix(in srgb, var(--text-normal) 4.5%, var(--db-surface));
 }
-.db-led-catpanel .db-led-catcircle { width: 40px; height: 40px; background: var(--db-surface); }
-.db-led-catpanel .db-led-catcircle svg { width: 18px; height: 18px; }
+/* 子类圆明确小于父类（父 46）：一级/二级的层级感靠这个大小差 */
+.db-led-catpanel .db-led-catcircle { width: 34px; height: 34px; background: var(--db-surface); }
+.db-led-catpanel .db-led-catcircle svg { width: 15px; height: 15px; }
 .db-led-row-icon svg { width: 19px; height: 19px; }
 
 /* 键盘可达性：焦点圈 */
@@ -7567,8 +7708,9 @@ body .db-journal-root .db-filter-q:focus {
   gap: 10px 2px;
   padding-top: 10px;
 }
-.db-catmgr-subs .db-led-catcircle { width: 40px; height: 40px; }
-.db-catmgr-subs .db-led-catcircle svg { width: 18px; height: 18px; }
+/* 子类圆与子类面板同档（父 46 / 子 34） */
+.db-catmgr-subs .db-led-catcircle { width: 34px; height: 34px; }
+.db-catmgr-subs .db-led-catcircle svg { width: 15px; height: 15px; }
 
 /* 分类编辑弹窗：名称 + 图标库（分组滚动区） */
 .db-cat-modal-field { display: flex; flex-direction: column; gap: 5px; }
@@ -7576,6 +7718,31 @@ body .db-journal-root .db-filter-q:focus {
 .db-cat-icon-scroll { max-height: 250px; overflow-y: auto; padding-right: 2px; }
 .db-cat-icon-group-title { font-size: 11.5px; font-weight: 650; color: var(--db-text-sub); margin: 12px 0 6px; }
 .db-cat-icon-scroll .db-led-icon-grid { grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); }
+
+/* 自定义图标行：预览方块 + emoji 输入 + 上传图片（图片压成 data URL 存配置） */
+.db-cat-icon-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 10px;
+}
+.db-cat-icon-custom .db-cat-icon-preview { flex: 0 0 auto; }
+.db-cat-icon-custom .db-cat-emoji-input { flex: 1 1 0; min-width: 0; }
+.db-cat-icon-custom .db-cat-upload {
+  flex: 0 0 auto;
+  gap: 5px;
+  min-height: 38px;
+  padding: 7px 12px;
+  background: transparent;
+  color: var(--db-text-muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.db-cat-icon-custom .db-cat-upload:active { background: var(--db-surface2); }
+.db-cat-icon-custom .db-cat-upload-icon { display: inline-flex; align-items: center; }
+.db-cat-icon-custom .db-cat-upload-icon svg { width: 15px; height: 15px; display: block; }
+.db-cat-file, .db-cat-canvas { display: none; }
 
 /* ── Notion 风格可搜索下拉（触发器 + 固定定位浮层） ──
    触发器平时就是「值本身」：无边框、无底色（Notion 属性行的排法，别让值装在盒子里），
@@ -7750,11 +7917,12 @@ body .db-journal-root .db-filter-q:focus {
   /* 账户图标：选择按钮与图标格子都要够大 */
   .db-led-acct-icon.is-btn { width: 40px; height: 40px; }
   .db-led-icon-cell { min-height: 72px; }
-  /* 类别宫格 / 分类管理：圆圈加大、行高给足 */
+  /* 类别宫格 / 分类管理：圆圈加大、行高给足；子类圆仍要比父类小一档（父 50 / 子 38），
+     点按热区是整格不是圆圈本身，子类缩小不影响可触性 */
   .db-led-catcell { padding: 4px 0; }
   .db-led-catcircle { width: 50px; height: 50px; }
   .db-led-catpanel .db-led-catcircle,
-  .db-catmgr-subs .db-led-catcircle { width: 44px; height: 44px; }
+  .db-catmgr-subs .db-led-catcircle { width: 38px; height: 38px; }
   .db-led-sheet-edit { min-height: 44px; }
   .db-catmgr-cat-head { min-height: 56px; }
   .db-catmgr-edit,
@@ -7865,7 +8033,7 @@ body .db-journal-root .db-filter-q:focus {
   min-width: 0;
 }
 
-/* ── 列表头部：汇总文字 + 新增入口 ── */
+/* ── 列表头部：汇总文字 + 新增入口（渐变概览卡） ── */
 .db-drama-head {
   display: flex;
   flex-direction: row;
@@ -7873,112 +8041,145 @@ body .db-journal-root .db-filter-q:focus {
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
-  padding: 6px 0 0;
+  padding: 14px 16px;
+  margin-bottom: 4px;
+  border-radius: var(--db-radius-lg, 12px);
+  /* 浅紫蓝渐变，参照记账模块的 hero 卡片 */
+  background: linear-gradient(145deg,
+    color-mix(in srgb, var(--db-accent) 12%, var(--db-surface)) 0%,
+    color-mix(in srgb, var(--db-accent) 5%, var(--db-surface)) 55%,
+    var(--db-surface) 100%);
+  border: 1px solid color-mix(in srgb, var(--db-accent) 18%, var(--db-border));
 }
 .db-drama-sum {
   min-width: 0;
-  font-size: 12px;
-  color: var(--db-text-sub);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--db-text);
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* 汇总数字强调 */
+.db-drama-sum::before {
+  content: "📺 ";
+  font-size: 14px;
 }
 .db-drama-root button.db-drama-add {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  min-height: 34px;
-  padding: 6px 14px;
+  gap: 6px;
+  min-height: 36px;
+  padding: 8px 16px;
   border: none;
-  border-radius: 999px;
-  background: var(--db-accent-soft);
-  box-shadow: none;
-  color: var(--db-accent);
+  border-radius: 10px;
+  background: var(--db-accent);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--db-accent) 25%, transparent);
+  color: var(--text-on-accent, #fff);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: transform 0.15s ease, opacity 0.15s ease;
+  transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
 }
-.db-drama-add:active { transform: scale(0.97); }
+.db-drama-add:active { transform: scale(0.97); box-shadow: 0 1px 4px color-mix(in srgb, var(--db-accent) 20%, transparent); }
 .db-drama-add-icon { display: inline-flex; }
-.db-drama-add-icon svg { width: 14px; height: 14px; }
+.db-drama-add-icon svg { width: 15px; height: 15px; }
 
 /* ── 状态筛选 chips ── */
 .db-drama-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
+  padding: 2px 0 8px;
 }
 .db-drama-chips.is-inline { margin-top: 8px; }
 .db-drama-root button.db-drama-chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  min-height: 30px;
-  padding: 5px 11px;
-  border: none;
-  border-radius: 999px;
-  /* Notion 标签：无边框，靠一层灰底成形（surface2 和页面底同源，深浅色都成立） */
-  background: var(--db-surface2);
+  gap: 5px;
+  min-height: 32px;
+  padding: 6px 13px;
+  border: 1px solid var(--db-border);
+  border-radius: 10px;
+  background: var(--db-surface);
   box-shadow: none;
   color: var(--db-text-muted);
   font-size: 12.5px;
+  font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: all 0.18s ease;
 }
-.db-drama-chip-n { font-size: 11px; color: var(--db-text-sub); font-variant-numeric: tabular-nums; }
+.db-drama-chip-n {
+  font-size: 11px;
+  color: var(--db-text-sub);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: color-mix(in srgb, var(--db-text-muted) 12%, transparent);
+  padding: 1px 6px;
+  border-radius: 6px;
+}
 .db-drama-root button.db-drama-chip.is-mini { min-height: 26px; padding: 3px 9px; font-size: 12px; }
-/* 激活态用低饱和柔底（规范 §1）：柔底 + accent 文字，不拿实色填充喊叫 */
+/* 激活态：accent 边框 + 柔底 */
 .db-drama-root button.db-drama-chip.is-active {
-  background: var(--db-accent-soft);
+  border-color: color-mix(in srgb, var(--db-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--db-accent) 10%, var(--db-surface));
   color: var(--db-accent);
   font-weight: 600;
 }
-.db-drama-chip.is-active .db-drama-chip-n { color: var(--db-accent); opacity: 0.7; }
+.db-drama-chip.is-active .db-drama-chip-n {
+  background: color-mix(in srgb, var(--db-accent) 18%, transparent);
+  color: var(--db-accent);
+}
 .db-drama-root button.db-drama-chip:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
-/* PC 悬停反馈只给「点了有反应」的控件，包在 hover:hover 里防触屏粘滞高亮（规范 §3）。
-   灰底 chip 的悬停要比常态深一档才看得出来，直接用 text-normal 往 surface2 里混 */
+/* PC 悬停反馈只在有 hover 的设备上生效（规范 §3）。
+   灰底 chip 的悬停要比常态深一档才看得出来 */
 @media (hover: hover) {
   .db-drama-root button.db-drama-chip:not(.is-active):hover {
-    background: color-mix(in srgb, var(--text-normal) 9%, var(--db-surface2));
+    border-color: color-mix(in srgb, var(--db-accent) 30%, var(--db-border));
+    background: var(--db-bg-hover);
+    color: var(--db-text);
   }
   .db-drama-root button.db-drama-link:hover,
   .db-drama-root button.db-drama-mini:hover { background: var(--db-bg-hover); }
-  .db-drama-root button.db-drama-bump:hover { background: var(--db-accent-hover); }
+  .db-drama-root button.db-drama-bump:hover { background: color-mix(in srgb, var(--db-accent) 85%, var(--db-accent-hover)); box-shadow: 0 2px 8px color-mix(in srgb, var(--db-accent) 30%, transparent); }
   .db-drama-root button.db-drama-add:hover {
-    background: color-mix(in srgb, var(--db-accent) 20%, transparent);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--db-accent) 35%, transparent);
+    transform: translateY(-1px);
   }
 }
 
-/* ── 卡片列表 ── */
+/* ── 卡片列表（响应式网格布局） ── */
 .db-drama-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
   min-width: 0;
+}
+/* 宽屏双列 */
+@container (min-width: 560px) {
+  .db-drama-list { grid-template-columns: repeat(2, 1fr); }
 }
 .db-drama-card {
   display: flex;
   flex-direction: row;
-  align-items: flex-start;
-  gap: 12px;
+  align-items: stretch;
+  gap: 14px;
   min-width: 0;
-  padding: 12px;
+  padding: 14px;
   border: 1px solid var(--db-border);
-  border-radius: var(--db-radius);
+  border-radius: 12px;
   background: var(--db-surface);
-  box-shadow: var(--db-shadow-sm);
-  /* 整卡可点（Notion 卡片）：按钮和封面各自有行为，点其余空白处进编辑 */
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03);
   cursor: pointer;
-  transition: background-color 0.12s ease, border-color 0.12s ease;
+  transition: all 0.2s ease;
 }
-/* 整卡悬停反馈只在有 hover 的设备上生效（规范 §3；触屏按压反馈在各控件上）：
-   浅底 + 边框向 accent 靠一点，标记「这张卡是活的」 */
 @media (hover: hover) {
   .db-drama-card:hover {
     background: var(--db-bg-hover);
-    border-color: color-mix(in srgb, var(--db-accent) 40%, var(--db-border));
+    border-color: color-mix(in srgb, var(--db-accent) 35%, var(--db-border));
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.05);
+    transform: translateY(-2px);
   }
   /* 渐进披露：低频动作（豆瓣、改链接的铅笔）PC 上先藏住，悬停 / 键盘聚焦才浮出；
      触屏没有 hover，一律常显 */
@@ -7995,32 +8196,44 @@ body .db-journal-root .db-filter-q:focus {
   padding: 14px;
 }
 .db-drama-empty {
-  padding: 28px 16px;
-  border: 1px dashed var(--db-border);
-  border-radius: var(--db-radius);
-  background: var(--db-surface);
+  padding: 36px 20px;
+  border: 1px dashed color-mix(in srgb, var(--db-accent) 30%, var(--db-border));
+  border-radius: 12px;
+  background: linear-gradient(145deg,
+    color-mix(in srgb, var(--db-accent) 5%, var(--db-surface)) 0%,
+    var(--db-surface) 100%);
   color: var(--db-text-muted);
-  font-size: 13px;
+  font-size: 13.5px;
   line-height: 1.7;
   text-align: center;
 }
+.db-drama-empty::before {
+  content: "🎬";
+  display: block;
+  font-size: 32px;
+  margin-bottom: 12px;
+  opacity: 0.6;
+}
 
-/* ── 封面：固定 2:3 相框（小圆角 + 细边框 + 轻投影），图片按原图比例择优呈现 ── */
+/* ── 封面：固定 2:3 相框（圆角 + 细边框 + 轻投影），图片按原图比例择优呈现 ── */
 .db-drama-cover {
   position: relative;
   flex: 0 0 auto;
-  width: 62px;
+  width: 68px;
   /* 高度写死成 2:3，不依赖 aspect-ratio（老 WebView 上会塌陷成原图比例） */
-  height: 93px;
+  height: 102px;
   box-sizing: border-box;
   border: 1px solid var(--db-border);
-  border-radius: 7px;
+  border-radius: 10px;
   background: var(--db-surface2);
-  box-shadow: var(--db-shadow-sm);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   overflow: hidden;
   isolation: isolate;
+  transition: transform 0.2s ease;
 }
-.db-drama-cover.is-form { width: 92px; height: 138px; border-radius: 8px; cursor: default; }
+/* 卡片悬停时封面微动 */
+.db-drama-card:hover .db-drama-cover { transform: scale(1.02); }
+.db-drama-cover.is-form { width: 92px; height: 138px; border-radius: 10px; cursor: default; }
 .db-drama-cover.is-tap { cursor: pointer; transition: transform 0.15s ease, opacity 0.15s ease; }
 .db-drama-cover.is-tap:active { transform: scale(0.97); opacity: 0.9; }
 .db-drama-cover.is-tap:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
@@ -8049,11 +8262,14 @@ body .db-journal-root .db-filter-q:focus {
   position: absolute;
   inset: 0;
   background: linear-gradient(160deg,
-    color-mix(in srgb, var(--db-text-muted) 10%, var(--db-surface2)),
+    color-mix(in srgb, var(--db-accent) 8%, var(--db-surface2)),
     var(--db-surface2));
-  animation: db-drama-loading 1.1s ease-in-out infinite alternate;
+  animation: db-drama-loading 1.2s ease-in-out infinite alternate;
 }
-@keyframes db-drama-loading { from { opacity: 0.5; } to { opacity: 1; } }
+@keyframes db-drama-loading {
+  from { opacity: 0.5; }
+  to { opacity: 1; }
+}
 @media (prefers-reduced-motion: reduce) {
   .db-drama-cover.is-loading::after { animation: none; }
 }
@@ -8065,26 +8281,27 @@ body .db-journal-root .db-filter-q:focus {
   width: 100%;
   height: 100%;
   color: #fff;
-  font-size: 22px;
-  font-weight: 600;
+  font-size: 24px;
+  font-weight: 700;
   line-height: 1;
   user-select: none;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  letter-spacing: 1px;
 }
 /* 色块上的高光与内描边：让纯色块也有海报框的质感 */
 .db-drama-fallback::after {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(155deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0) 52%, rgba(0, 0, 0, 0.12));
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  background: linear-gradient(155deg, rgba(255, 255, 255, 0.25), rgba(255, 255, 255, 0) 52%, rgba(0, 0, 0, 0.15));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
 }
 
 /* ── 卡片正文 ── */
 .db-drama-main {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 8px;
   min-width: 0;
   flex: 1 1 auto;
 }
@@ -8112,15 +8329,19 @@ body .db-journal-root .db-filter-q:focus {
   font-weight: var(--font-normal, 400);
   line-height: inherit;
   cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s ease;
 }
+.db-drama-root button.db-drama-title-btn:hover { background: color-mix(in srgb, var(--db-accent) 6%, transparent); }
 .db-drama-title {
   min-width: 0;
-  font-size: 14.5px;
+  font-size: 15px;
   font-weight: 600;
   line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--db-text);
 }
 .db-drama-original {
   min-width: 0;
@@ -8135,40 +8356,61 @@ body .db-journal-root .db-filter-q:focus {
 
 .db-drama-status {
   flex: 0 0 auto;
-  padding: 2px 8px;
-  border-radius: 999px;
+  padding: 3px 10px;
+  border-radius: 8px;
   font-size: 11px;
   font-weight: 600;
-  line-height: 1.6;
+  line-height: 1.5;
+  letter-spacing: 0.2px;
 }
-.db-drama-status.is-live { background: var(--db-accent-soft); color: var(--db-accent); }
+.db-drama-status.is-live {
+  background: color-mix(in srgb, var(--db-accent) 14%, transparent);
+  color: var(--db-accent);
+  border: 1px solid color-mix(in srgb, var(--db-accent) 25%, transparent);
+}
 /* 列表卡片上的状态徽标可点（弹锚定菜单就地改状态） */
-.db-drama-status.is-tap { cursor: pointer; transition: transform 0.15s ease; }
+.db-drama-status.is-tap { cursor: pointer; transition: all 0.15s ease; }
+.db-drama-status.is-tap:hover { background: color-mix(in srgb, var(--db-accent) 20%, transparent); }
 .db-drama-status.is-tap:active { transform: scale(0.95); }
 .db-drama-status.is-tap:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
-.db-drama-status.is-done { background: color-mix(in srgb, #4c9a6a 14%, transparent); color: color-mix(in srgb, #4c9a6a 78%, var(--db-text)); }
-.db-drama-status.is-pause { background: color-mix(in srgb, #c8963e 16%, transparent); color: color-mix(in srgb, #c8963e 80%, var(--db-text)); }
-.db-drama-status.is-drop { background: color-mix(in srgb, var(--db-text-muted) 14%, transparent); color: var(--db-text-muted); }
+.db-drama-status.is-done {
+  background: color-mix(in srgb, #4c9a6a 12%, transparent);
+  color: color-mix(in srgb, #4c9a6a 78%, var(--db-text));
+  border: 1px solid color-mix(in srgb, #4c9a6a 22%, transparent);
+}
+.db-drama-status.is-pause {
+  background: color-mix(in srgb, #c8963e 14%, transparent);
+  color: color-mix(in srgb, #c8963e 80%, var(--db-text));
+  border: 1px solid color-mix(in srgb, #c8963e 24%, transparent);
+}
+.db-drama-status.is-drop {
+  background: color-mix(in srgb, var(--db-text-muted) 10%, transparent);
+  color: var(--db-text-muted);
+  border: 1px solid color-mix(in srgb, var(--db-text-muted) 18%, transparent);
+}
 
 .db-drama-pills {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
 }
 .db-drama-cat,
 .db-drama-tag {
-  padding: 2px 8px;
-  border-radius: 6px;
+  padding: 3px 9px;
+  border-radius: 7px;
   font-size: 11.5px;
-  line-height: 1.6;
+  font-weight: 500;
+  line-height: 1.5;
   background: var(--db-surface2);
   color: var(--db-text-muted);
+  border: 1px solid color-mix(in srgb, var(--db-border) 60%, transparent);
 }
 .db-drama-cat {
   background: color-mix(in srgb, var(--db-accent) 10%, transparent);
   color: var(--db-accent);
   font-weight: 600;
+  border-color: color-mix(in srgb, var(--db-accent) 20%, transparent);
 }
 
 .db-drama-prog { min-width: 0; }
@@ -8185,25 +8427,47 @@ body .db-journal-root .db-filter-q:focus {
   color: var(--db-text);
   font-variant-numeric: tabular-nums;
 }
+/* 进度条美化 */
 .db-drama-bar {
   flex: 1 1 0;
-  min-width: 24px;
-  height: 4px;
+  min-width: 32px;
+  height: 6px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--db-text-muted) 14%, transparent);
+  background: color-mix(in srgb, var(--db-text-muted) 12%, transparent);
   overflow: hidden;
+  position: relative;
 }
 .db-drama-fill {
   height: 100%;
   border-radius: 999px;
-  background: var(--db-accent);
-  transition: width 0.25s ease;
+  background: linear-gradient(90deg, var(--db-accent), color-mix(in srgb, var(--db-accent) 75%, #fff));
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+/* 进度条上的光泽效果 */
+.db-drama-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+  animation: db-drama-shine 2s ease-in-out infinite;
+}
+@keyframes db-drama-shine {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .db-drama-fill::after { animation: none; }
 }
 .db-drama-pct {
   flex: 0 0 auto;
   font-size: 11px;
-  color: var(--db-text-muted);
+  font-weight: 600;
+  color: var(--db-accent);
   font-variant-numeric: tabular-nums;
+  background: color-mix(in srgb, var(--db-accent) 10%, transparent);
+  padding: 2px 6px;
+  border-radius: 6px;
 }
 .db-drama-dates {
   min-width: 0;
@@ -8213,43 +8477,49 @@ body .db-journal-root .db-filter-q:focus {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  background: color-mix(in srgb, var(--db-text-muted) 8%, transparent);
+  padding: 2px 8px;
+  border-radius: 6px;
 }
 
 .db-drama-foot {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--db-border) 50%, transparent);
 }
 .db-drama-root button.db-drama-bump,
 .db-drama-root button.db-drama-link {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  min-height: 30px;
-  padding: 5px 12px;
+  gap: 5px;
+  min-height: 32px;
+  padding: 6px 14px;
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: 10px;
   font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
-  transition: transform 0.15s ease, opacity 0.15s ease;
+  transition: all 0.18s ease;
 }
 .db-drama-root button.db-drama-bump {
   background: var(--db-accent);
-  box-shadow: none;
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--db-accent) 25%, transparent);
   color: var(--text-on-accent, #fff);
 }
 .db-drama-root button.db-drama-link {
-  background: transparent;
+  background: var(--db-surface2);
   box-shadow: none;
   border-color: var(--db-border);
   color: var(--db-text-muted);
   font-weight: 500;
 }
 .db-drama-bump:active,
-.db-drama-link:active { transform: scale(0.97); opacity: 0.92; }
+.db-drama-link:active { transform: scale(0.96); opacity: 0.92; }
 .db-drama-root button.db-drama-bump:focus-visible,
 .db-drama-root button.db-drama-link:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
 .db-drama-bump-icon,
@@ -8490,16 +8760,16 @@ body .db-journal-root .db-filter-q:focus {
 .db-drama-cover.is-prop {
   width: 42px;
   height: 63px;
-  border-radius: 6px;
+  border-radius: 7px;
 }
 /* 小图位里 contain 的内边距按比例缩，否则 42px 宽只剩一点点画面 */
 .db-drama-cover.is-prop.is-fit .db-drama-img:not(.is-bg) { padding: 2px; }
 /* 封面组（文件类型，可多张）：未展开一张小图，展开后大一点的图平铺；只渲染图片本身，不渲染文件名/大小 */
 .db-drama-cover.is-mini {
-  width: 34px;
-  height: 51px;
-  border-radius: 5px;
-  box-shadow: none;
+  width: 38px;
+  height: 57px;
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 .db-drama-cover.is-tile {
   width: 84px;
@@ -8668,8 +8938,8 @@ body .db-journal-root .db-filter-q:focus {
 @media (hover: none) {
   .db-drama-root button.db-drama-add,
   .db-drama-root button.db-drama-bump,
-  .db-drama-root button.db-drama-del { min-height: 44px; padding: 10px 16px; }
-  .db-drama-root button.db-drama-chip { min-height: 36px; padding: 7px 13px; }
+  .db-drama-root button.db-drama-del { min-height: 44px; padding: 10px 18px; }
+  .db-drama-root button.db-drama-chip { min-height: 38px; padding: 8px 14px; }
   .db-drama-root button.db-drama-link,
   .db-drama-root button.db-drama-mini { min-height: 40px; padding: 9px 14px; }
   .db-drama-root button.db-drama-act { min-height: 46px; }
@@ -8678,6 +8948,10 @@ body .db-journal-root .db-filter-q:focus {
   .db-drama-root button.db-drama-prop-edit { width: 40px; min-height: 40px; }
   /* 触控没有 hover：链接的下划线成为唯一「可点」提示 */
   .db-drama-prop-link-text { text-decoration: underline; text-underline-offset: 2px; }
+  /* 卡片悬停效果在触屏上禁用 */
+  .db-drama-card:hover { transform: none; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03); }
+  /* 封面悬停效果在触屏上禁用 */
+  .db-drama-card:hover .db-drama-cover { transform: none; }
   /* 就地文本格钉在 16px：WebView 聚焦字号 <16px 的输入框会自动放大整页，键盘收了也不还原。
      值本来就常驻这一格，字号不会在「看」和「改」之间跳，行高也就不会抖。 */
   .db-drama-root textarea.db-drama-prop-field { font-size: 16px; }
@@ -8717,35 +8991,44 @@ body .db-journal-root .db-filter-q:focus {
   /* 标题跟着 body 一起限宽居中，才能和属性行共用同一条左边线
      （width: 100% 先撑满再被 max-width 截住，auto 外边距居中的是整个盒子而不是内容） */
   .db-drama-subhead { width: 100%; max-width: 720px; margin: 0 auto; }
-  .db-drama-cover { width: 74px; height: 111px; }
+  .db-drama-cover { width: 78px; height: 117px; }
   .db-drama-title { font-size: 15px; }
-  .db-drama-card { padding: 14px 16px; }
+  .db-drama-card { padding: 16px 18px; }
   .db-drama-subhead-title { font-size: 22px; }
+  .db-drama-head { padding: 16px 20px; }
 }
 
 /* ── 窄容器（手机 / 极窄侧栏）── */
 @container (max-width: 480px) {
-  .db-drama-cover { width: 54px; height: 81px; }
+  .db-drama-cover { width: 56px; height: 84px; }
   .db-drama-fallback { font-size: 19px; }
-  .db-drama-card { padding: 10px; gap: 10px; }
+  .db-drama-card { padding: 12px; gap: 12px; }
   .db-drama-title { font-size: 14px; }
+  .db-drama-list { grid-template-columns: 1fr; }
+  .db-drama-head { padding: 12px 14px; }
 }
 @container (max-width: 360px) {
-  .db-drama-cover { width: 48px; height: 72px; }
+  .db-drama-cover { width: 50px; height: 75px; }
   .db-drama-fallback { font-size: 17px; }
   .db-drama-meta { gap: 6px; }
   /* 时间行的显隐交给「显示字段」设置，这里不再按宽度硬隐藏 */
   .db-drama-title { font-size: 13.5px; }
   .db-drama-original { font-size: 11px; }
-  .db-drama-root button.db-drama-chip { font-size: 12px; padding: 5px 9px; }
+  .db-drama-root button.db-drama-chip { font-size: 12px; padding: 5px 10px; }
+  .db-drama-card { padding: 10px; gap: 10px; }
   /* 属性页的紧凑化已在上面 480px 块统一处理，这里只再收一档封面小图 */
   .db-drama-cover.is-prop { width: 36px; height: 54px; }
 }
 
-/* ── 关掉封面：卡片只剩文字，补齐左边距让标题与「新增剧集」左对齐 ── */
-.db-drama-card.is-bare { padding-left: 14px; }
+/* ── 关掉封面：卡片只剩文字，补齐左边距 + 渐变背景 ── */
+.db-drama-card.is-bare {
+  padding-left: 16px;
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--db-accent) 3%, var(--db-surface)) 0%,
+    var(--db-surface) 100%);
+}
 @container (max-width: 480px) {
-  .db-drama-card.is-bare { padding-left: 12px; }
+  .db-drama-card.is-bare { padding-left: 14px; }
 }
 
 /* ════════════════════════════════════════════════════════
@@ -8936,6 +9219,14 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-mcal-now { width: auto; padding: 0 6px; }
 .is-phone .db-mcal-main { flex-direction: column; }
+/* 纵向排列后 flex-basis / min-width 的含义变成高度与最小宽度：
+   星期表头会被撑到 280px 高，月历下方留出一大块空白；改回由内容决定尺寸 */
+.is-phone .db-mcal-main > .db-mcal-grid {
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
+}
+.is-phone .db-mcal-side { min-width: 0; }
 
 /* 上下班打卡弹窗：本次会记成上班/下班（含跨天）的提示 */
 .db-checkin-time-hint {
@@ -8946,4 +9237,418 @@ body .db-journal-root .db-filter-q:focus {
   color: var(--db-text);
   font-size: 12px;
   line-height: 1.5;
+}
+
+/* ════════════════════════════════════════════════════════
+   AI 助手（页内新页面，与 Dashboard 同构）
+   结构：顶栏 + 对话列表（唯一滚动层）+ 底部输入条
+   ════════════════════════════════════════════════════════ */
+.db-root.db-page-ai {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  overflow: hidden;
+  animation: db-page-push 0.18s ease-out;
+}
+
+/* ── AI 悬浮球：绝对定位锚在视图内容容器（.workspace-leaf-content）上，真悬浮；
+   left/bottom 由 TS 按「x 宽度比例 + y 像素」写入（持久化在 settings.aiFabPos）。
+   AI 页里保持显示（点击退出，位置抬到输入条上方）；统计面板 / 编辑二级页 / 键盘弹出时收起。
+   z=5：让位给编辑页吸底操作条（z6）、抽屉（z60）与 body 级 sheet / 弹窗（z49+）。 ── */
+.db-ai-fab {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--db-accent);
+  color: var(--text-on-accent, #fff);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22);
+  cursor: pointer;
+  /* 长按拖动：手势全归指针事件，不触发滚动 / 长按选中 / 系统菜单 */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
+}
+.db-ai-fab:active { transform: translateX(-50%) scale(0.92); opacity: 0.92; }
+/* 长按进入拖动：放大 + 深影提示「已抓起」，松手落位 */
+.db-ai-fab.is-drag {
+  transform: translateX(-50%) scale(1.18);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);
+  opacity: 0.96;
+  cursor: grabbing;
+  transition: none;
+}
+.db-ai-fab svg { width: 17px; height: 17px; }
+.db-ai-fab:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .db-ai-fab { transition: none; }
+}
+
+.db-ai-head {
+  flex: 0 0 auto;
+  /* 与 Dashboard 顶栏同款：sticky 不滚动时 top 不生效，由 JS 的 marginTop 做原生头部避让 */
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--db-bg);
+  border-bottom: 1px solid var(--db-border);
+  z-index: 3;
+}
+.db-ai-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.db-ai-title-main { font-size: 15px; font-weight: 600; line-height: 1.2; color: var(--db-text); }
+.db-ai-title-sub {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--db-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-ai-head button.db-ai-icon {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--db-text-muted);
+  cursor: pointer;
+}
+.db-ai-head button.db-ai-icon:hover { background: var(--db-surface2); color: var(--db-text); }
+.db-ai-head button.db-ai-icon:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
+
+.db-ai-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+}
+
+.db-ai-msg {
+  max-width: 86%;
+  min-width: 0;
+  padding: 9px 12px;
+  border-radius: 16px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.db-ai-msg.is-user {
+  align-self: flex-end;
+  background: var(--db-accent);
+  color: var(--db-accent-text);
+  border-bottom-right-radius: 5px;
+}
+.db-ai-msg.is-assistant {
+  align-self: flex-start;
+  background: var(--db-surface2);
+  color: var(--db-text);
+  border: 1px solid var(--db-border);
+  border-bottom-left-radius: 5px;
+}
+.db-ai-msg.is-loading { color: var(--db-text-muted); font-style: italic; }
+.db-ai-msg.is-error { border-color: var(--text-error); color: var(--text-error); }
+.db-ai-msg.is-system { color: var(--db-text-muted); font-size: 12px; }
+.db-ai-msg.is-written { border-color: var(--db-accent); }
+.db-ai-text { white-space: pre-wrap; word-break: break-word; }
+
+/* 移动端外壳默认 user-select:none（与追剧输入框同款问题）：AI 的问答、待写入预览、
+   引导文案都是纯文本内容，显式放开才能长按选中、复制；-webkit-touch-callout 一并放开，
+   iOS 长按才有「拷贝」菜单。按钮不放开，免得长按按钮把文案选成蓝色。 */
+.db-root.db-page-ai .db-ai-list {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+.db-root.db-page-ai .db-ai-list button,
+.db-root.db-page-ai .db-ai-list .db-ai-chip {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.db-ai-list button.db-ai-undo {
+  margin-top: 8px;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--db-border);
+  background: transparent;
+  color: var(--db-text-muted);
+  font-size: 12px;
+}
+.db-ai-list button.db-ai-undo:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
+
+/* 空状态 */
+.db-ai-empty {
+  margin: auto;
+  padding: 20px 8px;
+  max-width: 420px;
+  text-align: center;
+}
+.db-ai-empty-title { font-size: 17px; font-weight: 600; margin-bottom: 6px; }
+.db-ai-empty-text { font-size: 13px; line-height: 1.6; color: var(--db-text-muted); }
+.db-ai-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 14px; }
+.db-ai-list button.db-ai-chip {
+  min-height: 38px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--db-border);
+  background: var(--db-surface2);
+  color: var(--db-text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.db-ai-list button.db-ai-chip:hover { background: var(--background-modifier-hover); }
+.db-ai-list button.db-ai-chip:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
+
+/* 未配置模型 */
+.db-ai-setup {
+  align-self: stretch;
+  padding: 12px 14px;
+  border: 1px solid var(--db-border);
+  border-radius: 16px;
+  background: var(--db-surface2);
+}
+.db-ai-setup-title { font-size: 14px; font-weight: 600; }
+.db-ai-setup-text { margin-top: 4px; font-size: 12px; line-height: 1.6; color: var(--db-text-muted); }
+.db-ai-list button.db-ai-setup-btn {
+  margin-top: 10px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: none;
+  background: var(--db-accent);
+  color: var(--db-accent-text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* 待写入预览 */
+.db-ai-pending {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--db-border);
+  border-radius: 16px;
+  background: var(--db-surface2);
+}
+.db-ai-pending-title { font-size: 13px; font-weight: 600; }
+.db-ai-op {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--db-border);
+  border-radius: 12px;
+  background: var(--db-bg);
+}
+.db-ai-op-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.db-ai-op-kind {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--background-modifier-hover);
+  color: var(--db-text-muted);
+  font-size: 11px;
+}
+.db-ai-op-summary { min-width: 0; font-size: 13px; font-weight: 500; word-break: break-word; }
+.db-ai-op-path {
+  margin-top: 6px;
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  color: var(--db-text-faint);
+  word-break: break-all;
+}
+.db-ai-op-preview {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--background-primary-alt);
+  color: var(--db-text);
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.db-ai-op-invalid { font-size: 12px; line-height: 1.5; color: var(--text-error); }
+.db-ai-pending-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.db-ai-list button.db-ai-btn {
+  min-height: 38px;
+  padding: 0 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.db-ai-list button.db-ai-btn.is-secondary {
+  border: 1px solid var(--db-border);
+  background: transparent;
+  color: var(--db-text);
+}
+.db-ai-list button.db-ai-btn.is-primary {
+  border: none;
+  background: var(--db-accent);
+  color: var(--db-accent-text);
+}
+.db-ai-list button.db-ai-btn:disabled { opacity: 0.45; cursor: default; }
+.db-ai-list button.db-ai-btn:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
+
+/* 输入条 */
+.db-ai-composer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 12px calc(8px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  border-top: 1px solid var(--db-border);
+  background: var(--db-bg);
+}
+.db-ai-composer textarea.db-ai-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 40px;
+  max-height: 132px;
+  padding: 9px 12px;
+  border: 1px solid var(--db-border);
+  border-radius: 12px;
+  background: var(--db-surface2);
+  color: var(--db-text);
+  font-size: 15px;
+  line-height: 1.4;
+  resize: none;
+  overflow-y: auto;
+  /* 外壳 user-select:none 会连输入框一起禁掉：不放开就选不中已输入的文字、也粘贴不进 */
+  -webkit-user-select: text;
+  user-select: text;
+}
+.db-ai-composer textarea.db-ai-input:focus {
+  outline: none;
+  border-color: var(--db-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--db-accent) 18%, transparent);
+}
+.db-ai-composer button.db-ai-send {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 12px;
+  background: var(--db-accent);
+  color: var(--db-accent-text);
+  cursor: pointer;
+}
+.db-ai-composer button.db-ai-send:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
+.db-ai-composer button.db-ai-send:disabled { opacity: 0.45; cursor: default; }
+.db-ai-composer button.db-ai-send.is-busy .svg-icon { animation: db-ai-pulse 1s ease-in-out infinite; }
+@keyframes db-ai-pulse { 50% { opacity: 0.35; } }
+
+/* 窄屏：气泡更宽、留白收紧 */
+@container (max-width: 480px) {
+  .db-ai-list { padding: 10px; gap: 8px; }
+  .db-ai-msg { max-width: 92%; }
+  .db-ai-composer { padding-left: 8px; padding-right: 8px; }
+}
+
+/* 宽屏（PC 主编辑区）：内容限宽居中，别拉满整窗 */
+@container (min-width: 720px) {
+  .db-ai-list,
+  .db-ai-composer { width: 100%; max-width: 760px; margin-left: auto; margin-right: auto; }
+  .db-ai-head { padding-left: 16px; padding-right: 16px; }
+}
+
+/* 触控：输入字号锁 16px（防安卓自动放大），点按目标放大到 44px */
+@media (hover: none) {
+  .db-ai-composer textarea.db-ai-input { font-size: 16px; }
+  .db-ai-head button.db-ai-icon { min-width: 44px; min-height: 44px; }
+  .db-ai-list button.db-ai-chip { min-height: 44px; }
+  .db-ai-list button.db-ai-btn { min-height: 44px; }
+  .db-ai-list button.db-ai-setup-btn { min-height: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .db-root.db-page-ai { animation: none; }
+  .db-ai-composer button.db-ai-send.is-busy .svg-icon { animation: none; }
+}
+
+/* ── 写入记录弹窗（App 层，不在 .db-root 容器内） ── */
+.db-ai-hist h3 { margin: 0 0 6px; font-size: 16px; font-weight: 600; }
+.db-ai-hist-hint { font-size: 12px; line-height: 1.5; color: var(--text-muted); margin-bottom: 12px; }
+.db-ai-hist-empty { padding: 18px 0; text-align: center; font-size: 13px; color: var(--text-muted); }
+.db-ai-hist-list { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
+.db-ai-hist-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m, 8px);
+  background: var(--background-secondary);
+}
+.db-ai-hist-row.is-undone { opacity: 0.55; }
+.db-ai-hist-meta { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.db-ai-hist-time { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.db-ai-hist-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-ai-hist-files {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-ai-hist button.db-ai-hist-btn {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 6px);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 12px;
+  box-shadow: none;
+  cursor: pointer;
+}
+.db-ai-hist button.db-ai-hist-btn:hover { background: var(--background-modifier-hover); }
+.db-ai-hist button.db-ai-hist-btn:disabled { opacity: 0.5; cursor: default; }
+.db-ai-hist button.db-ai-hist-btn:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
+
+@media (max-width: 620px) {
+  .db-ai-hist-list { max-height: 55vh; }
+  .db-ai-hist button.db-ai-hist-btn { min-height: 44px; padding: 4px 14px; }
 }
