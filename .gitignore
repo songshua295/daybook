@@ -1,22 +1,28 @@
-node_modules/
-build/
-.DS_Store
-*.zip
-releases/
-v*/
-.trae/
-obsidian-thino-3.0.23/
+# ==========================================
+# 白名单模式：默认忽略全部，仅放行插件代码
+# ==========================================
+*
 
-# 备份文件
-*.bak
+# 忽略规则本身
+!.gitignore
 
-# AI 工具本地数据
-.opencode/
-.zcode/
+# 插件清单与构建配置
+!manifest.json
+!package.json
+!package-lock.json
+!tsconfig.json
+!esbuild.config.mjs
 
-# 本地测试脚手架（jsdom / 垫片，不随插件发布）
-.daybook-tests/
-.sync/
-文档/
-main.js
-main.js
+# 插件源码与类型声明
+!src/
+!src/**
+!types/
+!types/**
+
+# 运行时资源与样式
+!assets/
+!assets/**
+!styles.css
+
+# 许可证
+!LICENSE
