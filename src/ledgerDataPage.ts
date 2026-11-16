@@ -179,12 +179,12 @@ export class LedgerDataPage {
     card.createDiv({ cls: "db-led-io-tip", text: "从手机 / 电脑选文件" });
     this.note(card, "选好账单文件后自动识别来源 App 或模板，识别错了可以在下一步手动改。");
     this.primaryBtn(card, "选择账单文件", () => this.pickFile());
-    if (!Platform.isMobileApp) this.note(card, "也可以在下方填仓库里的文件路径（例如 Daily/ledger/账单.xls）。");
+    if (!Platform.isMobileApp) this.note(card, "也可以在下方填仓库里的文件路径（例如 Daybook/账单.xls）。");
 
     const vcard = body.createDiv({ cls: "db-led-card" });
     vcard.createDiv({ cls: "db-led-card-title", text: "仓库内路径" });
     const row = vcard.createDiv({ cls: "db-led-io-vault" });
-    const input = row.createEl("input", { cls: "db-led-input", attr: { type: "text", placeholder: "Daily/ledger/xxx.xls", "aria-label": "仓库文件路径" } });
+    const input = row.createEl("input", { cls: "db-led-input", attr: { type: "text", placeholder: "Daybook/xxx.xls", "aria-label": "仓库文件路径" } });
     const btn = row.createEl("button", { cls: "db-led-btn-ghost", attr: { type: "button" }, text: "读取" });
     btn.addEventListener("click", () => void this.loadFromVault(input.value.trim()));
     const candidates = this.vaultCandidates();

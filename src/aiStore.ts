@@ -10,6 +10,7 @@
  */
 import { App, normalizePath } from "obsidian";
 import type { DaybookSettings } from "./settings";
+import { DEFAULT_DIARY_FOLDER } from "./settings";
 
 export interface AiMessage {
   role: "user" | "assistant";
@@ -49,7 +50,7 @@ export class AiStore {
   constructor(private app: App, private settings: DaybookSettings) {}
 
   get dir(): string {
-    const folder = (this.settings.diaryFolder ?? "").trim().replace(/\/+$/, "") || "Daily";
+    const folder = (this.settings.diaryFolder ?? "").trim().replace(/\/+$/, "") || DEFAULT_DIARY_FOLDER;
     return normalizePath(`${folder}/ai`);
   }
 

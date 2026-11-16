@@ -77,7 +77,7 @@ function addDays(today: string, n: number): string {
 /** 无截止日排在最后：用哨兵日期代替 undefined 参与字符串比较 */
 const NO_DUE = "9999-12-31";
 
-/** 创建时间键：任务的 [createdAt::] 优先，缺失时退回所属日记块的日期时间 */
+/** 创建时间键：任务的 [创建于: …] 优先，缺失时退回所属日记块的日期时间 */
 function createdKey(t: PlanOverviewTask): string {
   return t.todo.createdAt ?? `${t.entry.date} ${t.entry.time ?? "00:00"}`;
 }

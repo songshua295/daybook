@@ -363,7 +363,7 @@ export class DramaPage {
       cls: "db-drama-sum",
       text: this.store.shows.length
         ? `共 ${this.store.shows.length} 部 · 追更中 ${counts.following} · 已完结 ${counts.done}`
-        : "数据存在 日记目录/drama/shows.json",
+        : "数据存在 追剧目录/shows.md",
     });
     const add = head.createEl("button", { cls: "db-drama-add", attr: { type: "button" } });
     setIcon(add.createSpan({ cls: "db-drama-add-icon" }), "plus");
@@ -884,7 +884,7 @@ export class DramaPage {
       setIcon(del.createSpan({ cls: "db-drama-del-icon" }), "trash-2");
       del.createSpan({ text: "删除这部剧" });
       del.addEventListener("click", () => {
-        new ConfirmModal(this.app, "删除剧集", `确定删除《${s.title}》？shows.json 里这条记录会被移除。`, "删除", () => {
+        new ConfirmModal(this.app, "删除剧集", `确定删除《${s.title}》？shows.md 里这个小节会被移除。`, "删除", () => {
           void (async () => {
             await this.store.removeShow(s.id);
             // 先落回收列表：closeEditor 负责退掉哨兵并重渲染

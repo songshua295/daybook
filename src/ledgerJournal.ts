@@ -3,23 +3,25 @@
  *
  * 存储形式（纯文本，肉眼可读、可直接用 hledger 记账软件打开）：
  *
- *   2026-10-19 12:36 * 沙县小吃 ; id:x1, led:l1, cur:CNY, disc:5.00, at:1697...
+ *   2026-10-19 12:36 * 沙县小吃 ; 编号:x1, 账本:l1, 币种:CNY, 优惠:5.00, 记录于:2026-10-19 12:36
  *       expenses:餐饮:午餐            ¥95.00
  *       assets:支付宝                 ¥-95.00
  *
  * 口径约定：
  * - 每笔交易 = 一条 hledger transaction，日期行 = 日期 [HH:mm] * 描述；行尾 `;` 后是插件元数据标签。
- * - 标签只保留分录表达不了的信息：id（身份）、led（账本）、cur/rate（币种折算）、disc/ref（优惠/退款原貌）、
- *   reb/ramt/rdet（报销）、t（标签）、addr/by/oth/f（地址/创建人/其他/附件）、at（创建时间）、batch（导入批次）。
+ * - 标签键一律中文、单冒号（表达约定与追剧/习惯一致）：编号（身份）、账本、币种/汇率（币种折算）、
+ *   优惠/退款（原貌）、报销账户/报销金额/报销说明、标签、地点/经手人/备注/附件、记录于（创建时间，
+ *   人读 `YYYY-MM-DD HH:mm`）、导入批次。旧英文键（id/led/cur/at…）与旧毫秒时间戳仍可读取。
  *   类型与分类/账户由分录账户名推导，时间由日期行表达，不再重复写 kind/cat/sub/acc/to/clock。
  * - 分录金额一律是「实际金额」：支出 = 金额 − 优惠 − 退款（写入分录，便于直接观看与 hledger 统计）；
- *   优惠/退款等原貌保存在标签里（disc/ref），解析时反推回 amount。
+ *   优惠/退款等原貌保存在标签里（优惠/退款），解析时反推回 amount。
  * - 支出分录 expenses:分类[:子分类]，收入分录 incomes:分类，账户分录 assets:账户。
  * - 转账 = 两条 assets 分录（转出为负、转入为正）。
- * - 多币种：金额带币种符号/代码（¥ $ EUR…），折算率存 rate 标签（不影响分录平衡）。
- * - 手写交易（无 id 标签）也能读入：分类/账户按名字自动注册进 config，id 用内容哈希生成，
+ * - 多币种：金额带币种符号/代码（¥ $ EUR…），折算率存汇率标签（不影响分录平衡）。
+ * - 手写交易（无编号标签）也能读入：分类/账户按名字自动注册进 config，id 用内容哈希生成，
  *   因此改完文件重新加载不会产生重复记录。描述里写分号会截断注释，写入时已转成全角。
  */
+import { moment } from "obsidian";
 import type { LedgerConfig, LedgerKind, LedgerRecord } from "./ledgerStore";
 
 /** 金额保留两位小数（与 ledgerStore.round2 同口径；本地副本避免模块依赖） */
@@ -73,9 +75,29 @@ const EXPENSE_ROOT = "expenses";
 const INCOME_ROOT = "incomes";
 const ASSET_ROOT = "assets";
 
-/* ── 标签（行尾 ; 注释里的 key:value） ── */
+/* ── 标签（行尾 ; 注释里的 键:值；键一律中文，旧英文键只读兼容） ── */
 
 type Tags = Record<string, string>;
+
+/** 文件里的标签键（中文或旧英文）→ 内部键（英文小写）；未知键原样保留 */
+const TAG_KEY_ALIASES: Record<string, string> = {
+  "编号": "id", "账本": "led", "币种": "cur", "汇率": "rate",
+  "优惠": "disc", "退款": "ref",
+  "报销账户": "reb", "报销金额": "ramt", "报销说明": "rdet",
+  "标签": "t", "地点": "addr", "经手人": "by", "备注": "oth",
+  "记录于": "at", "导入批次": "batch", "附件": "f",
+  // 旧英文键（只读兼容）
+  id: "id", led: "led", cur: "cur", rate: "rate", disc: "disc", ref: "ref",
+  reb: "reb", ramt: "ramt", rdet: "rdet", t: "t", addr: "addr", by: "by",
+  oth: "oth", at: "at", batch: "batch", f: "f", clock: "clock",
+};
+
+/** 内部键 → 中文键（写盘用；只写中文，不再产生英文键） */
+const TAG_FIELD_NAMES: Record<string, string> = {
+  id: "编号", led: "账本", cur: "币种", rate: "汇率",
+  disc: "优惠", ref: "退款", reb: "报销账户", ramt: "报销金额", rdet: "报销说明",
+  t: "标签", addr: "地点", by: "经手人", oth: "备注", at: "记录于", batch: "导入批次", f: "附件",
+};
 
 function encodeTagValue(v: string): string {
   return v.replace(/,/g, "，").replace(/[\r\n]+/g, " ").trim();
@@ -96,9 +118,24 @@ function parseTags(comment: string | undefined): Tags {
     if (idx <= 0) continue;
     const k = piece.slice(0, idx).trim();
     const v = piece.slice(idx + 1).trim();
-    if (k) out[k] = v;
+    if (k) out[TAG_KEY_ALIASES[k] ?? k] = v;
   }
   return out;
+}
+
+/** 毫秒 → 人读 `YYYY-MM-DD HH:mm`（文件里不出现时间戳）；无值返回空（标签整体省略） */
+function fmtRecordTime(ms: number | undefined): string {
+  if (!ms) return "";
+  return moment(ms).format("YYYY-MM-DD HH:mm");
+}
+
+/** `记录于` 值 → 毫秒；兼容旧毫秒时间戳与人读格式，解析失败返回 0（调用方兜底 now） */
+function parseRecordTime(val: string | undefined): number {
+  const v = (val ?? "").trim();
+  if (!v) return 0;
+  if (/^\d+$/.test(v)) return parseInt(v, 10) || 0; // 旧格式：毫秒时间戳
+  const m = moment(v, ["YYYY-MM-DD HH:mm", "YYYY-MM-DD HH:mm:ss", "YYYY-MM-DD"], true);
+  return m.isValid() ? m.valueOf() : 0;
 }
 
 /* ── 描述 ── */
@@ -171,24 +208,25 @@ export function makeNameResolver(cfg: LedgerConfig): JournalNameResolver {
 
 function recordTags(r: LedgerRecord): Tags {
   // 只写「分录本身表达不了」的信息（身份、账本、币种、优惠/退款、报销、标签、附件、排序）。
-  // kind / cat / sub / acc / to 都能从分录账户名推导，clock 已写在日期行里，不再重复写入。
+  // 键一律中文（TAG_FIELD_NAMES）；kind / cat / sub / acc / to 都能从分录账户名推导，
+  // 时间已写在日期行里，创建时间用人读「记录于」表达，不再出现毫秒时间戳。
   const tags: Tags = {
-    id: r.id,
-    led: r.ledgerId,
-    cur: r.currency,
-    rate: r.rate !== undefined ? String(r.rate) : "",
-    disc: r.discount ? r.discount.toFixed(2) : "",
-    ref: r.refund ? r.refund.toFixed(2) : "",
-    reb: r.reimbAccountId ?? "",
-    ramt: r.reimbAmount ? String(r.reimbAmount) : "",
-    rdet: r.reimbDetail ?? "",
-    t: (r.tags ?? []).join("|"),
-    addr: r.address ?? "",
-    by: r.creator ?? "",
-    oth: r.other ?? "",
-    at: String(r.createdAt ?? ""),
-    batch: r.importBatchId ?? "",
-    f: (r.files ?? []).join("|"),
+    [TAG_FIELD_NAMES.id]: r.id,
+    [TAG_FIELD_NAMES.led]: r.ledgerId,
+    [TAG_FIELD_NAMES.cur]: r.currency,
+    [TAG_FIELD_NAMES.rate]: r.rate !== undefined ? String(r.rate) : "",
+    [TAG_FIELD_NAMES.disc]: r.discount ? r.discount.toFixed(2) : "",
+    [TAG_FIELD_NAMES.ref]: r.refund ? r.refund.toFixed(2) : "",
+    [TAG_FIELD_NAMES.reb]: r.reimbAccountId ?? "",
+    [TAG_FIELD_NAMES.ramt]: r.reimbAmount ? String(r.reimbAmount) : "",
+    [TAG_FIELD_NAMES.rdet]: r.reimbDetail ?? "",
+    [TAG_FIELD_NAMES.t]: (r.tags ?? []).join("|"),
+    [TAG_FIELD_NAMES.addr]: r.address ?? "",
+    [TAG_FIELD_NAMES.by]: r.creator ?? "",
+    [TAG_FIELD_NAMES.oth]: r.other ?? "",
+    [TAG_FIELD_NAMES.at]: fmtRecordTime(r.createdAt),
+    [TAG_FIELD_NAMES.batch]: r.importBatchId ?? "",
+    [TAG_FIELD_NAMES.f]: (r.files ?? []).join("|"),
   };
   return tags;
 }
@@ -210,8 +248,8 @@ export function serializeYearJournal(records: LedgerRecord[], cfg: LedgerConfig)
 
   const out: string[] = [
     `; Daybook 记账 · hledger journal · 本文件由年份数据整体生成（${new Date().getFullYear()} 年及任意年份均可）`,
-    "; 每笔交易：日期 [时间] * 描述 ; 插件元数据（id 等）→ 分类/账户两行分录",
-    "; 分录金额 = 实际金额（支出已扣优惠/退款）；手动改分录金额即可改账，请保留行尾 id 标签",
+    "; 每笔交易：日期 [时间] * 描述 ; 插件元数据（编号 等）→ 分类/账户两行分录",
+    "; 分录金额 = 实际金额（支出已扣优惠/退款）；手动改分录金额即可改账，请保留行尾 编号 标签",
     "",
   ];
 
@@ -385,7 +423,7 @@ export function parseYearJournal(
     );
     const note = desc && desc !== defaultDesc ? desc : "";
 
-    const createdAt = parseInt(tags.at || "", 10) || now;
+    const createdAt = parseRecordTime(tags.at) || now;
     records.push({
       id: tags.id || deterministicId(`${date}|${headerTime ?? ""}|${desc}|${value}|${kind}`),
       date,

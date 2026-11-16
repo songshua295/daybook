@@ -9,6 +9,7 @@ import { ConfirmModal, TodayPanel } from "./TodayPanel";
 import { FilterPanel } from "./FilterPanel";
 import { MemoSearchModal, type SearchHit } from "./memoSearch";
 import { MemoSidebar } from "./memoSidebar";
+import { ScrollTopButton } from "./scrollTopButton";
 import {
   activeDimensions,
   collectTags,
@@ -33,6 +34,7 @@ import {
   updateHabitConfig,
   deleteHabitFile,
   checkinHabit,
+  recordRecentManualTime,
   isValidHHmm,
   deleteCheckinAt,
   clearDayCheckins,
@@ -398,7 +400,8 @@ export class HabitEditModal extends Modal {
 
 /**
  * 打卡时间选择弹窗（上下班型专用）：
- * 默认填当前时间可微调；常用时间胶囊一键按该时刻打卡。
+ * 可选记为上班 / 下班（默认按顺序推断：有进行中班次 = 下班，否则 = 上班）；
+ * 常用时间胶囊一键按该时刻打卡（最近手动设置的时间排最前）；「手动设置」展开自定义时间输入。
  * onPick 抛错时弹窗保持打开，由调用方提示。
  */
 export class CheckinTimeModal extends Modal {
@@ -407,7 +410,7 @@ export class CheckinTimeModal extends Modal {
     private habit: HabitConfig,
     private date: string,
     private rows: CheckinRow[] | null,
-    private onPick: (time: string) => Promise<void>
+    private onPick: (time: string, role: "in" | "out", manual: boolean) => Promise<void>
   ) {
     super(app);
   }
@@ -419,33 +422,61 @@ export class CheckinTimeModal extends Modal {
     contentEl.createEl("h3", { text: `${this.habit.icon} ${this.habit.name}` });
     contentEl.createDiv({ cls: "db-checkin-time-date", text: this.date });
 
-    // 上下班打卡：先说明这次打卡会记成什么（上班 / 下班 / 昨班跨天下班）
-    if (this.habit.attendance) {
-      const open = lastOpenShift(this.rows ?? [], this.habit.id);
-      let hint: string;
-      if (open && open.inDate === this.date) {
-        hint = `本次打卡将记为下班卡（上班 ${open.inTime}）`;
+    // 班次角色：默认按顺序推断（有进行中班次 = 下班，否则 = 上班），可手动切换
+    const open = lastOpenShift(this.rows ?? [], this.habit.id);
+    let role: "in" | "out" = open ? "out" : "in";
+
+    const hint = contentEl.createDiv({ cls: "db-checkin-time-hint" });
+    const renderHint = () => {
+      if (role === "out" && open) {
+        hint.setText(open.inDate === this.date
+          ? `本次打卡将记为下班卡（上班 ${open.inTime}）`
+          : `${open.inDate} ${open.inTime} 的班次还在进行中 · 本次打卡将记为它的下班卡（跨天，记录在今天）`);
       } else if (open) {
-        hint = `${open.inDate} ${open.inTime} 的班次还在进行中 · 本次打卡将记为它的下班卡（跨天，记录在今天）`;
+        hint.setText(`已有 ${open.inDate} ${open.inTime} 的班次进行中 · 本次打卡将开始新的班次（上班卡）`);
       } else {
-        hint = "本次打卡将记为上班卡";
+        hint.setText("本次打卡将记为上班卡");
       }
-      contentEl.createDiv({ cls: "db-checkin-time-hint", text: hint });
-    }
+    };
 
-    const timeInput = contentEl.createEl("input", {
-      cls: "db-checkin-time-input",
-      attr: { type: "time", "aria-label": "打卡时间" },
-    });
-    timeInput.value = moment().format("HH:mm");
+    // 上班 / 下班 选择（没有进行中班次时「下班」不可选——班次必须从上班卡开始）
+    const roleRow = contentEl.createDiv({ cls: "db-checkin-role-row" });
+    const inChip = makeActivatable(roleRow.createDiv({
+      cls: "db-checkin-role-chip",
+      attr: { "aria-label": "记为上班卡" },
+    }), "记为上班卡");
+    inChip.setText("上班");
+    const outChip = open
+      ? makeActivatable(roleRow.createDiv({
+          cls: "db-checkin-role-chip",
+          attr: { "aria-label": "记为下班卡" },
+        }), "记为下班卡")
+      : roleRow.createDiv({
+          cls: "db-checkin-role-chip is-disabled",
+          attr: { "aria-label": "没有进行中的班次，不能记下班卡" },
+        });
+    outChip.setText("下班");
 
-    const quicks = this.habit.quickTimes ?? [];
+    const setRole = (r: "in" | "out") => {
+      if (r === "out" && !open) return;
+      role = r;
+      inChip.toggleClass("is-active", r === "in");
+      outChip.toggleClass("is-active", r === "out");
+      renderHint();
+    };
+    inChip.addEventListener("click", () => setRole("in"));
+    outChip.addEventListener("click", () => setRole("out"));
+    setRole(role);
+
     let busy = false;
-    const pick = async (t: string) => {
+    const pick = async (t: string, manual: boolean) => {
       if (busy) return;
       busy = true;
       try {
-        await this.onPick(t);
+        await this.onPick(t, role, manual);
+        if (manual) {
+          try { await recordRecentManualTime(this.app, this.habit, t); } catch { /* 记常用失败不影响打卡 */ }
+        }
         this.close();
       } catch (e) {
         busy = false;
@@ -453,14 +484,31 @@ export class CheckinTimeModal extends Modal {
       }
     };
 
-    if (quicks.length > 0) {
-      const row = contentEl.createDiv({ cls: "db-checkin-time-quick-row" });
-      row.createDiv({ cls: "db-checkin-time-quick-label", text: "常用时间" });
-      quicks.forEach(t => {
-        const chip = makeActivatable(row.createDiv({ cls: "db-checkin-time-quick-chip", text: t }), `按 ${t} 打卡`);
-        chip.addEventListener("click", () => void pick(t));
-      });
-    }
+    // 常用时间：最近手动设置的排最前，其后是设置页的快捷时刻；行尾「手动设置」展开自定义输入
+    const configured = this.habit.quickTimes ?? [];
+    const recents = this.habit.recentTimes ?? [];
+    const quicks = [...recents, ...configured.filter(t => !recents.includes(t))];
+    const row = contentEl.createDiv({ cls: "db-checkin-time-quick-row" });
+    if (quicks.length > 0) row.createDiv({ cls: "db-checkin-time-quick-label", text: "常用时间" });
+    quicks.forEach(t => {
+      const chip = makeActivatable(row.createDiv({ cls: "db-checkin-time-quick-chip", text: t }), `按 ${t} 打卡`);
+      chip.addEventListener("click", () => void pick(t, false));
+    });
+    const manualBtn = makeActivatable(row.createDiv({
+      cls: "db-checkin-time-quick-chip db-checkin-time-manual-btn",
+      attr: { "aria-label": "手动设置打卡时间" },
+    }), "手动设置打卡时间");
+    manualBtn.setText("＋ 手动设置");
+    const manualArea = contentEl.createDiv({ cls: "db-checkin-time-manual-area" });
+    const timeInput = manualArea.createEl("input", {
+      cls: "db-checkin-time-input",
+      attr: { type: "time", "aria-label": "打卡时间" },
+    });
+    timeInput.value = moment().format("HH:mm");
+    manualBtn.addEventListener("click", () => {
+      manualArea.toggleClass("is-open", !manualArea.hasClass("is-open"));
+      if (manualArea.hasClass("is-open")) activeWindow.setTimeout(() => timeInput.focus(), 50);
+    });
 
     const btns = contentEl.createDiv({ cls: "db-mood-modal-btns" });
     const cancel = btns.createEl("button", { text: "取消" });
@@ -468,9 +516,9 @@ export class CheckinTimeModal extends Modal {
     const ok = btns.createEl("button", { cls: "mod-cta", text: "打卡" });
     ok.addEventListener("click", () => {
       const v = (timeInput.value || "").trim();
-      void pick(isValidHHmm(v) ? v : moment().format("HH:mm"));
+      if (manualArea.hasClass("is-open") && isValidHHmm(v)) void pick(v, true);
+      else void pick(moment().format("HH:mm"), false);
     });
-    activeWindow.setTimeout(() => timeInput.focus(), 50);
   }
 
   onClose() {
@@ -513,8 +561,8 @@ export class HabitDayDetailModal extends Modal {
           void (async () => {
             let rows: CheckinRow[] = [];
             try { rows = (await readHabitFile(this.app, this.habit)).rows; } catch { /* 读不到按无班次提示 */ }
-            new CheckinTimeModal(this.app, this.habit, this.date, rows, async (t) => {
-              await checkinHabit(this.app, this.habit, this.date, t);
+            new CheckinTimeModal(this.app, this.habit, this.date, rows, async (t, role) => {
+              await checkinHabit(this.app, this.habit, this.date, t, role);
               new Notice(`✅ 已补打卡 ${this.date} ${t}`);
               this.onChanged?.();
               render();
@@ -1193,6 +1241,8 @@ export class DaybookView extends ItemView {
   private aiSentinelArmed = false;
   /** AI 悬浮球：底部居中真悬浮（挂在视图内容容器上，不进滚动容器），一键进出 */
   private aiFabEl: HTMLElement | null = null;
+  /** 回到顶部悬浮钮（仅移动端）：锚容器右下角，root 滚到深处上滑时隐现 */
+  private scrollTopBtn: ScrollTopButton | null = null;
   /** 软键盘是否弹出：弹出期间悬浮球收起，别浮在打字区上方碍事 */
   private aiKbVisible = false;
   /** AI 页输入框聚焦中：桌面端没有键盘事件，靠焦点感知编辑态收起悬浮球 */
@@ -1223,6 +1273,17 @@ export class DaybookView extends ItemView {
     this.buildUI();
     this.setupViewportAdapter();
     this.ensureAiFab();
+    // 移动端长页「回到顶部」钮：滚过约两屏再上滑才隐现，二级页 / 键盘 / 编辑态收起
+    // （收起条件与悬浮球同一组；滚动容器 = root，buildUI 只 empty 不替换，绑一次即可）
+    this.scrollTopBtn = new ScrollTopButton(
+      this.containerEl,
+      () => this.containerEl.children[1] as HTMLElement ?? null,
+      () => !!(
+        this.dashEl || this.aiEl || this.aiKbVisible || this.aiEditing ||
+        this.ledgerPage?.isEditing() || this.dramaPage?.isEditing()
+      ),
+    );
+    this.scrollTopBtn.mount();
     // Android 返回键哨兵弹出（Dashboard 新页打开期间 armed）：揭开新页而不是退出应用
     this.registerDomEvent(window, "popstate", () => {
       if (this.dashSentinelArmed) {
@@ -1251,6 +1312,8 @@ export class DaybookView extends ItemView {
     this.aiPage = null;
     this.aiFabEl?.remove();
     this.aiFabEl = null;
+    this.scrollTopBtn?.destroy();
+    this.scrollTopBtn = null;
     this.cancelFabPress();
     this.fabDragging = false;
     // 停止录音并释放资源
@@ -1384,6 +1447,8 @@ export class DaybookView extends ItemView {
       ? keyboard + this.readToolbarHeight(innerH, keyboard)
       : 10 + navbarInset + this.readSafeBottom(innerH);
     root.style.setProperty("--db-bottom-inset", `${bottomInset}px`);
+    // 回顶钮锚在容器（root 外）上：同值再写一份，右下角才能避开导航栏 / 手势条
+    this.containerEl.style.setProperty("--db-bottom-inset", `${bottomInset}px`);
     this.applyTopbarInset();
     this.fitTopbar();
   }
@@ -1914,7 +1979,12 @@ export class DaybookView extends ItemView {
       menu.addItem(item => {
         item.setTitle(p.title);
         if (p.key === info.current) item.setIcon("check");
-        item.onClick(() => this.ledgerPage?.setPage(p.key));
+        item.onClick(() => {
+          /* 先显式收起再切页：setPage 里可能同步 history.go(-n) 回收二级层哨兵，
+             个别 WebView 上点击处理函数里的导航会打断菜单自身的收起，列表就挂在屏幕上 */
+          menu.close();
+          this.ledgerPage?.setPage(p.key);
+        });
       });
     });
     // 锚定在按钮下方；键盘 Enter 触发（坐标为 0）或按钮折进「···」时回退到顶栏下方
@@ -2033,7 +2103,7 @@ export class DaybookView extends ItemView {
     } else badge?.remove();
   }
 
-  /** 习惯/记账/追剧章节的数据在 habits/*.md、ledger/*.json 与 drama/shows.json 里，不展示日记的今日记录流 */
+  /** 习惯/记账/追剧章节的数据在 habits/*.md、记账/ 目录与 drama/shows.md 里，不展示日记的今日记录流 */
   private syncHabitStreamVisibility(): void {
     const t = this._currentSection?.type;
     const hide = t === "habits" || t === "ledger" || t === "drama";
@@ -2284,6 +2354,8 @@ export class DaybookView extends ItemView {
    * 编辑页的开 / 关通过 LedgerPage.onPageTitle 与 DramaPage.onRendered 回调同步到这里。
    */
   private syncAiFab(): void {
+    // 回顶钮与悬浮球共用同一组收起时机（二级页 / 键盘 / 编辑态），跟随这里一起重算
+    this.scrollTopBtn?.sync();
     const fab = this.aiFabEl;
     if (!fab) return;
     const hide = !!(
@@ -2704,10 +2776,10 @@ export class DaybookView extends ItemView {
               new Notice("↩️ 已取消今日打卡");
               refreshAll();
             } else if (habit.attendance) {
-              // 上下班型：先选时刻（默认当前时间 / 常用时间一键），再落记录；弹窗提示上班/下班与跨天
-              new CheckinTimeModal(this.app, habit, todayStr, rows, async (t) => {
+              // 上下班型：先选班次角色与时刻（默认按顺序推断 / 常用时间一键），再落记录
+              new CheckinTimeModal(this.app, habit, todayStr, rows, async (t, role) => {
                 if (count + 1 >= target) this.plugin.feedback.notify();
-                const time = await checkinHabit(this.app, habit, nowToday(), t);
+                const time = await checkinHabit(this.app, habit, nowToday(), t, role);
                 const n = count + 1;
                 new Notice(n >= target
                   ? `✅ ${habit.name} ${time} · 今日已达标（${n}/${target}）`
@@ -3056,8 +3128,8 @@ export class DaybookView extends ItemView {
       ?? (mode === "inline" ? false : section.showMoodPicker !== false);
     const moodToggleRef: { el: HTMLElement | null } = { el: null };
 
-    // 心情选择条（仅移动端 sheet；桌面卡片按设计精简不放置）
-    if (moods.length && mode === "sheet") {
+    // 心情选择条（移动端 sheet 默认随章节设置展开/收起；桌面 inline 默认收起，点工具条 🙂 展开）
+    if (moods.length) {
       const moodGrid = panel.createDiv({ cls: `db-mood-grid db-mood-grid-4col${moodOpen ? "" : " is-collapsed"}` });
       moods.forEach((mood, idx) => {
         const pill = moodGrid.createDiv({
@@ -3223,6 +3295,22 @@ export class DaybookView extends ItemView {
         editor.insertAtCursor("\n1. ");
         editor.focus();
       });
+
+      // 6) 心情（配置了心情才显示）：展开/收起上方心情网格，选中后表情显示在按钮上
+      if (moods.length) {
+        const moodTool = makeActivatable(toolsLeft.createDiv({
+          cls: `db-editor-tool db-mood-toggle${moodOpen ? " is-active" : ""}`,
+          text: this.selectedMood ?? "🙂",
+          attr: { role: "button", "aria-label": "展开/收起心情选择", title: "心情选择" },
+        }), "心情选择");
+        moodTool.addEventListener("click", () => {
+          const now = !(this.moodOpenMap[section.id] ?? section.showMoodPicker !== false);
+          this.moodOpenMap[section.id] = now;
+          panel.querySelectorAll(".db-mood-grid").forEach(g => g.toggleClass("is-collapsed", !now));
+          moodTool.toggleClass("is-active", now);
+        });
+        moodToggleRef.el = moodTool;
+      }
 
       // 右侧发送按钮（录音入口在功能栏左组的麦克风，这里只保留纸飞机）
       const actionBtn = toolbar.createEl("button", {
@@ -3633,11 +3721,11 @@ export class DaybookView extends ItemView {
       // 新格式：顶格任务行，属性全部 Dataview 行内字段（不再写 "- HH:mm" 时间标题包装）
       let taskLine = `- [ ] ${text || rawText}`;
       const eff = effectivePriority(this.currentPriority);
-      if (eff !== "2") taskLine += ` [priority::${eff}]`;
+      if (eff !== "2") taskLine += ` [优先级: ${eff}]`;
       // 截止日期：日历图选中的优先，其次输入文本中识别到的日期词
       const due = this.currentDue ?? date;
-      if (due) taskLine += ` [due::${due}]`;
-      taskLine += ` [createdAt::${moment().format("YYYY-MM-DD HH:mm")}]`;
+      if (due) taskLine += ` [截止: ${due}]`;
+      taskLine += ` [创建于: ${moment().format("YYYY-MM-DD HH:mm")}]`;
       sendBtn.addClass("loading");
       try {
         await appendToSection(this.app, this.plugin.settings, section.label, section.type, taskLine, section);

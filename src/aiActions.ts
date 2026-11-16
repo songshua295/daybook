@@ -4,21 +4,27 @@
  * 流程：系统提示词（各类型源文件的真实格式 + 现有数据清单）
  *   → 模型返回 { reply, ops }
  *   → prepareOps 逐条校验并生成预览（目标文件 + 将写入的内容）
- *   → 用户点「确认写入」→ executeOps 执行并记录前后全文快照（可撤销）
+ *   → 用户点「确认写入」→ executeOps 事务化执行：取基线快照 → 各 op 暂存新内容（同一文件
+ *     多条 op 在内存里合并）→ 落盘前检测外部改动 → 每个文件恰好写一次 → 失败整体回滚，
+ *     前后全文快照进撤销历史（可一键撤销）
  *
  * 只开放这几类动作：闪念、待办、习惯打卡、记一笔、追剧新增/加一集/更新。
  * 不开放任意文件改写——所有写入都走插件自己的存储 API，格式与手动录入完全一致。
  */
-import { App, moment, normalizePath } from "obsidian";
+import { App, moment, normalizePath, TFile } from "obsidian";
 import type { DaybookSettings, SectionConfig, SectionType } from "./settings";
 import { DEFAULT_LEDGER_FOLDER, getVisibleSections } from "./settings";
-import { appendToSection, resolveSectionPath } from "./fileManager";
+import { appendToSectionContent, resolveSectionPath } from "./fileManager";
 import { readJournalEntriesForDates, type JournalEntry } from "./fileReader";
-import { checkinHabit, isValidHHmm, loadHabits, type HabitData } from "./habitManager";
 import {
-  LedgerStore, defaultLedgerConfig, makeRecordId, baseAmount, fmtMoney,
-  type LedgerConfig, type LedgerRecord,
+  isValidHHmm, loadHabits, parseHabitFile, serializeHabitFile,
+  type HabitData, type CheckinRow,
+} from "./habitManager";
+import {
+  LedgerStore, defaultLedgerConfig, makeRecordId, baseAmount, fmtMoney, writeAtomicFile,
+  type LedgerCategory, type LedgerConfig, type LedgerRecord,
 } from "./ledgerStore";
+import { parseYearJournal, serializeYearJournal, makeNameResolver } from "./ledgerJournal";
 import {
   DramaStore, STATUS_INFO, STATUS_ORDER, newDramaShow,
   type DramaShow, type DramaStatus,
@@ -39,8 +45,8 @@ export type AiQueryOp =
 
 export type AiOp =
   | AiQueryOp
-  | { op: "memo"; text: string }
-  | { op: "plan"; text: string; priority?: string; due?: string }
+  | { op: "memo"; text: string; section?: string }
+  | { op: "plan"; text: string; priority?: string; due?: string; section?: string }
   | { op: "checkin"; habit: string; date?: string; time?: string }
   | {
     op: "ledger";
@@ -85,7 +91,8 @@ export interface AiDataContext {
   habits: HabitData[];
   ledgerConfig: LedgerConfig;
   dramas: DramaShow[];
-  sections: { type: SectionType; label: string }[];
+  /** 可见章节清单：注入提示词，供 memo / plan 的 section 字段选择 */
+  sections: { id: string; type: SectionType; label: string; emoji: string; path?: string }[];
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -133,7 +140,10 @@ export async function loadAiDataContext(app: App, settings: DaybookSettings): Pr
     habits,
     ledgerConfig: await readLedgerConfig(app, settings),
     dramas: drama.shows,
-    sections: getVisibleSections(settings).map(s => ({ type: s.type, label: s.label })),
+    sections: getVisibleSections(settings).map(s => ({
+      id: s.id, type: s.type, label: s.label, emoji: s.emoji,
+      path: s.filePath?.trim() || undefined,
+    })),
   };
 }
 
@@ -169,6 +179,18 @@ function describeDramas(ctx: AiDataContext): string {
     .join("\n");
 }
 
+/** 闪念/待办章节清单：同名类型可能有多个章节（不同 label / 自定义路径） */
+function describeSections(ctx: AiDataContext): string {
+  const secs = ctx.sections.filter(s => s.type === "memos" || s.type === "plans");
+  if (!secs.length) return "（闪念/待办章节都已关闭，不能写闪念和待办）";
+  return secs
+    .map(s => {
+      const typeLabel = s.type === "memos" ? "闪念" : "待办";
+      return `- ${s.label}（${typeLabel}）${s.path ? `→ ${s.path}` : ""}`;
+    })
+    .join("\n");
+}
+
 export function buildSystemPrompt(ctx: AiDataContext): string {
   return `你是 Daybook 的写作助手。Daybook 是一个 Obsidian 插件，用户用一句话描述想记录的内容，你把它整理成待写入的文件内容。
 
@@ -178,10 +200,10 @@ export function buildSystemPrompt(ctx: AiDataContext): string {
 {"reply":"给用户看的中文说明（简短）","ops":[]}
 
 【可用动作】ops 数组元素，按顺序执行：
-1. 闪念：{"op":"memo","text":"内容"} —— 追加到今天的闪念。text 支持 **加粗**、[[双链]]、#标签。
-2. 待办：{"op":"plan","text":"任务标题","priority":2,"due":"YYYY-MM-DD"} —— 追加到今天的待办。priority：1=紧急 2=普通 3=重要 4=低，缺省 2；due 可省略；text 里不要再重复日期。
+1. 闪念：{"op":"memo","text":"内容","section":"章节名可选"} —— 追加到今天的闪念。text 支持 **加粗**、[[双链]]、#标签。section 从【章节清单】里选；只有一个闪念章节时省略。
+2. 待办：{"op":"plan","text":"任务标题","priority":2,"due":"YYYY-MM-DD","section":"章节名可选"} —— 追加到今天的待办。priority：1=紧急 2=普通 3=重要 4=低，缺省 2；due 可省略；text 里不要再重复日期。section 同闪念。
 3. 习惯打卡：{"op":"checkin","habit":"习惯名","date":"YYYY-MM-DD","time":"HH:mm"} —— 给已有习惯补打卡。date 缺省今天，time 缺省当前时间。
-4. 记一笔：{"op":"ledger","kind":"expense","amount":32.5,"category":"餐饮","sub":"午餐","account":"微信","note":"备注","date":"YYYY-MM-DD","tags":["工作"]} —— kind 只能是 expense 或 income；category / sub / account 必须从下面清单里选；date 缺省今天。
+4. 记一笔：{"op":"ledger","kind":"expense","amount":32.5,"category":"餐饮","sub":"午餐","account":"微信","note":"备注","date":"YYYY-MM-DD","tags":["工作"]} —— kind 只能是 expense 或 income；category / sub / account 必须从下面清单里选；sub 尽量选类别括号里最贴切的一个，没把握就省略；date 缺省今天。
 5. 新增追剧：{"op":"drama-add","title":"剧名","category":"电视剧","totalEpisodes":24,"status":"following","tags":[]} —— status：following=追更中 done=已完结 paused=暂停 dropped=弃剧。
 6. 加一集：{"op":"drama-bump","title":"剧名","count":1}
 7. 更新追剧：{"op":"drama-update","title":"剧名","episodes":5,"totalEpisodes":24,"status":"done"}
@@ -189,12 +211,15 @@ export function buildSystemPrompt(ctx: AiDataContext): string {
 9. 查记账：{"op":"query-ledger","days":30,"kind":"expense","category":"餐饮","account":"微信","keyword":"可选","limit":20} —— 返回合计、类别小计与最近明细（折算基准币）。
 10. 查习惯：{"op":"query-habits","days":7,"habit":"阅读"} —— 返回打卡次数、打卡天数与今日进度。
 
+【章节清单】memo / plan 可用 "section":"章节名" 指定写入哪个章节（填下面括号前的名字）；同一类型有多个章节时按内容选最合适的，只有一个时不用传：
+${describeSections(ctx)}
+
 【规则】
 - 用户只是询问、闲聊、查询时，禁止编造数据：需要真实记录（历史闪念/待办、金额、习惯打卡、追剧进度）才能回答时，第一轮只返回查询动作，reply 留空或一句「我先查一下」，系统会把查询结果发给你，你再基于结果用中文回答。
 - 查询是只读的、不花用户一次确认；能合并成一个查询就别拆成多个。
 - 查询没给时间范围时：闪念/待办/习惯默认今天，记账默认本月。
 - 用户既要查询又要记录时，可以在同一次 ops 里同时给查询和写入动作；写入仍需用户确认。
-- 不要编造习惯名、记账类别、账户、剧名；清单里没有就在 reply 里说明，不要猜。
+- 不要编造习惯名、记账类别、账户、剧名、章节名；清单里没有就在 reply 里说明，不要猜。
 - 信息不足或无法理解时 ops 为空，并在 reply 里问清楚。
 - amount 只写数字；日期用 YYYY-MM-DD；时间用 HH:mm。
 - reply 用中文，不要提到 JSON、ops、动作这些实现细节。
@@ -277,7 +302,7 @@ function parseOp(raw: unknown): AiOp | null {
   }
   if (op === "memo") {
     const text = asEntryText(o.text);
-    return text ? { op: "memo", text } : null;
+    return text ? { op: "memo", text, section: asText(o.section) || undefined } : null;
   }
   if (op === "plan") {
     const text = asEntryText(o.text);
@@ -288,6 +313,7 @@ function parseOp(raw: unknown): AiOp | null {
       op: "plan", text,
       priority: /^[1-4]$/.test(p) ? p : undefined,
       due: DATE_RE.test(due) ? due : undefined,
+      section: asText(o.section) || undefined,
     };
   }
   if (op === "checkin") {
@@ -383,7 +409,10 @@ export interface PreparedOp {
   preview: string;
   /** 快照前的准备（如记账先完成旧数据迁移，避免撤销时把迁移结果当成 AI 写入删掉） */
   prepare?: () => Promise<void>;
-  apply: () => Promise<void>;
+  /** 事务化写入：基于基线内容计算新全文并暂存，不直接落盘。
+   *  base.get(path) 为 null = 文件当前不存在；同批 op 依次执行，
+   *  后执行的能看到先执行的暂存结果（同一文件多条 op 自动合并为一次落盘）。 */
+  stage: (base: Map<string, string | null>) => Promise<void>;
 }
 
 export interface PrepareResult {
@@ -391,8 +420,19 @@ export interface PrepareResult {
   invalid: string[];
 }
 
-function sectionOf(settings: DaybookSettings, type: SectionType): SectionConfig | null {
-  return getVisibleSections(settings).find(s => s.type === type) ?? null;
+/** 该类型的所有可见章节，按设置顺序 */
+function sectionsOfType(settings: DaybookSettings, type: SectionType): SectionConfig[] {
+  return getVisibleSections(settings).filter(s => s.type === type);
+}
+
+/** 按 AI 给的章节名/ID 定位章节；没给或找不到返回 null（调用方回退第一个） */
+function pickSection(secs: SectionConfig[], name: string | undefined): SectionConfig | null {
+  const q = (name ?? "").trim();
+  if (!q) return null;
+  return secs.find(s => s.label === q)
+    ?? secs.find(s => s.id === q)
+    ?? secs.find(s => s.label.includes(q) || q.includes(s.label))
+    ?? null;
 }
 
 function matchHabit(habits: HabitData[], name: string): HabitData | null {
@@ -414,9 +454,9 @@ function matchDrama(shows: DramaShow[], title: string): DramaShow | null {
 function planLine(op: Extract<AiOp, { op: "plan" }>): string {
   let line = `- [ ] ${op.text}`;
   const p = op.priority ?? "2";
-  if (p !== "2") line += ` [priority::${p}]`;
-  if (op.due) line += ` [due::${op.due}]`;
-  line += ` [createdAt::${moment().format("YYYY-MM-DD HH:mm")}]`;
+  if (p !== "2") line += ` [优先级: ${p}]`;
+  if (op.due) line += ` [截止: ${op.due}]`;
+  line += ` [创建于: ${moment().format("YYYY-MM-DD HH:mm")}]`;
   return line;
 }
 
@@ -440,30 +480,40 @@ export async function prepareOps(
 
   for (const op of ops) {
     if (op.op === "memo") {
-      const sec = sectionOf(settings, "memos");
-      if (!sec) { invalid.push("闪念章节已关闭，无法写入闪念"); continue; }
+      const secs = sectionsOfType(settings, "memos");
+      if (!secs.length) { invalid.push("闪念章节已关闭，无法写入闪念"); continue; }
+      const sec = pickSection(secs, op.section) ?? secs[0];
+      const multi = secs.length > 1;
       const path = resolveSectionPath(settings, sec);
       prepared.push({
         op, kind: "闪念",
-        summary: `闪念：${op.text}`,
+        summary: `闪念${multi ? `（${sec.label}）` : ""}：${op.text}`,
         paths: [path],
         preview: `# ${sec.label}\n\n- ${moment().format("HH:mm")} ${op.text}`,
-        apply: () => appendToSection(app, settings, sec.label, "memos", op.text, sec),
+        stage: async (base) => {
+          const cur = base.get(path) ?? null;
+          base.set(path, appendToSectionContent(cur, sec.label, "memos", op.text));
+        },
       });
       continue;
     }
 
     if (op.op === "plan") {
-      const sec = sectionOf(settings, "plans");
-      if (!sec) { invalid.push("待办章节已关闭，无法写入待办"); continue; }
+      const secs = sectionsOfType(settings, "plans");
+      if (!secs.length) { invalid.push("待办章节已关闭，无法写入待办"); continue; }
+      const sec = pickSection(secs, op.section) ?? secs[0];
+      const multi = secs.length > 1;
       const path = resolveSectionPath(settings, sec);
       const line = planLine(op);
       prepared.push({
         op, kind: "待办",
-        summary: `待办：${op.text}${op.due ? `（截止 ${op.due}）` : ""}`,
+        summary: `待办${multi ? `（${sec.label}）` : ""}：${op.text}${op.due ? `（截止 ${op.due}）` : ""}`,
         paths: [path],
         preview: `# ${sec.label}\n\n${line}`,
-        apply: () => appendToSection(app, settings, sec.label, "plans", line, sec),
+        stage: async (base) => {
+          const cur = base.get(path) ?? null;
+          base.set(path, appendToSectionContent(cur, sec.label, "plans", line));
+        },
       });
       continue;
     }
@@ -478,7 +528,18 @@ export async function prepareOps(
         summary: `给「${habit.config.name}」打卡 ${date} ${time}`,
         paths: [habit.config.filePath],
         preview: `### ${date}\n\n- [x] ${time}`,
-        apply: async () => { await checkinHabit(app, habit.config, date, time); },
+        stage: async (base) => {
+          const path = habit.config.filePath;
+          const cur = base.get(path) ?? null;
+          let rows: CheckinRow[] = [];
+          let rawFm: Record<string, unknown> = {};
+          if (cur !== null) {
+            const parsed = parseHabitFile(path, cur);
+            if (parsed) { rows = parsed.rows; rawFm = parsed.rawFrontmatter; }
+          }
+          rows.push({ habitId: habit.config.id, date, time, skipped: false });
+          base.set(path, serializeHabitFile(habit.config, rows, rawFm));
+        },
       });
       continue;
     }
@@ -486,20 +547,49 @@ export async function prepareOps(
     if (op.op === "ledger") {
       const cfg = ctx.ledgerConfig;
       const kindLabel = op.kind === "income" ? "收入" : "支出";
-      const cat = cfg.categories.find(c => c.name === op.category && c.kind === op.kind)
-        ?? cfg.categories.find(c => c.kind === op.kind && (c.name.includes(op.category) || op.category.includes(c.name)));
+      const kindCats = cfg.categories.filter(c => c.kind === op.kind);
+      const subUnder = (cat: LedgerCategory, name: string): { id: string; name: string } | null =>
+        cat.subs?.find(s => s.name === name)
+        ?? cat.subs?.find(s => s.name.includes(name) || name.includes(s.name))
+        ?? null;
+      // 全局找最合适的子类别（先精确后模糊）：把「类别/子类别」组合纠正到真实存在的位置
+      const findSubGlobal = (name: string): { cat: LedgerCategory; sub: { id: string; name: string } } | null => {
+        for (const c of kindCats) {
+          const s = c.subs?.find(x => x.name === name);
+          if (s) return { cat: c, sub: s };
+        }
+        for (const c of kindCats) {
+          const s = c.subs?.find(x => x.name.includes(name) || name.includes(x.name));
+          if (s) return { cat: c, sub: s };
+        }
+        return null;
+      };
+      let cat = kindCats.find(c => c.name === op.category)
+        ?? kindCats.find(c => c.name.includes(op.category) || op.category.includes(c.name))
+        ?? null;
+      let sub = cat && op.sub ? subUnder(cat, op.sub) : null;
+      let rerouted = false;
+      if (cat && op.sub && !sub) {
+        // 子类别不在该类别下：全局找更合适的类别/子类别组合（如「餐饮/打车」→「交通/打车」）
+        const hit = findSubGlobal(op.sub);
+        if (hit) { cat = hit.cat; sub = hit.sub; rerouted = true; }
+      } else if (!cat && op.sub) {
+        // 类别没匹配上：用子类别定位（如「吃饭/午餐」→「餐饮/午餐」）
+        const hit = findSubGlobal(op.sub);
+        if (hit) { cat = hit.cat; sub = hit.sub; rerouted = true; }
+      }
       if (!cat) { invalid.push(`记账类别「${op.category}」不存在或与收支类型不符`); continue; }
-      const sub = op.sub
-        ? cat.subs?.find(s => s.name === op.sub) ?? cat.subs?.find(s => s.name.includes(op.sub!) || op.sub!.includes(s.name))
-        : undefined;
       if (op.sub && !sub) { invalid.push(`类别「${cat.name}」下没有「${op.sub}」`); continue; }
       const acc = cfg.accounts.find(a => !a.archived && a.name === op.account)
         ?? cfg.accounts.find(a => !a.archived && (a.name.includes(op.account) || op.account.includes(a.name)));
       if (!acc) { invalid.push(`记账账户「${op.account}」不存在`); continue; }
+      // 固定解析结果：cat/sub 是 let，闭包里拿不到非空收窄
+      const finalCat = cat;
+      const finalSub = sub;
       const date = op.date ?? ctx.today;
       const year = date.slice(0, 4);
       const store = new LedgerStore(app, settings);
-      const buildRecord = (config: LedgerConfig): LedgerRecord | null => {
+      const buildRecord = (config: LedgerConfig, cat: LedgerCategory, sub: { id: string; name: string } | null): LedgerRecord | null => {
         const c = config.categories.find(x => x.id === cat.id)
           ?? config.categories.find(x => x.name === cat.name && x.kind === op.kind);
         if (!c) return null;
@@ -536,17 +626,26 @@ export async function prepareOps(
         }
         return ledgerStore;
       };
+      const targetPath = store.recordsFilePath(year);
       prepared.push({
         op, kind: "记账",
         summary: `记一笔：${kindLabel} ¥${money(op.amount)} · ${cat.name}${sub ? ` / ${sub.name}` : ""} · ${acc.name}`,
-        paths: [store.recordsFilePath(year)],
+        paths: [targetPath],
         prepare: async () => { await getStore(); },
-        preview: `${date}  ${kindLabel}  ${op.amount.toFixed(2)} ${cfg.baseCurrency || "CNY"}\n类别：${cat.name}${sub ? ` / ${sub.name}` : ""}\n账户：${acc.name}${op.note ? `\n备注：${op.note}` : ""}${op.tags?.length ? `\n标签：${op.tags.map(t => "#" + t).join(" ")}` : ""}`,
-        apply: async () => {
+        preview: `${date}  ${kindLabel}  ${op.amount.toFixed(2)} ${cfg.baseCurrency || "CNY"}\n类别：${cat.name}${sub ? ` / ${sub.name}` : ""}\n账户：${acc.name}${op.note ? `\n备注：${op.note}` : ""}${op.tags?.length ? `\n标签：${op.tags.map(t => "#" + t).join(" ")}` : ""}${rerouted ? `\n（已将「${op.category}${op.sub ? ` / ${op.sub}` : ""}」匹配到 ${cat.name}${sub ? ` / ${sub.name}` : ""}）` : ""}`,
+        stage: async (base) => {
           const s = await getStore();
-          const rec = buildRecord(s.config);
+          const rec = buildRecord(s.config, finalCat, finalSub);
           if (!rec) throw new Error("记账配置已变化，请重新发送");
-          await s.addRecord(rec);
+          // 基于基线内容追加（同一年多条记账在同一次 stage 链里叠加，最后只落盘一次）
+          const cur = base.get(targetPath) ?? null;
+          const yearRecords: LedgerRecord[] = [];
+          if (cur !== null) {
+            yearRecords.push(...parseYearJournal(cur, s.config, makeNameResolver(s.config)).records);
+          }
+          yearRecords.unshift(rec);
+          yearRecords.sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
+          base.set(targetPath, serializeYearJournal(yearRecords, s.config));
         },
       });
       continue;
@@ -566,9 +665,10 @@ export async function prepareOps(
           op.category ? `类型：${op.category}` : "",
           op.tags?.length ? `标签：${op.tags.map(t => "#" + t).join(" ")}` : "",
         ].filter(Boolean).join("\n"),
-        apply: async () => {
+        stage: async (base) => {
           const s = new DramaStore(app, settings);
-          await s.load();
+          s.beginStaged();
+          s.seedFromText(base.get(store.path) ?? null);
           if (matchDrama(s.shows, op.title)) throw new Error("追剧条目已存在，请重新发送");
           const show = newDramaShow();
           show.title = op.title;
@@ -578,6 +678,7 @@ export async function prepareOps(
           show.tags = op.tags ?? [];
           show.originalName = op.originalName ?? "";
           await s.addShow(show);
+          base.set(store.path, s.serialize());
         },
       });
       continue;
@@ -591,17 +692,20 @@ export async function prepareOps(
         ? Math.min(show.totalEpisodes, show.episodes + count)
         : show.episodes + count;
       const actual = Math.max(0, next - show.episodes);
+      const dramaPath = new DramaStore(app, settings).path;
       prepared.push({
         op, kind: "追剧",
         summary: `「${show.title}」加 ${actual} 集：${show.episodes} → ${next}`,
-        paths: [new DramaStore(app, settings).path],
+        paths: [dramaPath],
         preview: `${show.title}\n已看：${show.episodes} → ${next}${show.totalEpisodes > 0 ? ` / ${show.totalEpisodes}` : ""}`,
-        apply: async () => {
+        stage: async (base) => {
           const s = new DramaStore(app, settings);
-          await s.load();
+          s.beginStaged();
+          s.seedFromText(base.get(dramaPath) ?? null);
           const cur = matchDrama(s.shows, op.title);
           if (!cur) throw new Error("追剧条目已变化，请重新发送");
           for (let i = 0; i < actual; i++) await s.bumpEpisode(cur.id, moment().format("YYYY-MM-DD"));
+          base.set(dramaPath, s.serialize());
         },
       });
       continue;
@@ -613,10 +717,11 @@ export async function prepareOps(
       const nextEpisodes = op.episodes ?? show.episodes;
       const nextTotal = op.totalEpisodes ?? show.totalEpisodes;
       const nextStatus = op.status ?? show.status;
+      const dramaPath = new DramaStore(app, settings).path;
       prepared.push({
         op, kind: "追剧",
         summary: `更新「${show.title}」：${nextEpisodes}/${nextTotal || "?"} · ${STATUS_INFO[nextStatus].label}`,
-        paths: [new DramaStore(app, settings).path],
+        paths: [dramaPath],
         preview: [
           show.title,
           `已看：${show.episodes} → ${nextEpisodes}`,
@@ -624,9 +729,10 @@ export async function prepareOps(
           nextStatus !== show.status ? `状态：${STATUS_INFO[show.status].label} → ${STATUS_INFO[nextStatus].label}` : "",
           op.finishedAt ? `看完于：${op.finishedAt}` : "",
         ].filter(Boolean).join("\n"),
-        apply: async () => {
+        stage: async (base) => {
           const s = new DramaStore(app, settings);
-          await s.load();
+          s.beginStaged();
+          s.seedFromText(base.get(dramaPath) ?? null);
           const cur = matchDrama(s.shows, op.title);
           if (!cur) throw new Error("追剧条目已变化，请重新发送");
           await s.updateShow({
@@ -636,6 +742,7 @@ export async function prepareOps(
             status: nextStatus,
             finishedAt: op.finishedAt ?? cur.finishedAt,
           });
+          base.set(dramaPath, s.serialize());
         },
       });
       continue;
@@ -899,26 +1006,42 @@ export async function executeOps(
   app: App,
   ops: PreparedOp[],
 ): Promise<ExecuteResult> {
-  // 先做准备（如记账旧数据迁移、创建目录），再做快照：撤销只回滚 AI 真正写入的内容
+  // 先做准备（如记账旧数据迁移、创建目录），再取基线：撤销只回滚 AI 真正写入的内容
   for (const p of ops) {
     if (p.prepare) await p.prepare();
   }
-  const before = new Map<string, string | null>();
-  const order: string[] = [];
-  for (const p of ops) {
-    for (const path of p.paths) {
-      if (before.has(path)) continue;
-      before.set(path, await readText(app, path));
-      order.push(path);
+
+  // 1) 基线：每个涉及文件只读一次全文（null = 文件不存在）
+  const allPaths = [...new Set(ops.flatMap(p => p.paths))];
+  const baseline = new Map<string, string | null>();
+  for (const path of allPaths) baseline.set(path, await readText(app, path));
+
+  // 2) 暂存：依次计算各 op 的新内容（同一文件的多个 op 在内存里叠加，最后只落盘一次）
+  const staged = new Map(baseline);
+  for (const p of ops) await p.stage(staged);
+
+  // 3) 冲突检测：落盘前重读比对基线，期间被外部改动就取消整批（此时还没有写任何东西）
+  for (const path of allPaths) {
+    const now = await readText(app, path);
+    if (now !== (baseline.get(path) ?? null)) {
+      throw new Error(`文件在准备期间被外部修改，已取消本次写入：${path}`);
     }
   }
 
+  // 4) 提交：只写内容有变化的文件，每个文件恰好一次
+  const written: string[] = [];
   try {
-    for (const p of ops) await p.apply();
+    for (const path of allPaths) {
+      const before = baseline.get(path) ?? null;
+      const after = staged.get(path) ?? null;
+      if (after === before) continue;
+      await writeCommit(app, path, after ?? "", before === null);
+      written.push(path);
+    }
   } catch (e) {
     // 中途失败：把已改的文件还原，避免「写了一半又没记录可撤销」
-    for (const path of order) {
-      const b = before.get(path);
+    for (const path of written) {
+      const b = baseline.get(path);
       try {
         if (b === null || b === undefined) {
           if (await app.vault.adapter.exists(path)) await app.vault.adapter.remove(path);
@@ -932,15 +1055,36 @@ export async function executeOps(
     throw e;
   }
 
+  // 5) 记录快照：直接用暂存结果与基线对比，不再重读磁盘
   const files: AiWriteFile[] = [];
-  for (const path of order) {
-    const after = await readText(app, path);
-    const b = before.get(path) ?? null;
-    if (after === b) continue;
-    files.push({ path, before: b, after });
+  for (const path of allPaths) {
+    const b = baseline.get(path) ?? null;
+    const a = staged.get(path) ?? null;
+    if (a === b) continue;
+    files.push({ path, before: b, after: a });
   }
   return {
     title: ops.map(p => p.summary).join("；"),
     files,
   };
+}
+
+/** 提交单个文件：md 走 vault API（保证元数据缓存刷新），其余（记账 journal 等）走原子写 */
+async function writeCommit(app: App, path: string, text: string, isNew: boolean): Promise<void> {
+  if (isNew) {
+    const folder = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+    if (folder && !app.vault.getAbstractFileByPath(folder)) await app.vault.createFolder(folder);
+    if (path.endsWith(".md")) {
+      await app.vault.create(path, text);
+      return;
+    }
+    await writeAtomicFile(app.vault.adapter, path, text);
+    return;
+  }
+  const file = app.vault.getAbstractFileByPath(path) as TFile | null;
+  if (file) {
+    await app.vault.modify(file, text);
+    return;
+  }
+  await writeAtomicFile(app.vault.adapter, path, text);
 }

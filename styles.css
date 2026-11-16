@@ -1361,7 +1361,7 @@ body,
 .db-set-group-body > .db-mood-editor { padding: 0 16px; }
 .db-set-group-body > .db-mood-add-btn { margin: 4px 16px 10px; }
 
-/* ── 手风琴条目（版块 / 章节） ── */
+/* ── 平铺行（版块 / 章节）：点行弹层编辑，☰ 拖拽排序，⋮ 菜单 ── */
 
 .db-set-list {
   display: flex;
@@ -1370,34 +1370,41 @@ body,
   padding: 6px 12px 12px;
 }
 
-.db-set-sublist {
+.db-set-row {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 14px;
-}
-
-.db-set-item {
+  align-items: center;
+  min-width: 0;
   border: 1px solid var(--background-modifier-border);
   border-radius: 10px;
   background: var(--background-primary);
-  overflow: hidden;
 }
 
-.db-set-item-head {
+.db-set-row.is-dragging {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
+}
+
+/* 章节行 / 添加行缩进一级，体现归属 */
+.db-set-row-sec,
+.db-set-row-add { margin-left: 16px; }
+
+.db-set-row-main {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 44px;
-  padding: 8px 12px;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 48px;
+  padding: 8px 4px 8px 12px;
+  border-radius: 10px 0 0 10px;
   cursor: pointer;
   -webkit-user-select: none;
   user-select: none;
 }
 
-.db-set-item-head:hover { background: var(--background-modifier-hover); }
+.db-set-row-main:hover { background: var(--background-modifier-hover); }
 
-.db-set-item-head:focus-visible {
+.db-set-row-main:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: -2px;
 }
@@ -1445,13 +1452,56 @@ body,
 
 .db-set-item-chev svg { width: 16px; height: 16px; }
 
-.db-set-item-body {
-  display: none;
-  padding: 2px 14px 14px;
-  border-top: 1px solid var(--background-modifier-border);
+/* ☰ 拖拽手柄：touch-action none 防止拖动时页面滚动 */
+.db-set-row-drag {
+  width: 40px;
+  height: 48px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
-.db-set-item.is-open > .db-set-item-body { display: block; }
+.db-set-row-drag svg { width: 16px; height: 16px; }
+.db-set-row-drag:active { cursor: grabbing; color: var(--text-muted); }
+
+/* ⋮ 溢出菜单按钮（版块操作） */
+.db-set-more {
+  width: 40px;
+  height: 48px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0 10px 10px 0;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.db-set-more svg { width: 18px; height: 18px; }
+.db-set-more:hover { color: var(--text-muted); background: var(--background-modifier-hover); }
+
+/* 虚线「+ 添加章节」行 */
+.db-set-row-add {
+  min-height: 40px;
+  justify-content: center;
+  border: 1.5px dashed var(--background-modifier-border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.db-set-row-add:hover { border-color: var(--interactive-accent); color: var(--interactive-accent); }
+.db-set-row-add.is-disabled { opacity: 0.45; }
 
 /* ── 胶囊按钮（可见/隐藏、默认展开/收起） ── */
 
@@ -1475,43 +1525,146 @@ body,
   color: var(--text-muted);
 }
 
-/* ── 图标工具行（上移 / 下移 / 删除） ── */
+/* ── 章节编辑弹层：桌面居中小窗，手机端底部滑出（Bottom Sheet） ── */
 
-.db-set-tools { display: flex; gap: 8px; margin-top: 14px; }
+.modal.db-sheet {
+  width: min(460px, 92vw);
+  max-height: min(560px, 86vh);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
 
-.db-set-tool {
+.modal.db-sheet .modal-content {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  /* basis 用 auto：外层 .modal 是 auto 高度，basis 0 会把整层压成 0 高 */
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Obsidian 默认关闭按钮可能挂在 .modal-container 下（不是 .modal 子元素），用 :has 一并隐藏 */
+.modal-container:has(.db-sheet) .modal-close-button { display: none; }
+
+.db-sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 12px 8px 12px 16px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.db-sheet-title {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-sheet-close {
   width: 40px;
   height: 40px;
-  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--background-modifier-border);
   border-radius: 10px;
-  background: var(--background-secondary);
   color: var(--text-muted);
   cursor: pointer;
 }
 
-.db-set-tool svg { width: 16px; height: 16px; }
+.db-sheet-close svg { width: 18px; height: 18px; }
+.db-sheet-close:hover { background: var(--background-modifier-hover); }
 
-.db-set-tool:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
+/* 唯一滚动层：表单体 */
+.db-sheet-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 16px 8px;
 }
 
-.db-set-tool.danger {
-  margin-left: auto;
-  color: var(--color-red, #ef4444);
-  border-color: color-mix(in srgb, var(--color-red, #ef4444) 35%, transparent);
+.db-sheet-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.db-sheet-del {
+  min-height: 44px;
+  padding: 0 14px;
+  flex-shrink: 0;
+  border: 1px solid color-mix(in srgb, var(--color-red, #ef4444) 35%, transparent);
+  border-radius: 12px;
   background: color-mix(in srgb, var(--color-red, #ef4444) 8%, transparent);
+  color: var(--color-red, #ef4444);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
-.db-set-tool.danger:hover {
+.db-sheet-del:hover {
   background: color-mix(in srgb, var(--color-red, #ef4444) 16%, transparent);
 }
 
-.db-set-tool.is-disabled { opacity: 0.3; }
+.db-sheet-done {
+  flex: 1 1 0;
+  min-height: 44px;
+  border: none;
+  border-radius: 12px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent, #fff);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.db-sheet-done:hover { opacity: 0.92; }
+
+/* 手机端：从底部滑出 + 顶部抓手 */
+@keyframes db-sheet-up {
+  from { transform: translateY(40%); opacity: 0.4; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.is-phone .modal.db-sheet {
+  top: auto;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  transform: none;
+  border-radius: 16px 16px 0 0;
+  border-bottom: none;
+  max-height: 88%;
+  animation: db-sheet-up 0.22s ease;
+}
+
+.is-phone .modal.db-sheet::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--background-modifier-border-hover, var(--background-modifier-border));
+}
+
+/* 单行输入弹窗（重命名版块） */
+.db-set-confirm .db-set-input { margin: 12px 0 16px; }
 
 /* ── 竖排字段：小标签 + 全宽控件 ── */
 
@@ -1613,7 +1766,7 @@ select.db-set-input { cursor: pointer; }
 /* ── 触控：可点目标 ≥ 44px（手机端） ── */
 
 @media (hover: none) {
-  .db-set-tool { width: 44px; height: 44px; }
+  .db-set-row-drag, .db-set-more { width: 44px; }
   .db-set-pill { min-height: 34px; padding: 6px 12px; }
   .db-set-input { min-height: 44px; }
   .db-set-add { min-height: 44px; }
@@ -3802,6 +3955,49 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-checkin-time-quick-chip:hover { border-color: var(--interactive-accent); background: var(--db-accent-soft); }
 .db-checkin-time-quick-chip:active { transform: scale(0.96); }
+
+/* 上班 / 下班 角色选择（默认按顺序推断，可手动切换；无进行中班次时下班禁用） */
+.db-checkin-role-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.db-checkin-role-chip {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--background-modifier-border);
+  border-radius: 999px;
+  color: var(--text-normal);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.db-checkin-role-chip:hover { border-color: var(--interactive-accent); }
+.db-checkin-role-chip.is-active {
+  border-color: var(--interactive-accent);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.db-checkin-role-chip.is-disabled { opacity: 0.4; cursor: default; }
+.db-checkin-role-chip:not(.is-disabled):active { transform: scale(0.96); }
+
+/* 「手动设置」按钮（展开自定义时间输入）与输入区 */
+.db-checkin-time-manual-btn {
+  border-style: dashed;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+.db-checkin-time-manual-btn:hover { border-style: dashed; }
+.db-checkin-time-manual-area { display: none; margin-bottom: 4px; }
+.db-checkin-time-manual-area.is-open { display: block; }
+.db-checkin-time-manual-area .db-checkin-time-input { margin-bottom: 10px; }
 
 /* 触控端：常用时间删除点与类型胶囊加大命中区（规则 5：hover 只是增强） */
 @media (hover: none) {
@@ -7263,6 +7459,12 @@ body .db-journal-root .db-filter-q:focus {
   padding: 12px 16px calc(12px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
   border-top: 1px solid var(--db-border);
 }
+/* 光标落在表单输入框里时收起（ledgerPage buildSheet 挂 focusin/out 切换）：
+   底部保存 / 删除条 + 编辑页头部的「返回」——移动端键盘顶上来不再占一截；
+   光标离开输入框再落回来。底部条 display:none 顺势把空间让给表单；
+   头部「返回」用 visibility 保住占位，页签不因 space-between 左右跳 */
+.db-led-sheet-foot.is-inputting { display: none; }
+.db-led-back.is-inputting { visibility: hidden; }
 .db-led-save {
   flex: 1 1 0;
   min-width: 0;
@@ -8142,7 +8344,7 @@ body .db-journal-root .db-filter-q:focus {
   }
   .db-drama-root button.db-drama-link:hover,
   .db-drama-root button.db-drama-mini:hover { background: var(--db-bg-hover); }
-  .db-drama-root button.db-drama-bump:hover { background: color-mix(in srgb, var(--db-accent) 85%, var(--db-accent-hover)); box-shadow: 0 2px 8px color-mix(in srgb, var(--db-accent) 30%, transparent); }
+  .db-drama-root button.db-drama-bump:hover { background: color-mix(in srgb, var(--db-accent) 22%, transparent); }
   .db-drama-root button.db-drama-add:hover {
     box-shadow: 0 4px 12px color-mix(in srgb, var(--db-accent) 35%, transparent);
     transform: translateY(-1px);
@@ -8168,9 +8370,9 @@ body .db-journal-root .db-filter-q:focus {
   min-width: 0;
   padding: 14px;
   border: 1px solid var(--db-border);
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--db-surface);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03), 0 4px 14px rgba(0, 0, 0, 0.03);
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -8335,9 +8537,10 @@ body .db-journal-root .db-filter-q:focus {
 .db-drama-root button.db-drama-title-btn:hover { background: color-mix(in srgb, var(--db-accent) 6%, transparent); }
 .db-drama-title {
   min-width: 0;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   line-height: 1.35;
+  letter-spacing: 0.1px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -8356,17 +8559,16 @@ body .db-journal-root .db-filter-q:focus {
 
 .db-drama-status {
   flex: 0 0 auto;
-  padding: 3px 10px;
-  border-radius: 8px;
+  padding: 3px 9px;
+  border-radius: 7px;
   font-size: 11px;
   font-weight: 600;
   line-height: 1.5;
   letter-spacing: 0.2px;
 }
 .db-drama-status.is-live {
-  background: color-mix(in srgb, var(--db-accent) 14%, transparent);
+  background: color-mix(in srgb, var(--db-accent) 12%, transparent);
   color: var(--db-accent);
-  border: 1px solid color-mix(in srgb, var(--db-accent) 25%, transparent);
 }
 /* 列表卡片上的状态徽标可点（弹锚定菜单就地改状态） */
 .db-drama-status.is-tap { cursor: pointer; transition: all 0.15s ease; }
@@ -8376,42 +8578,34 @@ body .db-journal-root .db-filter-q:focus {
 .db-drama-status.is-done {
   background: color-mix(in srgb, #4c9a6a 12%, transparent);
   color: color-mix(in srgb, #4c9a6a 78%, var(--db-text));
-  border: 1px solid color-mix(in srgb, #4c9a6a 22%, transparent);
 }
 .db-drama-status.is-pause {
-  background: color-mix(in srgb, #c8963e 14%, transparent);
+  background: color-mix(in srgb, #c8963e 13%, transparent);
   color: color-mix(in srgb, #c8963e 80%, var(--db-text));
-  border: 1px solid color-mix(in srgb, #c8963e 24%, transparent);
 }
 .db-drama-status.is-drop {
   background: color-mix(in srgb, var(--db-text-muted) 10%, transparent);
   color: var(--db-text-muted);
-  border: 1px solid color-mix(in srgb, var(--db-text-muted) 18%, transparent);
 }
 
 .db-drama-pills {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px 10px;
   min-width: 0;
 }
+/* 次级信息不再做成胶囊：纯文字（iOS 列表元数据行的排法），不与主信息抢对比度 */
 .db-drama-cat,
 .db-drama-tag {
-  padding: 3px 9px;
-  border-radius: 7px;
-  font-size: 11.5px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 12px;
   font-weight: 500;
   line-height: 1.5;
-  background: var(--db-surface2);
   color: var(--db-text-muted);
-  border: 1px solid color-mix(in srgb, var(--db-border) 60%, transparent);
 }
-.db-drama-cat {
-  background: color-mix(in srgb, var(--db-accent) 10%, transparent);
-  color: var(--db-accent);
-  font-weight: 600;
-  border-color: color-mix(in srgb, var(--db-accent) 20%, transparent);
-}
+.db-drama-cat { color: var(--db-text-sub); font-weight: 600; }
 
 .db-drama-prog { min-width: 0; }
 .db-drama-meta {
@@ -8422,52 +8616,34 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-drama-count {
   flex: 0 0 auto;
-  font-size: 12.5px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 700;
   color: var(--db-text);
   font-variant-numeric: tabular-nums;
 }
-/* 进度条美化 */
+/* 进度条：细、纯色，不加渐变与流光（装饰只留给封面） */
 .db-drama-bar {
   flex: 1 1 0;
   min-width: 32px;
-  height: 6px;
+  height: 5px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--db-text-muted) 12%, transparent);
+  background: color-mix(in srgb, var(--db-text-muted) 10%, transparent);
   overflow: hidden;
   position: relative;
 }
 .db-drama-fill {
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, var(--db-accent), color-mix(in srgb, var(--db-accent) 75%, #fff));
+  background: var(--db-accent);
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
 }
-/* 进度条上的光泽效果 */
-.db-drama-fill::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
-  animation: db-drama-shine 2s ease-in-out infinite;
-}
-@keyframes db-drama-shine {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .db-drama-fill::after { animation: none; }
-}
 .db-drama-pct {
   flex: 0 0 auto;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--db-accent);
   font-variant-numeric: tabular-nums;
-  background: color-mix(in srgb, var(--db-accent) 10%, transparent);
-  padding: 2px 6px;
-  border-radius: 6px;
 }
 .db-drama-dates {
   min-width: 0;
@@ -8477,9 +8653,6 @@ body .db-journal-root .db-filter-q:focus {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  background: color-mix(in srgb, var(--db-text-muted) 8%, transparent);
-  padding: 2px 8px;
-  border-radius: 6px;
 }
 
 .db-drama-foot {
@@ -8488,33 +8661,34 @@ body .db-journal-root .db-filter-q:focus {
   align-items: center;
   gap: 8px;
   margin-top: 4px;
-  padding-top: 10px;
-  border-top: 1px solid color-mix(in srgb, var(--db-border) 50%, transparent);
+  padding-top: 9px;
+  border-top: 1px solid color-mix(in srgb, var(--db-border) 40%, transparent);
 }
+/* iOS 式按钮层级：每卡唯一的主操作用 tinted（淡底 + 主题色字，无阴影），
+   链接类动作是纯文字，视觉重量明显低于内容本身 */
 .db-drama-root button.db-drama-bump,
 .db-drama-root button.db-drama-link {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
-  min-height: 32px;
-  padding: 6px 14px;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  font-size: 12.5px;
+  min-height: 34px;
+  padding: 6px 13px;
+  border: none;
+  border-radius: 11px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.18s ease;
+  transition: background-color 0.18s ease, transform 0.15s ease, opacity 0.15s ease;
 }
 .db-drama-root button.db-drama-bump {
-  background: var(--db-accent);
-  box-shadow: 0 2px 6px color-mix(in srgb, var(--db-accent) 25%, transparent);
-  color: var(--text-on-accent, #fff);
+  background: color-mix(in srgb, var(--db-accent) 13%, transparent);
+  box-shadow: none;
+  color: var(--db-accent);
 }
 .db-drama-root button.db-drama-link {
-  background: var(--db-surface2);
+  background: transparent;
   box-shadow: none;
-  border-color: var(--db-border);
   color: var(--db-text-muted);
   font-weight: 500;
 }
@@ -8938,7 +9112,7 @@ body .db-journal-root .db-filter-q:focus {
 @media (hover: none) {
   .db-drama-root button.db-drama-add,
   .db-drama-root button.db-drama-bump,
-  .db-drama-root button.db-drama-del { min-height: 44px; padding: 10px 18px; }
+  .db-drama-root button.db-drama-del { min-height: 44px; padding: 10px 14px; }
   .db-drama-root button.db-drama-chip { min-height: 38px; padding: 8px 14px; }
   .db-drama-root button.db-drama-link,
   .db-drama-root button.db-drama-mini { min-height: 40px; padding: 9px 14px; }
@@ -8949,7 +9123,7 @@ body .db-journal-root .db-filter-q:focus {
   /* 触控没有 hover：链接的下划线成为唯一「可点」提示 */
   .db-drama-prop-link-text { text-decoration: underline; text-underline-offset: 2px; }
   /* 卡片悬停效果在触屏上禁用 */
-  .db-drama-card:hover { transform: none; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03); }
+  .db-drama-card:hover { transform: none; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03), 0 4px 14px rgba(0, 0, 0, 0.03); }
   /* 封面悬停效果在触屏上禁用 */
   .db-drama-card:hover .db-drama-cover { transform: none; }
   /* 就地文本格钉在 16px：WebView 聚焦字号 <16px 的输入框会自动放大整页，键盘收了也不还原。
@@ -8992,7 +9166,7 @@ body .db-journal-root .db-filter-q:focus {
      （width: 100% 先撑满再被 max-width 截住，auto 外边距居中的是整个盒子而不是内容） */
   .db-drama-subhead { width: 100%; max-width: 720px; margin: 0 auto; }
   .db-drama-cover { width: 78px; height: 117px; }
-  .db-drama-title { font-size: 15px; }
+  .db-drama-title { font-size: 16px; }
   .db-drama-card { padding: 16px 18px; }
   .db-drama-subhead-title { font-size: 22px; }
   .db-drama-head { padding: 16px 20px; }
@@ -9003,7 +9177,7 @@ body .db-journal-root .db-filter-q:focus {
   .db-drama-cover { width: 56px; height: 84px; }
   .db-drama-fallback { font-size: 19px; }
   .db-drama-card { padding: 12px; gap: 12px; }
-  .db-drama-title { font-size: 14px; }
+  .db-drama-title { font-size: 15px; }
   .db-drama-list { grid-template-columns: 1fr; }
   .db-drama-head { padding: 12px 14px; }
 }
@@ -9012,7 +9186,7 @@ body .db-journal-root .db-filter-q:focus {
   .db-drama-fallback { font-size: 17px; }
   .db-drama-meta { gap: 6px; }
   /* 时间行的显隐交给「显示字段」设置，这里不再按宽度硬隐藏 */
-  .db-drama-title { font-size: 13.5px; }
+  .db-drama-title { font-size: 14px; }
   .db-drama-original { font-size: 11px; }
   .db-drama-root button.db-drama-chip { font-size: 12px; padding: 5px 10px; }
   .db-drama-card { padding: 10px; gap: 10px; }
@@ -9290,6 +9464,48 @@ body .db-journal-root .db-filter-q:focus {
 .db-ai-fab:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
   .db-ai-fab { transition: none; }
+}
+
+/* ── 回到顶部悬浮钮（仅移动端挂载，TS 侧 Platform.isMobileApp 门控）：
+   锚在视图内容容器右下角（与 AI 悬浮球同款，不进滚动容器），
+   bottom 让位 --db-bottom-inset（导航栏/手势条，applyViewportSize 在容器上同值写了一份）。
+   显隐只动 opacity / transform：下滑隐藏，深处上滑才淡入；隐没态不拦截触摸。
+   z=5 与悬浮球同层：让位给编辑页吸底操作条（z6）、抽屉（z60）、body 级弹窗（z49+）。 ── */
+.db-scrolltop {
+  position: absolute;
+  right: 12px;
+  bottom: calc(var(--db-bottom-inset, 0px) + 12px);
+  z-index: 5;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.14);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  /* 默认隐没；出现 = 已滚过约两屏且在上滑，淡入半透明（隐现） */
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+  transition: transform 0.18s ease, opacity 0.18s ease, box-shadow 0.15s ease;
+}
+.db-scrolltop.is-shown {
+  opacity: 0.88;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+.db-scrolltop:active { transform: scale(0.92); }
+.db-scrolltop svg { width: 19px; height: 19px; }
+.db-scrolltop:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .db-scrolltop { transition: none; }
 }
 
 .db-ai-head {

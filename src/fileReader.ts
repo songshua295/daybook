@@ -1,7 +1,7 @@
 import { App, TFile, normalizePath, moment } from "obsidian";
 import type { DaybookSettings, SectionConfig, SectionType } from "./settings";
 import { getAllSections } from "./settings";
-import { getSectionFolders } from "./fileManager";
+import { getSectionFolders, getSectionFileMatchers } from "./fileManager";
 
 /** 从文本中提取行内标签 */
 export function extractInlineTags(text: string): string[] {
@@ -39,7 +39,7 @@ export interface JournalEntry {
   rawLineIndex?: number; // 在文件中的起始行号（用于任务回写/原文定位）
   endLineIndex?: number; // 在文件中的结束行号（含续行与字段行，用于编辑/归档/删除）
   pinned?: boolean;     // 置顶（任务行 #pinned 标签，或旧格式块尾 [pinned::true] 字段行）
-  archived?: string;    // 归档时间（块尾 [archived::时间] 行内字段）
+  archived?: string;    // 归档时间（块尾 [归档: 时间] 行内字段，旧 [archived::] 兼容）
   abandoned?: boolean;  // 已放弃（任务行 #abandoned 标签；区别于完成：灰色淡化+斜体）
 }
 
@@ -172,8 +172,10 @@ export async function readAllJournalEntries(
   settings: DaybookSettings,
   filterTypes?: Set<string>
 ): Promise<DayGroup[]> {
-  // 收集所有章节涉及的文件夹（默认 + 自定义路径），去重扫描
+  // 收集所有章节涉及的文件夹（默认 + 自定义路径），去重扫描；
+  // 含变量的章节路径（如 Logs/{年}/{日期}.md）用匹配器补扫历史文件
   const folders = getSectionFolders(settings);
+  const matchers = getSectionFileMatchers(settings);
   const seenPaths = new Set<string>();
   const files = app.vault.getMarkdownFiles()
     .filter(f => {
@@ -181,7 +183,7 @@ export async function readAllJournalEntries(
       return folders.some(folder => {
         const norm = normalizePath(folder);
         return f.path.startsWith(norm + "/") || f.path === norm;
-      });
+      }) || matchers.some(re => re.test(f.path));
     })
     .filter(f => { seenPaths.add(f.path); return true; })
     .sort((a, b) => b.basename.localeCompare(a.basename));
@@ -219,12 +221,13 @@ export async function readJournalEntriesForDates(
   const wanted = new Set(dates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)));
   if (!wanted.size) return [];
   const folders = getSectionFolders(settings);
+  const matchers = getSectionFileMatchers(settings);
   const files = app.vault.getMarkdownFiles()
     .filter(f => wanted.has(f.basename))
     .filter(f => folders.some(folder => {
       const norm = normalizePath(folder);
       return f.path.startsWith(norm + "/") || f.path === norm;
-    }))
+    }) || matchers.some(re => re.test(f.path)))
     .sort((a, b) => b.basename.localeCompare(a.basename));
   const configSig = getAllSections(settings).map(sc => `${sc.id}:${sc.label}:${sc.type}`).join("|");
   const entries: JournalEntry[] = [];
@@ -284,10 +287,11 @@ async function parseJournalFile(
       currentLines.forEach(({ text, lineIndex }) => {
         const trimmed = text.trim();
         if (!trimmed || trimmed.startsWith("#")) return;
-        // 块尾行内字段行（[pinned::true] / [archived::时间]），不进正文
-        const fieldMatch = trimmed.match(/^\[(pinned|archived)::(.+)\]$/);
+        // 块尾行内字段行（[置顶: true] / [归档: 时间]；旧 [pinned::true] 兼容），不进正文
+        const fieldMatch = trimmed.match(/^\[(置顶|pinned|归档|archived):+\s*(.+)\]$/);
         if (fieldMatch && lastEntry) {
-          if (fieldMatch[1] === "pinned") lastEntry.pinned = fieldMatch[2].trim() === "true";
+          const isPin = fieldMatch[1] === "置顶" || fieldMatch[1] === "pinned";
+          if (isPin) lastEntry.pinned = fieldMatch[2].trim() === "true";
           else lastEntry.archived = fieldMatch[2].trim();
           lastEntry.endLineIndex = lineIndex;
           return;
@@ -389,8 +393,8 @@ async function parseJournalFile(
  * 兼容读取旧格式：
  * - 时间标题 `- HH:mm [标题]` / `**HH:mm 计划**`：仅作为展示时间来源与旧块边界，
  *   其下任务照常拍平为独立条目
- * - 📅 日期 ≡ [due::YYYY-MM-DD]；🟥🟧🟦🟩 ≡ [priority::1..4]
- * - 块尾 [pinned::true] / [archived::时间] 字段行作用于自上一个时间标题以来的全部任务条目
+ * - 📅 日期 ≡ [截止: YYYY-MM-DD]；🟥🟧🟦🟩 ≡ [优先级: 1..4]（旧写法兼容）
+ * - 块尾 [置顶: true] / [归档: 时间] 字段行（旧 [pinned::true] 兼容）作用于自上一个时间标题以来的全部任务条目
  * - 状态标签：#pinned = 置顶、#abandoned = 放弃（新格式写入方式）
  */
 export function parsePlanSection(
@@ -447,14 +451,14 @@ export function parsePlanSection(
     const trimmed = text.trim();
     if (!trimmed) return;
 
-    // 块尾行内字段行（[pinned::true] / [archived::时间]）
-    const fieldMatch = trimmed.match(/^\[(pinned|archived)::(.+)\]$/);
+    // 块尾行内字段行（[置顶: true] / [归档: 时间]；旧 [pinned::true] 兼容）
+    const fieldMatch = trimmed.match(/^\[(置顶|pinned|归档|archived):+\s*(.+)\]$/);
     if (fieldMatch) {
       // 字段行总是写在所属块尾之后，遇到时该块还没结算——先 flush 再挂字段，
       // 否则会错挂到上一个块（首个块的字段则直接丢失），表现为置顶/归档失效或错位。
       // 旧格式：作用于整块（时间标题以来的全部任务条目）；新格式无标题，块即最后一条任务
       flush();
-      const isPin = fieldMatch[1] === "pinned";
+      const isPin = fieldMatch[1] === "置顶" || fieldMatch[1] === "pinned";
       const val = fieldMatch[2].trim();
       const targets = blockEntries.length > 0 ? blockEntries : lastFlushedEntry ? [lastFlushedEntry] : [];
       targets.forEach(e => {
@@ -490,8 +494,8 @@ export function parsePlanSection(
       let completedAt: string | undefined;
       let createdAtVal: string | undefined;
 
-      // 解析截止日期：[due::YYYY-MM-DD]（新）与 📅 YYYY-MM-DD（旧）等效，两者都剥离出标题
-      const dueFieldMatch = todoText.match(/\[due::(\d{4}-\d{2}-\d{2})\]/);
+      // 解析截止日期：[截止: YYYY-MM-DD]（新）与 📅 YYYY-MM-DD（旧）等效，两者都剥离出标题
+      const dueFieldMatch = todoText.match(/\[(?:截止|due):+\s*(\d{4}-\d{2}-\d{2})\]/);
       if (dueFieldMatch) {
         dueDate = dueFieldMatch[1];
         todoText = todoText.replace(dueFieldMatch[0], "");
@@ -502,8 +506,8 @@ export function parsePlanSection(
         todoText = todoText.replace(/📅\s*\d{4}-\d{2}-\d{2}\s*/, "");
       }
 
-      // 解析优先级：[priority::1..4]（新）与 🟥🟧🟦🟩（旧）等效
-      const prioFieldMatch = todoText.match(/\[priority::([1-4])\]/);
+      // 解析优先级：[优先级: 1..4]（新）与 🟥🟧🟦🟩（旧）等效
+      const prioFieldMatch = todoText.match(/\[(?:优先级|priority):+\s*([1-4])\]/);
       if (prioFieldMatch) {
         priority = prioFieldMatch[1] as PriorityLevel;
         todoText = todoText.replace(prioFieldMatch[0], "");
@@ -517,24 +521,26 @@ export function parsePlanSection(
       // 旧棕色方块（已废弃）仅剥离
       todoText = todoText.replace(/\u{1F7EB}\s*/gu, "");
 
-      // 解析完成时间行内字段（字段名可在设置中自定义，默认 completedAt）
+      // 解析完成时间行内字段（字段名可在设置中自定义，默认 完成于；旧 completedAt 兼容）
       const compField = getCompletedFieldName(settings);
-      const compMatch = todoText.match(new RegExp(`\\[${escapeRegExp(compField)}::([^\\]]*)\\]`, "i"));
+      const compKeys = [...new Set([compField, "完成于", "completedAt"])]
+        .map(escapeRegExp).join("|");
+      const compMatch = todoText.match(new RegExp(`\\[(?:${compKeys}):+\\s*([^\\]]*)\\]`, "i"));
       if (compMatch) {
         completedAt = compMatch[1].trim();
         todoText = todoText.replace(compMatch[0], "");
       }
 
-      // 解析创建时间行内字段（[createdAt::YYYY-MM-DD HH:mm]，用于计算耗时）
-      const createdMatch = todoText.match(/\[createdAt::([^\]]*)\]/);
+      // 解析创建时间行内字段（[创建于: YYYY-MM-DD HH:mm]，用于计算耗时；旧 createdAt 兼容）
+      const createdMatch = todoText.match(/\[(?:创建于|createdAt):+\s*([^\]]*)\]/);
       if (createdMatch) {
         createdAtVal = createdMatch[1].trim();
         todoText = todoText.replace(createdMatch[0], "");
       }
 
-      // 解析备注行内字段（[note::…]，计划详情写入）
+      // 解析备注行内字段（[备注: …]，计划详情写入；旧 note 兼容）
       let note: string | undefined;
-      const noteMatch = todoText.match(/\[note::([^\]]*)\]/);
+      const noteMatch = todoText.match(/\[(?:备注|note):+\s*([^\]]*)\]/);
       if (noteMatch) {
         note = noteMatch[1].trim() || undefined;
         todoText = todoText.replace(noteMatch[0], "");
@@ -743,9 +749,9 @@ export function createPriorityBadge(parent: HTMLElement, priority: PriorityLevel
   return span;
 }
 
-/** 获取完成时间行内字段名（设置中的字段名，默认 completedAt） */
+/** 获取完成时间行内字段名（设置中的字段名，默认 完成于；旧默认 completedAt 启动时已迁移） */
 export function getCompletedFieldName(settings: DaybookSettings): string {
-  return (settings.todoCompletedField ?? "").trim() || "completedAt";
+  return (settings.todoCompletedField ?? "").trim() || "完成于";
 }
 
 /** 格式化创建时间 → 完成时间的耗时（如 2小时35分钟）；无法计算时返回 null */
@@ -807,19 +813,19 @@ export function appendTodoCompletionInfo(
    任务序列化 / 截止日期展示（TodayPanel 与任务详情页共用）
    ════════════════════════════════════════════════════════ */
 
-/** 单条任务行文本（顶格任务、子任务缩进 4 空格；属性全部 Dataview 行内字段，块 id 追加行尾） */
+/** 单条任务行文本（顶格任务、子任务缩进 4 空格；属性全为中文键行内字段 `键: 值`，块 id 追加行尾） */
 export function planTaskLine(t: TodoItem, completedField: string): string {
   // 缩进沿用该行原本的行首宽度（旧格式整块缩进 4 空格的任务，子任务在 8 空格）；
   // 新建任务没有 ws，按 indent 回落到 0 / 4
   const ws = t.ws ?? (t.indent ? 4 : 0);
   const indent = " ".repeat(Math.max(0, ws));
   let line = `${indent}- [${t.done ? "x" : " "}] ${t.text}`;
-  if (t.priority && t.priority !== "2") line += ` [priority::${t.priority}]`;
-  if (t.dueDate) line += ` [due::${t.dueDate}]`;
-  if (t.createdAt) line += ` [createdAt::${t.createdAt}]`;
-  if (t.done && t.completedAt) line += ` [${completedField}::${t.completedAt}]`;
+  if (t.priority && t.priority !== "2") line += ` [优先级: ${t.priority}]`;
+  if (t.dueDate) line += ` [截止: ${t.dueDate}]`;
+  if (t.createdAt) line += ` [创建于: ${t.createdAt}]`;
+  if (t.done && t.completedAt) line += ` [${completedField}: ${t.completedAt}]`;
   // 旧行内备注：仅在尚未迁移到 desc 时保留（详情页保存描述会写 desc 并清空 note）
-  if (t.note && !t.desc) line += ` [note::${t.note.replace(/[\r\n\]]+/g, " ")}]`;
+  if (t.note && !t.desc) line += ` [备注: ${t.note.replace(/[\r\n\]]+/g, " ")}]`;
   if (t.blockId) line += ` ^${t.blockId}`;
   return line;
 }

@@ -264,6 +264,8 @@ export class LedgerPage {
   /** 浮层当前显示的是分类管理页 */
   private mgrOpen = false;
   private mgrSentinelArmed = false;
+  /** 分类管理「返回」按钮 go(-1) 丢哨兵引发的下一次 popstate 只吞一次（防误关表单） */
+  private popSuppress = false;
   /** 分类管理页签记忆（设置页与浮层共用） */
   private catMgrKind: "expense" | "income" = "expense";
   /** 当前设置二级页（null = 设置菜单页本身）；sentinel 支持安卓返回键退回菜单 */
@@ -292,6 +294,9 @@ export class LedgerPage {
   ) {
     this.store = new LedgerStore(app, plugin.settings, () => plugin.saveSettings());
     this.onPop = () => {
+      /* 分类管理「返回」按钮自己 go(-1) 丢弃哨兵引发的那次 popstate：
+         表单已同步重建，直接吞掉，别落进下面的分支把刚恢复的表单误关掉 */
+      if (this.popSuppress) { this.popSuppress = false; return; }
       /* 分类管理压在记一笔 sheet / 编辑页之上：返回键先退回表单（下层哨兵仍压着） */
       if ((this.overlay || this.editRec) && this.mgrSentinelArmed) {
         this.mgrSentinelArmed = false;
@@ -384,8 +389,10 @@ export class LedgerPage {
   }
 
   setPage(p: PageKind): void {
-    if (this.page === p) return;
-    /* 从二级页切走时回收哨兵，避免残留 history 记录（编辑页打开时顶栏仍可直达） */
+    /* 从二级页切走时回收哨兵，避免残留 history 记录（编辑页打开时顶栏仍可直达）。
+       清理必须放在同页判断之前：下钻页 / 资产详情 / 设置子页等二级层盖在当前页上时
+       this.page 不变，先早退会跳过拆层——切「被盖住的那一页」就第一次点不动了
+       （如报表下钻页里切「报表」）。同页且无二级层时，重渲染 + 回顶也无害。 */
     let back = 0;
     if (this.mgrOpen) {
       if (this.mgrSentinelArmed) back++;
@@ -2101,17 +2108,10 @@ export class LedgerPage {
     if (reclaim) this.reclaimHistory(back);
   }
 
-  /** 编辑页：返回 + 标题 + 表单卡（buildSheet 原样复用，表单自带的保存 / 删除条在卡内吸底） */
+  /** 编辑页：整页表单卡（buildSheet 复用；「返回」并进表单头行，与保存 / 删除条同款显隐） */
   private renderRecordEditor(host: HTMLElement): void {
     const draft = this.editRec;
     if (!draft) return;
-    const head = host.createDiv({ cls: "db-led-subhead" });
-    const back = head.createEl("button", { cls: "db-led-back", attr: { type: "button", "aria-label": "返回列表" } });
-    setIcon(back.createSpan({ cls: "db-led-back-icon" }), "chevron-left");
-    back.createSpan({ text: "返回" });
-    back.addEventListener("click", () => this.closeRecordEditor());
-    head.createSpan({ cls: "db-led-subhead-title", text: "编辑记录" });
-
     const body = host.createDiv({ cls: "db-led-body" });
     const form = body.createDiv({ cls: "db-led-sheet is-embed" });
     this.editFormEl = form;
@@ -2151,20 +2151,28 @@ export class LedgerPage {
   }
 
   /**
-   * 从分类管理退回表单。手机端有哨兵时交给 history.back()——popstate 会进
-   * onPop 的 mgr 分支完成重建；桌面端没有哨兵，直接原地重建。
-   * 不能用 history.go(-1) 静默丢弃哨兵：随后到达的 popstate 会被表单层
-   * 自己的哨兵分支误消费，把整个 sheet / 编辑页关掉。
+   * 从分类管理退回表单。表单在这里同步重建——不依赖 popstate 送达（按钮返回曾经
+   * 卡在管理层：back() 之后 popstate 没接上，整条链路就断了）。哨兵用 go(-1) 静默
+   * 丢弃，go(-1) 引发的那次 popstate 由 popSuppress 吞掉——否则它会落进 onPop 的
+   * 编辑页 / sheet 分支，把刚恢复的表单整层误关掉。
+   * 安卓返回键仍走 onPop 的 mgr 分支（哨兵被系统消费），与按钮路径互不干扰。
    */
   private closeCategoryMgr(): void {
-    if (Platform.isMobileApp && this.mgrSentinelArmed) { window.history.back(); return; }
+    const armed = this.mgrSentinelArmed;
     this.mgrSentinelArmed = false;
     this.mgrOpen = false;
-    if (this.editRec) { this.render(); return; }
-    const sheet = this.sheetEl;
-    if (!sheet || !this.sheetDraft) { this.closeOverlay(); return; }
-    this.buildSheet(sheet, this.sheetDraft, false);
-    this.render();
+    if (this.editRec) {
+      this.render();
+    } else {
+      const sheet = this.sheetEl;
+      if (!sheet || !this.sheetDraft) { this.closeOverlay(); return; } // closeOverlay 自回收 sheet 哨兵
+      this.buildSheet(sheet, this.sheetDraft, false);
+      this.render();
+    }
+    if (armed && Platform.isMobileApp) {
+      this.popSuppress = true;
+      window.history.go(-1);
+    }
   }
 
   /** 原地重绘 sheet 内容。chip 点击只改 draft 后调用本方法，不触碰 overlay / history。 */
@@ -2178,10 +2186,16 @@ export class LedgerPage {
     sheet.empty();
     sheet.removeClass("is-mgr");
 
-    /* 头部：关闭 + 收支切换（P1 顶栏样式：文字 + 下划线）+ 编辑分类。
-       整页编辑页没有关闭叉——页头已有「返回」，这里只剩页签和编辑分类 */
+    /* 头部：整页编辑页 = 返回 + 收支切换（P1 顶栏样式：文字 + 下划线）+ 编辑分类；
+       记一笔浮层 = 关闭 + 同款。返回与底部保存 / 删除条共用「有光标就收」的显隐 */
     const head = sheet.createDiv({ cls: "db-led-sheet-head" });
-    if (!this.editRec) {
+    let backEl: HTMLElement | null = null;
+    if (this.editRec) {
+      backEl = head.createEl("button", { cls: "db-led-back", attr: { type: "button", "aria-label": "返回列表" } });
+      setIcon(backEl.createSpan({ cls: "db-led-back-icon" }), "chevron-left");
+      backEl.createSpan({ text: "返回" });
+      backEl.addEventListener("click", () => this.closeRecordEditor());
+    } else {
       const close = head.createDiv({ cls: "db-led-sheet-close", attr: { role: "button", tabindex: "0", "aria-label": "关闭" } });
       setIcon(close, "x");
       close.addEventListener("click", () => this.closeSheet());
@@ -2443,6 +2457,35 @@ export class LedgerPage {
 
     /* 保存 */
     const foot = sheet.createDiv({ cls: "db-led-sheet-foot" });
+    /* 光标在输入框里时收起顶部「返回」与底部保存 / 删除条：移动端键盘顶上来，
+       它们悬在键盘上方白占一截。收起延迟 ~150ms：点保存 / 删除的 mousedown 会先触发
+       blur，立刻隐藏会吞掉跟发的 click；blur 落到另一个输入框（只是换字段）也不收，
+       由 focusin 取消计时。监听挂在 body 上：buildSheet 原地重绘会换新 body，
+       旧监听随旧节点一起丢弃。 */
+    let footHideTimer: number | null = null;
+    const isField = (node: EventTarget | null): node is HTMLElement => {
+      const el = node as HTMLElement | null;
+      return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable === true);
+    };
+    const setEditingHidden = (hidden: boolean) => {
+      if (footHideTimer !== null) { activeWindow.clearTimeout(footHideTimer); footHideTimer = null; }
+      const apply = (hidden: boolean) => {
+        foot.toggleClass("is-inputting", hidden);
+        backEl?.toggleClass("is-inputting", hidden);
+      };
+      if (!hidden) { apply(false); return; }
+      footHideTimer = activeWindow.setTimeout(() => {
+        footHideTimer = null;
+        if (foot.isConnected) apply(true);
+      }, 150);
+    };
+    body.addEventListener("focusin", (e: FocusEvent) => {
+      if (isField(e.target)) setEditingHidden(true);
+    });
+    body.addEventListener("focusout", (e: FocusEvent) => {
+      if (isField(e.relatedTarget)) return; // 光标只是在字段间移动
+      setEditingHidden(false);
+    });
     if (!isNew) {
       const del = foot.createEl("button", { cls: "db-led-del-big", attr: { type: "button" }, text: "删除" });
       del.addEventListener("click", () => {

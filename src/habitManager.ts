@@ -2,10 +2,11 @@
  * habitManager.ts — 习惯打卡模块（每习惯一个 md 文件）
  *
  * 数据存储：<diaryFolder>/habits/<文件名>.md
- * - frontmatter 存习惯定义（除日志外全部可选，缺省值见 parseHabitFile）
+ * - frontmatter 存习惯定义，键一律中文、单冒号（名称/图标/颜色/每日次数/有效期.开始日期/已归档/
+ *   执行日/上下班打卡/快捷时刻；除日志外全部可选，缺省值见 parseHabitFile）；旧英文键（name 等）只读兼容
  * - 正文按 `### YYYY-MM-DD` 分组记录打卡：`- [x] HH:mm - 备注`
  * - `- [-]` = 当日跳过；`- [ ]` = 忽略；尾部 ` +1` 金币后缀读时忽略
- * - 显示名以 frontmatter `name` 为准，文件名只是 sanitize 后的存储句柄
+ * - 显示名以 frontmatter 名称 为准，文件名只是 sanitize 后的存储句柄
  * - 内部 id = 文件名 stem（改名不丢记录）
  *
  * 格式参考：文档/习惯md文档数据记录格式案例.md
@@ -30,6 +31,8 @@ export interface HabitConfig {
   attendance?: boolean;
   /** 常用打卡时间（HH:mm，升序去重），仅 attendance 时有意义 */
   quickTimes?: string[];
+  /** 最近手动设置过的打卡时间（HH:mm，最多 2 个，新的在前），仅 attendance；独立于设置页的快捷时刻 */
+  recentTimes?: string[];
 }
 
 /** 旧 data.json 中的习惯定义（无 filePath），仅供迁移读取 */
@@ -42,6 +45,8 @@ export interface CheckinRow {
   time?: string;      // HH:mm
   note?: string;
   skipped: boolean;
+  /** 班次角色（仅上下班型）：默认按时间顺序两两配对推导，只在打卡时手动指定且与推导不一致时落盘（+上班/+下班） */
+  role?: "in" | "out";
 }
 
 /** 一个习惯文件的完整解析结果 */
@@ -63,7 +68,7 @@ export interface HabitStats {
 
 const HABITS_FILE_LEGACY_NAME = "_habits.md";
 const PRESET_COLORS = ["#4caf50", "#ff9800", "#9c27b0", "#2196f3", "#e91e63", "#607d8b", "#f44336", "#3f51b5"];
-const LOG_HEADING = "## 📝 打卡日志 (Check-in Log)";
+const LOG_HEADING = "## 📝 打卡日志";
 
 /** 去掉文件系统非法字符，作为存储句柄 */
 export function sanitizeHabitName(name: string): string {
@@ -122,6 +127,17 @@ export function normalizeQuickTimes(raw: unknown): string[] | undefined {
   return list.length > 0 ? list.slice(0, 8) : undefined;
 }
 
+/** 归一化「最近常用」：仅保留合法 HH:mm，去重，保持先后（新在前），最多 2 个 */
+function normalizeRecentTimes(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const list: string[] = [];
+  for (const v of raw) {
+    const s = String(v).trim();
+    if (isValidHHmm(s) && !list.includes(s)) list.push(s);
+  }
+  return list.length > 0 ? list.slice(0, 2) : undefined;
+}
+
 /** 是否执行日（非执行日 = 休息，不打卡不断连） */
 export function isExecuteDay(habit: Pick<HabitConfig, "executeDays">, dateStr: string): boolean {
   const list = habit.executeDays;
@@ -159,6 +175,64 @@ function extractFrontmatter(content: string): { fm: Record<string, unknown>; bod
   }
 }
 
+/* ── frontmatter 键名（中文键写盘；旧英文键只读兼容） ── */
+
+/** 中文键 → 内部英文键（validity.start_date 对应 有效期.开始日期） */
+const FM_CN_TO_EN: Record<string, string> = {
+  "名称": "name", "图标": "icon", "颜色": "color",
+  "频率类型": "frequency_type", "每日次数": "frequency_value",
+  "已归档": "is_archived", "执行日": "execute_days",
+  "上下班打卡": "attendance", "快捷时刻": "quick_times", "有效期": "validity",
+  "最近常用": "recent_times",
+};
+const FM_VALIDITY_CN_TO_EN: Record<string, string> = { "开始日期": "start_date" };
+
+/**
+ * 磁盘 frontmatter → 内部英文键空间：中文键翻译成英文键（中文优先），英文键原样保留。
+ * 解析与序列化都在这个空间里工作，写盘前再用 translateFrontmatterOut 翻回中文键。
+ */
+function translateFrontmatterIn(raw: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (!FM_CN_TO_EN[k]) out[k] = v; // 先铺英文/未知键
+  }
+  for (const [k, v] of Object.entries(raw)) {
+    const en = FM_CN_TO_EN[k];
+    if (!en) continue; // 中文键后铺，覆盖同名英文键
+    if (en === "validity" && v && typeof v === "object" && !Array.isArray(v)) {
+      const base = out.validity && typeof out.validity === "object" && !Array.isArray(out.validity)
+        ? { ...(out.validity as Record<string, unknown>) }
+        : {};
+      for (const [vk, vv] of Object.entries(v as Record<string, unknown>)) {
+        base[FM_VALIDITY_CN_TO_EN[vk] ?? vk] = vv;
+      }
+      out.validity = base;
+    } else {
+      out[en] = v;
+    }
+  }
+  return out;
+}
+
+/** 内部英文键空间 → 写盘 frontmatter：消费过的英文键翻成中文键，未知键原样保留 */
+function translateFrontmatterOut(fm: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(fm)) {
+    const cn = Object.entries(FM_CN_TO_EN).find(([, en]) => en === k)?.[0];
+    if (!cn) { out[k] = v; continue; }
+    if (k === "validity" && v && typeof v === "object" && !Array.isArray(v)) {
+      const cnV: Record<string, unknown> = {};
+      for (const [vk, vv] of Object.entries(v as Record<string, unknown>)) {
+        cnV[vk === "start_date" ? "开始日期" : vk] = vv;
+      }
+      out[cn] = cnV;
+    } else {
+      out[cn] = v;
+    }
+  }
+  return out;
+}
+
 /** 解析日志正文：`### 日期` 分组 + `- [x] HH:mm - 备注` / `- [-]` 跳过 */
 function parseHabitRows(habitId: string, body: string): CheckinRow[] {
   const rows: CheckinRow[] = [];
@@ -185,10 +259,17 @@ function parseHabitRows(habitId: string, body: string): CheckinRow[] {
     }
     // 去掉金币后缀（如 " +1"），写回时不再产生
     rest = rest.replace(/\s*\+\d+\s*$/, "").trim();
+    // 手动指定的班次角色后缀（+上班 / +下班），读出后剥掉
+    let role: CheckinRow["role"] | undefined;
+    const roleM = rest.match(/\s*\+(上班|下班)\s*$/);
+    if (roleM) {
+      role = roleM[1] === "上班" ? "in" : "out";
+      rest = rest.slice(0, roleM.index).trim();
+    }
     const skipped = itemMatch[1] === "-";
     if (skipped && dayHasSkip) continue; // 跳过每日至多一条，取首条
     if (skipped) dayHasSkip = true;
-    rows.push({ habitId, date: currentDate, time, note: rest || undefined, skipped });
+    rows.push({ habitId, date: currentDate, time, note: rest || undefined, skipped, role });
   }
   return rows;
 }
@@ -197,7 +278,8 @@ function parseHabitRows(habitId: string, body: string): CheckinRow[] {
 export function parseHabitFile(path: string, content: string): HabitData | null {
   const id = fileStem(path);
   if (!id) return null;
-  const { fm, body } = extractFrontmatter(content);
+  const { fm: rawFm, body } = extractFrontmatter(content);
+  const fm = translateFrontmatterIn(rawFm); // 中文键翻回英文内部键（中文优先）
   const rows = parseHabitRows(id, body);
 
   const name = typeof fm.name === "string" && fm.name.trim() ? fm.name.trim() : id;
@@ -223,6 +305,7 @@ export function parseHabitFile(path: string, content: string): HabitData | null 
     executeDays: normalizeExecuteDays(fm.execute_days),
     attendance: fm.attendance === true,
     quickTimes: normalizeQuickTimes(fm.quick_times),
+    recentTimes: normalizeRecentTimes(fm.recent_times),
   };
   return { config, rows, rawFrontmatter: fm };
 }
@@ -243,7 +326,8 @@ export function serializeHabitFile(
   full = false
 ): string {
   const stem = fileStem(config.filePath);
-  const fm: Record<string, unknown> = { ...rawFrontmatter };
+  // 中文键翻回英文内部键再处理（writeHabitFile 直接喂磁盘原文，键可能是中文；已翻译的输入幂等）
+  const fm: Record<string, unknown> = translateFrontmatterIn({ ...rawFrontmatter });
 
   if (full || config.name !== stem || fm.name !== undefined) fm.name = config.name;
   else delete fm.name;
@@ -254,11 +338,12 @@ export function serializeHabitFile(
   if (full || fm.color !== undefined) fm.color = config.color;
   else delete fm.color;
 
-  // frequency_type：只在插件新建时写 "daily"；用户手写的其他值（weekly 等）原样保留
-  if (full && fm.frequency_type === undefined) fm.frequency_type = "daily";
+  // 频率类型：只在插件新建时写「每天」；用户手写的其他值（weekly 等）原样保留
+  if (full && fm.frequency_type === undefined) fm.frequency_type = "每天";
 
-  // frequency_value：非 daily 的文件不改写用户的数值语义
-  const nonDailyType = typeof fm.frequency_type === "string" && fm.frequency_type.trim().toLowerCase() !== "daily";
+  // 每日次数：非「每天」的文件不改写用户的数值语义（旧值 daily 与 每天 等价）
+  const rawType = typeof fm.frequency_type === "string" ? fm.frequency_type.trim().toLowerCase() : "";
+  const nonDailyType = typeof fm.frequency_type === "string" && rawType !== "daily" && rawType !== "每天";
   if (config.timesPerDay > 1) fm.frequency_value = config.timesPerDay;
   else if (!nonDailyType) delete fm.frequency_value;
 
@@ -274,6 +359,9 @@ export function serializeHabitFile(
   if (config.attendance && config.quickTimes && config.quickTimes.length > 0) fm.quick_times = [...config.quickTimes];
   else delete fm.quick_times;
 
+  if (config.attendance && config.recentTimes && config.recentTimes.length > 0) fm.recent_times = [...config.recentTimes];
+  else delete fm.recent_times;
+
   const validity = fm.validity && typeof fm.validity === "object" && !Array.isArray(fm.validity)
     ? { ...(fm.validity as Record<string, unknown>) }
     : undefined;
@@ -283,7 +371,7 @@ export function serializeHabitFile(
     delete fm.validity;
   }
 
-  const out: string[] = ["---", stringifyYaml(fm).trimEnd(), "---", "", LOG_HEADING, ""];
+  const out: string[] = ["---", stringifyYaml(translateFrontmatterOut(fm)).trimEnd(), "---", "", LOG_HEADING, ""];
 
   const byDate = new Map<string, CheckinRow[]>();
   for (const r of rows) {
@@ -299,6 +387,8 @@ export function serializeHabitFile(
       let line = r.skipped ? "- [-]" : "- [x]";
       if (r.time) line += ` ${r.time}`;
       if (note) line += line.length > 5 ? ` - ${note}` : ` ${note}`;
+      if (r.role === "in") line += " +上班";
+      else if (r.role === "out") line += " +下班";
       out.push(line);
     }
     out.push("");
@@ -380,13 +470,35 @@ function nowHHmm(): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-/** 打卡一次（新增记录；time 省略 = 当前时间，非法格式一律回退当前时间），返回记录的时间 */
-export async function checkinHabit(app: App, habit: HabitConfig, date: string, time?: string): Promise<string> {
+/** 打卡一次（新增记录；time 省略 = 当前时间，非法格式一律回退当前时间），返回记录的时间。
+ *  role：上下班型手动指定的班次角色（上班/下班）；缺省或与顺序推断一致时不落盘。 */
+export async function checkinHabit(
+  app: App,
+  habit: HabitConfig,
+  date: string,
+  time?: string,
+  role?: "in" | "out"
+): Promise<string> {
   const data = await readHabitFile(app, habit);
   const t = time && isValidHHmm(time) ? time : nowHHmm();
-  data.rows.push({ habitId: habit.id, date, time: t, skipped: false });
+  const inferred = lastOpenShift(data.rows, habit.id) ? "out" : "in";
+  data.rows.push({
+    habitId: habit.id, date, time: t, skipped: false,
+    role: role && role !== inferred ? role : undefined,
+  });
   await writeHabitFile(app, habit, data.rows);
   return t;
+}
+
+/** 记录一次手动设置的时间到「最近常用」（最多 2 个，新的在前），仅上下班型写盘 */
+export async function recordRecentManualTime(app: App, habit: HabitConfig, time: string): Promise<void> {
+  if (!habit.attendance || !isValidHHmm(time)) return;
+  const data = await readHabitFile(app, habit);
+  const next: HabitConfig = {
+    ...data.config,
+    recentTimes: [time, ...(data.config.recentTimes ?? []).filter(t => t !== time)].slice(0, 2),
+  };
+  await writeHabitFile(app, next, data.rows);
 }
 
 /** 删除指定时间的一次打卡（返回是否删掉） */
@@ -646,6 +758,59 @@ export async function migrateLegacyHabits(app: App, settings: DaybookSettings): 
   return true;
 }
 
+/**
+ * 一次性迁移：习惯 frontmatter 英文键（name/icon/…）→ 中文键（名称/图标/…），
+ * 顺带把旧日志标题「(Check-in Log)」换掉。逐文件重序列化 → 回读比对 config/rows，
+ * 校验通过才写盘（原内容先备份 .bak）；不一致的文件跳过保留原样。
+ * 返回 true 表示设置有变化（旗标置位），调用方需 saveSettings。
+ */
+export async function migrateHabitKeys(app: App, settings: DaybookSettings): Promise<boolean> {
+  if (settings.habitKeysMigratedV1) return false;
+  settings.habitKeysMigratedV1 = true; // 新安装无旧文件也置旗标，避免每次启动空跑
+  const legacyFmKeys = Object.values(FM_CN_TO_EN);
+  let changed = 0;
+  let failed = 0;
+  for (const data of await loadHabits(app, settings)) {
+    const file = app.vault.getAbstractFileByPath(data.config.filePath) as TFile | null;
+    if (!file) continue;
+    const fm = data.rawFrontmatter;
+    const hasLegacy = legacyFmKeys.some(k => fm[k] !== undefined)
+      || (() => {
+        const v = fm.validity;
+        return !!(v && typeof v === "object" && !Array.isArray(v) && (v as Record<string, unknown>).start_date !== undefined);
+      })();
+    let content: string;
+    try {
+      content = await app.vault.read(file);
+    } catch (e) {
+      console.warn("[Daybook] 习惯文件读取失败，跳过中文化：", file.path, e);
+      continue;
+    }
+    if (!hasLegacy && !content.includes("(Check-in Log)")) continue;
+    try {
+      const fresh = serializeHabitFile(data.config, data.rows, fm);
+      const back = parseHabitFile(file.path, fresh);
+      const ok = !!back
+        && JSON.stringify(back.config) === JSON.stringify(data.config)
+        && JSON.stringify(back.rows) === JSON.stringify(data.rows);
+      if (!ok) {
+        failed++;
+        console.warn("[Daybook] 习惯属性中文化校验不一致，跳过：", file.path);
+        continue;
+      }
+      await app.vault.adapter.write(`${file.path}.bak`, content);
+      await app.vault.modify(file, fresh);
+      changed++;
+    } catch (e) {
+      failed++;
+      console.warn("[Daybook] 习惯属性中文化写盘失败，跳过：", file.path, e);
+    }
+  }
+  if (changed) new Notice(`✅ 已把 ${changed} 个习惯文件的属性改为中文键（旧内容备份 .bak）`);
+  if (failed) new Notice(`⚠️ ${failed} 个习惯文件中文化校验未通过，已保留原样`);
+  return true;
+}
+
 /* ── 查询辅助（纯函数） ── */
 
 /** 某天某习惯的打卡记录（按时间升序） */
@@ -683,7 +848,9 @@ export interface AttendanceShift {
   outNote?: string;     // 下班行备注
 }
 
-/** 打卡行 → 班次列表（顺序配对；跳过行不参与） */
+/** 打卡行 → 班次列表（顺序两两配对；行上显式角色（+上班/+下班）优先，跳过行不参与。
+ *  强制「上班」时若已有进行中班次，旧班次保持未闭合，本次开始新班次；
+ *  强制「下班」时若没有进行中班次，按上班卡处理（班次必须从上班卡开始）。 */
 export function attendanceShifts(rows: CheckinRow[], habitId: string): AttendanceShift[] {
   const list = rows
     .filter(r => r.habitId === habitId && !r.skipped)
@@ -691,7 +858,8 @@ export function attendanceShifts(rows: CheckinRow[], habitId: string): Attendanc
   const shifts: AttendanceShift[] = [];
   for (const r of list) {
     const open = shifts.length > 0 ? shifts[shifts.length - 1] : null;
-    if (open && open.open) {
+    const role = r.role ?? (open && open.open ? "out" : "in");
+    if (role === "out" && open && open.open) {
       open.outDate = r.date;
       open.outTime = r.time ?? "00:00";
       open.outNote = r.note;

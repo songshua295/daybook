@@ -10,7 +10,9 @@ import {
   type PlanSortKey,
   type ReviewViewState,
 } from "./settings";
-import { migrateLegacyHabits } from "./habitManager";
+import { migrateLegacyHabits, migrateHabitKeys } from "./habitManager";
+import { migrateStorageRoot } from "./fileManager";
+import { migrateDramaJsonToMd } from "./dramaStore";
 import { CompletionFeedback } from "./feedback";
 
 export default class DaybookPlugin extends Plugin {
@@ -21,6 +23,14 @@ export default class DaybookPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
 
+    // 数据根迁移：旧目录（Daily/ 等）整体迁入 Daybook/（一次性，最先执行）
+    try {
+      const changed = await migrateStorageRoot(this.app, this.settings);
+      if (changed) await this.saveSettings();
+    } catch (e) {
+      console.error("Daybook: 数据根迁移失败", e);
+    }
+
     // 旧习惯数据（data.json 定义 + _habits.md 记录）→ 每习惯一个 md 文件（一次性）
     try {
       const changed = await migrateLegacyHabits(this.app, this.settings);
@@ -28,6 +38,23 @@ export default class DaybookPlugin extends Plugin {
     } catch (e) {
       console.error("Daybook: 习惯数据迁移失败", e);
       new Notice("习惯数据迁移失败，不影响其他功能");
+    }
+
+    // 追剧 shows.json → shows.md（一次性）
+    try {
+      const changed = await migrateDramaJsonToMd(this.app, this.settings);
+      if (changed) await this.saveSettings();
+    } catch (e) {
+      console.error("Daybook: 追剧数据迁移失败", e);
+    }
+
+    // 习惯 frontmatter 英文键 → 中文键（一次性）
+    try {
+      const changed = await migrateHabitKeys(this.app, this.settings);
+      if (changed) await this.saveSettings();
+    } catch (e) {
+      console.error("Daybook: 习惯属性中文化迁移失败", e);
+      new Notice("习惯属性中文化迁移失败，不影响其他功能");
     }
 
     this.registerView(VIEW_TYPE_JOURNAL, (leaf) => new DaybookView(leaf, this));
@@ -77,6 +104,10 @@ export default class DaybookPlugin extends Plugin {
     if (currentMoods === LEGACY_MOODS) {
       this.settings.customMoods = DEFAULT_SETTINGS.customMoods.map(m => ({ ...m }));
       await this.saveSettings();
+    }
+    // 迁移：完成时间字段名旧默认 completedAt → 完成于（用户自定义过其他值则保持不动）
+    if (this.settings.todoCompletedField === "completedAt") {
+      this.settings.todoCompletedField = DEFAULT_SETTINGS.todoCompletedField;
     }
     this.settings.typeEnabled = Object.assign({}, DEFAULT_SETTINGS.typeEnabled, loaded?.typeEnabled ?? {});
     // 旧 habits（data.json 定义）仅作迁移读取；形状异常直接丢弃

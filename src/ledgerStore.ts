@@ -3,7 +3,7 @@
  *
  * 存储（v5 起，hledger journal 纯文本，可肉眼阅读、可直接用 hledger 打开）：
  *   <ledgerFolder>/config.json          账本/账户/两级类别/币种/用户名（结构配置仍是 JSON）
- *   <ledgerFolder>/YYYY.<ext>           按年一个 journal 文件（默认 .obsidian/记账/2026.journal）
+ *   <ledgerFolder>/YYYY.<ext>           按年一个 journal 文件（默认 Daybook/记账/2026.md）
  *   <ledgerFolder>/imports.json         批量导入台账
  *   <ledgerFolder>/export/              导出账单
  *   同目录 .bak = 上一次成功写入前的副本；解析失败自动回落 .bak，仍失败则停用该年份数据并提示（绝不静默清空）
@@ -14,7 +14,7 @@
  *   多币种：记录带 currency + 可选 rate（折算 1 单位该币种 = 多少基准币），
  *   未写 rate 时取币种表当前 rate；基准币 rate 恒为 1。
  */
-import { App, Notice, normalizePath } from "obsidian";
+import { App, DataAdapter, Notice, normalizePath } from "obsidian";
 import type { DaybookSettings } from "./settings";
 import { DEFAULT_LEDGER_EXT, DEFAULT_LEDGER_FOLDER } from "./settings";
 import { parseYearJournal, serializeYearJournal, makeNameResolver } from "./ledgerJournal";
@@ -229,8 +229,21 @@ export function reimbTotal(all: LedgerRecord[], cfg: LedgerConfig): number {
 
 const yearOf = (dateStr: string) => (dateStr || "").slice(0, 4);
 
-/** 旧版 journal 头行会写 kind/cat/sub/acc/to/clock 等冗余标签：检测到就整体重写一次 */
-const LEGACY_TAG_RE = /^\d{4}-\d{2}-\d{2}[^\n]*;[^\n]*\b(?:kind|cat|sub|acc|to|clock):/m;
+/** 旧版 journal 头行会写 kind/cat/sub/acc/to/clock 等冗余标签或英文标签键（id/at/…）：检测到就整体重写一次（中文键化） */
+const LEGACY_TAG_RE = /^\d{4}-\d{2}-\d{2}[^\n]*;[^\n]*\b(?:kind|cat|sub|acc|to|clock|id|led|cur|rate|disc|ref|reb|ramt|rdet|t|addr|by|oth|at|batch|f):/m;
+
+/**
+ * 原子写：先写 .tmp → 旧文件挪成 .bak → tmp 改名上位。
+ * 供记账与追剧等侧文件共用；调用方自行确保目录存在。
+ */
+export async function writeAtomicFile(adapter: DataAdapter, path: string, text: string): Promise<void> {
+  const tmp = `${path}.tmp`;
+  const bak = `${path}.bak`;
+  await adapter.write(tmp, text);
+  try { if (await adapter.exists(bak)) await adapter.remove(bak); } catch (e) { /* 清理失败不阻塞 */ }
+  try { if (await adapter.exists(path)) await adapter.rename(path, bak); } catch (e) { /* 首次写入无旧文件 */ }
+  await adapter.rename(tmp, path);
+}
 
 export class LedgerStore {
   config: LedgerConfig = defaultLedgerConfig();
@@ -275,14 +288,8 @@ export class LedgerStore {
   }
 
   private async writeAtomic(path: string, text: string): Promise<void> {
-    const adapter = this.app.vault.adapter;
-    const tmp = `${path}.tmp`;
-    const bak = `${path}.bak`;
     await this.ensureDir();
-    await adapter.write(tmp, text);
-    try { if (await adapter.exists(bak)) await adapter.remove(bak); } catch (e) { /* 清理失败不阻塞 */ }
-    try { if (await adapter.exists(path)) await adapter.rename(path, bak); } catch (e) { /* 首次写入无旧文件 */ }
-    await adapter.rename(tmp, path);
+    await writeAtomicFile(this.app.vault.adapter, path, text);
   }
 
   /** 读文件并解析：目标损坏时自动回落 .bak；两者都坏返回 null（调用方必须提示而不是当空数据） */
@@ -372,7 +379,7 @@ export class LedgerStore {
           }
         }
         if (this.configDirty) await this.saveConfig();
-        // 旧文件里的冗余标签（kind/cat/sub/acc/to/clock）一次性重写掉；校验不一致就跳过该年
+        // 旧文件里的冗余标签（kind/cat/…）与英文标签键一次性重写为中文键；校验不一致就跳过该年
         if (legacyYears.size) await this.compactLegacyTags(legacyYears);
       }
     } catch (e) {
@@ -517,7 +524,7 @@ export class LedgerStore {
   }
 
   /**
-   * 一次性把旧文件里的冗余标签（kind/cat/sub/acc/to/clock）重写掉。
+   * 一次性把旧文件里的冗余标签（kind/cat/sub/acc/to/clock）与英文标签键重写为中文键。
    * 写盘前用序列化结果再解析一遍，条数与 id 集合不一致就跳过该年（宁可留旧格式也不丢记录）。
    */
   private async compactLegacyTags(years: Set<string>): Promise<void> {
@@ -532,17 +539,17 @@ export class LedgerStore {
         const beforeIds = rows.map(r => r.id).sort().join(",");
         const afterIds = back.records.map(r => r.id).sort().join(",");
         if (back.records.length !== rows.length || beforeIds !== afterIds) {
-          console.warn("Daybook ledger: 精简元数据校验不一致，跳过该年份", y);
+          console.warn("Daybook ledger: 标签中文化校验不一致，跳过该年份", y);
           continue;
         }
         await this.writeAtomic(this.recordsFilePath(y), text);
         done++;
       } catch (e) {
-        console.error("Daybook ledger: 精简元数据失败", y, e);
+        console.error("Daybook ledger: 标签中文化重写失败", y, e);
       }
     }
     if (done) {
-      new Notice(`已精简 ${done} 个年份的记账元数据（旧文件备份为 .bak）`);
+      new Notice(`已把 ${done} 个年份的记账标签改为中文（旧文件备份为 .bak）`);
     }
   }
 

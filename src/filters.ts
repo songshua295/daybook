@@ -202,9 +202,9 @@ function wikiLinkFree(text: string): string {
     .replace(/(!?)\[[^\]]*\]\([^)]*\)/g, " ");
 }
 
-/** 去掉行内字段（[amt::1] / [createdAt::…] 等），避免关键词命中元数据 */
+/** 去掉行内字段（[截止: 2026-01-01] / [创建于: …] / 旧 [amt::1] 等），避免关键词命中元数据（键不以数字开头，避免误伤 [09:30] 这类文本） */
 export function stripInlineFields(text: string): string {
-  return text.replace(/\[[a-zA-Z][\w-]*::[^\]]*\]/g, " ");
+  return text.replace(/\[[^\]\[:\d\s][^\]\[:]{0,7}:+[^\]]*\]/g, " ");
 }
 
 /** 参与关键词搜索的正文（计划含各任务行） */

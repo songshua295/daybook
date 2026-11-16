@@ -871,13 +871,13 @@ export class TodayPanel {
     menu.showAtPosition(pos);
   }
 
-  /** 置顶 / 取消置顶：计划任务走 #pinned 标签；旧格式块尾 [pinned::true] 字段行优先移除；其他记录保持字段行方式 */
+  /** 置顶 / 取消置顶：计划任务走 #pinned 标签；块尾 [置顶: true] 字段行（旧 [pinned::true] 兼容）优先移除；其他记录保持字段行方式 */
   private async togglePinEntry(entry: JournalEntry) {
     try {
       const start = entry.rawLineIndex ?? 0;
       const end = entry.endLineIndex ?? start;
       const block = await readLineRange(this.plugin.app, entry.filePath, start, end);
-      const fieldIdx = block.findIndex(l => /^\s*\[pinned::/.test(l));
+      const fieldIdx = block.findIndex(l => /^\s*\[(?:置顶|pinned):+/.test(l));
       if (fieldIdx >= 0) {
         await removeLineRange(this.plugin.app, entry.filePath, start + fieldIdx, start + fieldIdx);
         new Notice("已取消置顶");
@@ -889,7 +889,7 @@ export class TodayPanel {
         await this.rewriteTaskLine(entry, todo);
         new Notice(entry.pinned ? "已取消置顶" : "📌 已置顶");
       } else {
-        await insertLineAfter(this.plugin.app, entry.filePath, end, "[pinned::true]");
+        await insertLineAfter(this.plugin.app, entry.filePath, end, "[置顶: true]");
         new Notice("📌 已置顶");
       }
       void this.refresh(entry.type);
@@ -954,7 +954,7 @@ export class TodayPanel {
     }
   }
 
-  /** 归档：在记录块尾追加 [archived::YYYY-MM-DD HH:mm:ss] */
+  /** 归档：在记录块尾追加 [归档: YYYY-MM-DD HH:mm:ss] */
   private async archiveEntry(entry: JournalEntry) {
     try {
       const stamp = moment().format("YYYY-MM-DD HH:mm:ss");
@@ -962,7 +962,7 @@ export class TodayPanel {
         this.plugin.app,
         entry.filePath,
         entry.endLineIndex ?? entry.rawLineIndex ?? 0,
-        `[archived::${stamp}]`
+        `[归档: ${stamp}]`
       );
       new Notice("📦 已归档");
       void this.refresh(entry.type);
