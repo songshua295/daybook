@@ -11,11 +11,12 @@
 export interface Pt { x: number; y: number }
 export interface Box { x: number; y: number; w: number; h: number }
 
-/* 支出用暖色、收入用冷/绿色，两组都控制在中等饱和 + 中等明度，
-   深色与浅色主题下都能压得住（不跟随主题变化，所以不用 var()）。 */
-export const EXPENSE_COLORS = ["#E0664B", "#EE9A3F", "#D2A041", "#C8785A", "#DE8A74", "#B9762F", "#D46C6C", "#E3B24F"];
-export const INCOME_COLORS = ["#2FA87C", "#3E9CB8", "#5C8FD2", "#4FBF9A", "#79AC68", "#3F86A6", "#61A6C9", "#8CBE78"];
-export const OTHER_COLOR = "#9C9CA4";
+/* Notion 标签色板：文档标签的低饱和文字色，米纸 / 白卡上都稳重不刺眼
+   （不跟随主题，不用 var()）。支出从红起步轮暖色，收入从绿起步轮冷色；
+   [0] 同时被「转入 / 转出」单色切片使用，必须与 --led-out / --led-in 同色。 */
+export const EXPENSE_COLORS = ["#C4554D", "#D9730D", "#CB912F", "#9F6B53", "#C14C8A", "#9065B0", "#787774", "#337EA9"];
+export const INCOME_COLORS = ["#448361", "#337EA9", "#9065B0", "#787774", "#CB912F", "#9F6B53", "#C14C8A", "#C4554D"];
+export const OTHER_COLOR = "#9E9C98";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 

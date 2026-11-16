@@ -17,33 +17,44 @@
    color-mix(var(--db-…)) 全部失效 → 热力图/趋势图透明不可见 */
 body,
 .db-journal-root {
-  --db-bg:           var(--background-primary);
-  --db-surface:      var(--background-primary);
-  --db-surface2:     var(--background-secondary);
-  --db-border:       var(--background-modifier-border);
-  --db-accent:       var(--interactive-accent);
-  --db-accent-soft:  color-mix(in srgb, var(--interactive-accent) 12%, transparent);
-  --db-accent-hover: color-mix(in srgb, var(--interactive-accent) 85%, var(--text-normal));
-  --db-text:         var(--text-normal);
-  --db-text-muted:   var(--text-muted);
-  --db-text-sub:     var(--text-faint);
-  --db-shadow:       0 1px 3px rgba(0,0,0,0.06);
-  --db-shadow-sm:    0 1px 2px rgba(0,0,0,0.04);
-  --db-shadow-md:    0 3px 8px rgba(0,0,0,0.08);
-  --db-radius:       10px;
-  --db-radius-sm:    8px;
-  --db-radius-lg:    14px;
-  /* Notion 风格：扁平色替代渐变 */
-  --db-grad-from:    var(--background-primary);
-  --db-grad-to:      var(--background-primary);
+  /* Notion 米纸调色板：固定浅色纸面，不随 Obsidian 深 / 浅主题切换（见 README「Notion 米纸风格」） */
+  --notion-paper: #f7f6f3;
+  --notion-page: #ffffff;
+  --notion-hover: #efedea;
+  --notion-hover-deep: #e3e1db;
+  --notion-hairline: #e9e7e4;
+  --notion-ink: #37352f;
+  --notion-blue: #2eaadc;
+  --notion-red: #eb5757;
+  --db-bg:           var(--notion-paper);
+  --db-surface:      var(--notion-page);
+  --db-surface2:     var(--notion-hover);
+  --db-border:       var(--notion-hairline);
+  --db-border-hair:  var(--notion-hairline);
+  --db-accent:       var(--notion-blue);
+  --db-accent-soft:  rgba(46, 170, 220, 0.14);
+  --db-accent-hover: color-mix(in srgb, var(--notion-blue) 85%, var(--notion-ink));
+  --db-text:         var(--notion-ink);
+  --db-text-muted:   #787774;
+  --db-text-sub:     #9e9c98;
+  --db-text-faint:   #b8b7b3;
+  --db-shadow:       none;
+  --db-shadow-sm:    none;
+  --db-shadow-md:    none;
+  --db-radius:       4px;
+  --db-radius-sm:    4px;
+  --db-radius-lg:    4px;
+  /* 扁平色替代渐变 */
+  --db-grad-from:    var(--notion-page);
+  --db-grad-to:      var(--notion-page);
   --db-grad-shadow:  rgba(0, 0, 0, 0.04);
-  --db-bg-grad:      var(--background-primary);
+  --db-bg-grad:      var(--notion-paper);
 }
 
 .db-journal-root {
-  /* HIG 字体栈 */
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
-               var(--font-interface), "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  /* Notion 字体栈：系统无衬线 */
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+               var(--font-interface), "PingFang SC", "Microsoft YaHei", sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -53,13 +64,13 @@ body,
 /* ── v3.2 组件别名变量：统一映射到当前皮肤，避免未定义变量回退到硬编码浅色 ── */
 body,
 .db-journal-root {
-  --db-text-primary:   var(--text-normal);
-  --db-text-secondary: var(--text-muted);
-  --db-text-tertiary:  var(--text-faint);
-  --db-bg-primary:     var(--background-primary);
-  --db-bg-secondary:   var(--background-secondary);
-  --db-bg-hover:       color-mix(in srgb, var(--text-normal) 5%, var(--background-primary));
-  --db-border-color:   var(--background-modifier-border);
+  --db-text-primary:   var(--db-text);
+  --db-text-secondary: var(--db-text-muted);
+  --db-text-tertiary:  var(--db-text-sub);
+  --db-bg-primary:     var(--db-surface);
+  --db-bg-secondary:   var(--db-surface2);
+  --db-bg-hover:       var(--notion-hover);
+  --db-border-color:   var(--db-border);
 }
 
 /* ════════════════════════════════════════════════════════
@@ -129,8 +140,8 @@ body,
 }
 
 .db-mood-pill.selected {
-  background: color-mix(in srgb, var(--interactive-accent) 8%, var(--background-primary));
-  border-color: color-mix(in srgb, var(--interactive-accent) 30%, transparent);
+  background: color-mix(in srgb, var(--db-accent) 8%, var(--db-surface));
+  border-color: color-mix(in srgb, var(--db-accent) 30%, transparent);
 }
 
 .db-mood-pill.selected span {
@@ -150,7 +161,7 @@ body,
   width: 100%;
   padding: 12px 14px;
   border: 1.5px solid var(--db-border);
-  border-radius: 14px;
+  border-radius: 4px;
   background: var(--db-surface);
   color: var(--db-text);
   font-size: 14px;
@@ -169,7 +180,7 @@ body,
 /* 占位符跟随皮肤配色，避免 Obsidian 主题的 --text-faint 与皮肤底色冲突导致看不清 */
 .db-journal-root textarea::placeholder,
 .db-journal-root input::placeholder {
-  color: var(--text-faint);
+  color: var(--db-text-sub);
   opacity: 1;
 }
 
@@ -224,18 +235,17 @@ body,
   gap: 8px;
   padding: 13px;
   margin: 8px 12px 16px;
-  background: var(--db-surface);
-  border-radius: 14px;
-  color: white;
-  font-weight: 700;
+  background: var(--db-accent);
+  border-radius: 4px;
+  color: #ffffff;
+  font-weight: 600;
   font-size: 14px;
   cursor: pointer;
-  transition: all 0.2s;
-  box-shadow: 0 4px 16px var(--db-shadow);
+  transition: background 0.15s ease, opacity 0.15s ease;
   letter-spacing: 0.3px;
 }
 
-.db-save-btn-sticky:active { transform: scale(0.97); opacity: 0.9; }
+.db-save-btn-sticky:active { background: var(--db-accent-hover); opacity: 0.9; }
 .db-save-btn-sticky.loading { opacity: 0.6; pointer-events: none; }
 
 /* 保留旧 save-btn 样式（settings等其他地方可能用到） */
@@ -245,18 +255,17 @@ body,
   justify-content: center;
   gap: 8px;
   padding: 11px;
-  background: var(--db-surface);
-  border-radius: 14px;
-  color: white;
-  font-weight: 700;
+  background: var(--db-accent);
+  border-radius: 4px;
+  color: #ffffff;
+  font-weight: 600;
   font-size: 13px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background 0.15s ease, opacity 0.15s ease;
   margin-top: 12px;
-  box-shadow: 0 4px 12px var(--db-shadow);
 }
 
-.db-save-btn:active { transform: scale(0.98); }
+.db-save-btn:active { background: var(--db-accent-hover); }
 .db-save-btn.loading { opacity: 0.6; pointer-events: none; }
 .db-btn-icon { font-size: 16px; }
 
@@ -274,7 +283,7 @@ body,
   padding: 8px 16px;
   background: var(--db-accent);
   color: white;
-  border-radius: 10px;
+  border-radius: 4px;
   font-size: 20px;
   font-weight: 600;
   cursor: pointer;
@@ -533,9 +542,9 @@ body,
 
 
 .db-todo-due.overdue{
-  background: color-mix(in srgb, var(--text-error) 8%, var(--background-primary));
-  color: var(--text-error);
-  border-color: color-mix(in srgb, var(--text-error) 24%, transparent);
+  background: color-mix(in srgb, #eb5757 8%, var(--db-surface));
+  color: #eb5757;
+  border-color: color-mix(in srgb, #eb5757 24%, transparent);
   font-weight: 600;
 }
 
@@ -543,7 +552,7 @@ body,
 .db-todo-completed,
 .db-review-todo-completed {
   margin-top: 4px;
-  color: var(--color-green, #2e7d32); /* 覆盖父元素完成态的淡化文字色 */
+  color: #448361; /* 覆盖父元素完成态的淡化文字色 */
 }
 
 /* 完成徽标（类名由 TS `${cls}-item` 动态拼接，勿按字面量误判为死样式） */
@@ -556,9 +565,9 @@ body,
   padding: 1px 9px;
   margin-right: 4px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--color-green, #4caf50) 22%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-green, #4caf50) 38%, transparent);
-  color: var(--color-green, #2e7d32);
+  background: color-mix(in srgb, #448361 22%, transparent);
+  border: 1px solid color-mix(in srgb, #448361 38%, transparent);
+  color: #448361;
   white-space: nowrap;
   text-decoration: none;
 }
@@ -580,7 +589,7 @@ body,
   padding: 8px 16px;
   border-radius: 8px;
   background: var(--db-accent);
-  color: var(--text-on-accent);
+  color: #ffffff;
   font-size: 13px;
   cursor: pointer;
 }
@@ -594,7 +603,7 @@ body,
   border-radius: var(--db-radius-lg);
   padding: 14px;
   font-size: 14px;
-  color: var(--text-normal);
+  color: var(--db-text);
   line-height: 1.5;
 }
 
@@ -608,16 +617,16 @@ body,
 .db-plan-edit-modal .db-plan-edit-time {
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-muted);
+  color: var(--db-text-muted);
   white-space: nowrap;
 }
 .db-plan-edit-modal .db-plan-edit-title {
   flex: 1;
   padding: 6px 10px;
-  border: 1px solid var(--background-modifier-border);
+  border: 1px solid var(--db-border);
   border-radius: 8px;
-  background: var(--background-primary);
-  color: var(--text-normal);
+  background: var(--db-surface);
+  color: var(--db-text);
 }
 .db-plan-edit-modal .db-plan-edit-list {
   display: flex;
@@ -642,27 +651,27 @@ body,
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
-  border: 1px solid var(--background-modifier-border);
+  border: 1px solid var(--db-border);
   border-radius: 8px;
-  background: var(--background-primary);
-  color: var(--text-normal);
+  background: var(--db-surface);
+  color: var(--db-text);
 }
 .db-plan-edit-modal .db-plan-edit-priority {
   flex-shrink: 0;
   padding: 4px 2px;
-  border: 1px solid var(--background-modifier-border);
+  border: 1px solid var(--db-border);
   border-radius: 6px;
-  background: var(--background-primary);
-  color: var(--text-normal);
+  background: var(--db-surface);
+  color: var(--db-text);
 }
 .db-plan-edit-modal .db-plan-edit-due {
   flex-shrink: 0;
   width: 92px;
   padding: 5px 6px;
-  border: 1px solid var(--background-modifier-border);
+  border: 1px solid var(--db-border);
   border-radius: 8px;
-  background: var(--background-primary);
-  color: var(--text-normal);
+  background: var(--db-surface);
+  color: var(--db-text);
   font-size: 12px;
 }
 .db-plan-edit-modal .db-plan-edit-del {
@@ -673,7 +682,7 @@ body,
   padding: 0 4px;
 }
 .db-plan-edit-modal .db-plan-edit-del:hover {
-  color: var(--text-error);
+  color: #eb5757;
 }
 .db-plan-edit-modal .db-plan-edit-add {
   margin-bottom: 12px;
@@ -688,10 +697,10 @@ body,
   opacity: 0.4;
 }
 .db-todo-item.drop-before{
-  box-shadow: inset 0 2px 0 var(--interactive-accent);
+  box-shadow: inset 0 2px 0 var(--db-accent);
 }
 .db-todo-item.drop-after{
-  box-shadow: inset 0 -2px 0 var(--interactive-accent);
+  box-shadow: inset 0 -2px 0 var(--db-accent);
 }
 
 /* ── 子任务层级 ── */
@@ -724,12 +733,12 @@ body,
 }
 .db-todo-add-sub:hover,
 .db-todo-add-sub.active {
-  color: var(--interactive-accent);
+  color: var(--db-accent);
 }
 
 /* ── 子任务添加提示 ── */
 .db-subtask-hint {
-  color: var(--interactive-accent);
+  color: var(--db-accent);
 }
 
 
@@ -748,7 +757,7 @@ body,
 }
 .db-plan-edit-modal .db-plan-edit-indent:hover,
 .db-plan-edit-modal .db-plan-edit-indent.active {
-  color: var(--interactive-accent);
+  color: var(--db-accent);
 }
 
 /* ── 闪念编辑器：格式化工具栏 ── */
@@ -774,18 +783,17 @@ body,
   border-radius: 6px;
   background: transparent;
   border: none;
-  color: var(--text-muted);
+  color: var(--db-text-muted);
   cursor: pointer;
   user-select: none;
-  transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 .db-memo-tb-btn:hover {
-  background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
-  color: var(--interactive-accent);
+  background: color-mix(in srgb, var(--db-accent) 10%, transparent);
+  color: var(--db-accent);
 }
 .db-memo-tb-btn:active {
-  transform: scale(0.92);
-  background: color-mix(in srgb, var(--interactive-accent) 18%, transparent);
+  background: color-mix(in srgb, var(--db-accent) 18%, transparent);
 }
 
 /* 图标按钮（照片/录音） */
@@ -798,8 +806,8 @@ body,
   stroke-width: 1.8;
 }
 .db-memo-tb-audio.recording {
-  color: var(--color-red, #ef4444) !important;
-  background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
+  color: #c4554d !important;
+  background: color-mix(in srgb, #c4554d 12%, transparent);
   animation: db-pulse 1.2s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -812,8 +820,8 @@ body,
   line-height: 1;
 }
 .db-memo-tb-btn.db-mood-toggle.is-active {
-  background: color-mix(in srgb, var(--interactive-accent) 14%, transparent);
-  color: var(--interactive-accent);
+  background: color-mix(in srgb, var(--db-accent) 14%, transparent);
+  color: var(--db-accent);
 }
 /* 心情条收起：整行隐藏，节约竖屏空间。
    必须用三类选择器：后面的 .db-mood-grid.db-mood-grid-4col{display:grid}
@@ -832,9 +840,9 @@ body,
   max-height: 220px;
   overflow-y: auto;
   background: var(--db-bg-primary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 10px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--db-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15, 15, 15, 0.12);
   padding: 4px;
 }
 .db-memo-ac-item {
@@ -846,11 +854,11 @@ body,
   border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
-  color: var(--text-normal);
+  color: var(--db-text);
 }
 .db-memo-ac-item:hover,
 .db-memo-ac-item.active {
-  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+  background: color-mix(in srgb, var(--db-accent) 12%, transparent);
 }
 .db-memo-ac-detail {
   font-size: 11px;
@@ -862,7 +870,7 @@ body,
 }
 .db-memo-ac-label {
   font-size: 13px;
-  color: var(--text-normal);
+  color: var(--db-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -887,7 +895,7 @@ body,
   align-items: center;
   justify-content: center;
   padding: 8px 4px;
-  border-radius: 10px;
+  border-radius: 4px;
   gap: 2px;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -903,12 +911,8 @@ body,
 
 .db-mood-grid.db-mood-grid-4col .db-mood-pill .db-mood-label {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--db-text-muted);
   line-height: 1.2;
-}
-
-.db-mood-grid.db-mood-grid-4col .db-mood-pill:active {
-  transform: scale(0.95);
 }
 
 /* 手机端：心情条整体缩小（表情 16px、去掉多余留白），降低占屏高度 */
@@ -956,7 +960,7 @@ body,
 
 .db-mood-modal-row label {
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--db-text-muted);
   font-weight: 500;
 }
 
@@ -965,17 +969,17 @@ body,
   text-align: center;
   font-size: 20px;
   padding: 6px 8px;
-  border: 1px solid var(--background-modifier-border);
+  border: 1px solid var(--db-border);
   border-radius: 6px;
-  background: var(--background-secondary);
+  background: var(--db-surface2);
 }
 
 .db-mood-modal-label-input {
   padding: 6px 10px;
-  border: 1px solid var(--background-modifier-border);
+  border: 1px solid var(--db-border);
   border-radius: 6px;
   font-size: 14px;
-  background: var(--background-secondary);
+  background: var(--db-surface2);
 }
 
 .db-mood-modal-btns {
@@ -987,16 +991,16 @@ body,
 .db-mood-modal-btns button {
   padding: 6px 14px;
   border-radius: 6px;
-  border: 1px solid var(--background-modifier-border);
-  background: var(--background-secondary);
+  border: 1px solid var(--db-border);
+  background: var(--db-surface2);
   cursor: pointer;
   font-size: 13px;
 }
 
 .db-mood-modal-btns .mod-cta {
-  background: var(--interactive-accent);
+  background: var(--db-accent);
   color: white;
-  border-color: var(--interactive-accent);
+  border-color: var(--db-accent);
 }
 
 .db-mood-modal-del-btn {
@@ -1007,8 +1011,8 @@ body,
 
 /* ── 媒体按钮行（📷/🎤） ── */
 @keyframes db-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.6; transform: scale(1.08); }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
 /* ── 快捷标签 chips ── */
@@ -1022,7 +1026,7 @@ body,
 }
 
 .db-quick-tags-label {
-  color: var(--text-faint);
+  color: var(--db-text-sub);
   font-size: 11px;
 }
 
@@ -1031,13 +1035,13 @@ body,
   margin-left: auto;
   padding-left: 8px;
   font-size: 11px;
-  color: var(--text-faint);
+  color: var(--db-text-sub);
   font-variant-numeric: tabular-nums;
   -webkit-user-select: none;
   user-select: none;
 }
 .db-char-count.is-over {
-  color: var(--text-normal);
+  color: var(--db-text);
   font-weight: 600;
 }
 
@@ -1046,8 +1050,8 @@ body,
   align-items: center;
   padding: 2px 8px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
-  color: color-mix(in srgb, var(--interactive-accent) 65%, var(--text-normal));
+  background: color-mix(in srgb, var(--db-accent) 10%, transparent);
+  color: color-mix(in srgb, var(--db-accent) 65%, var(--db-text));
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
@@ -1057,11 +1061,7 @@ body,
 }
 
 .db-quick-tag-chip:hover {
-  background: color-mix(in srgb, var(--interactive-accent) 18%, transparent);
-}
-
-.db-quick-tag-chip:active {
-  transform: scale(0.95);
+  background: color-mix(in srgb, var(--db-accent) 18%, transparent);
 }
 
 /* ── 计划板块：textarea + 左侧 + 按钮 ── */
@@ -1072,15 +1072,15 @@ body,
   align-items: flex-start;
   gap: 8px;
   padding: 10px 12px;
-  border: 1.5px solid var(--db-border, var(--background-modifier-border));
-  border-radius: 14px;
-  background: var(--db-surface, var(--background-primary));
+  border: 1.5px solid var(--db-border, var(--db-border));
+  border-radius: 4px;
+  background: var(--db-surface, var(--db-surface));
   overflow: hidden;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .db-plans-input-wrap .db-todo-add-row.db-todo-add-row-textarea:focus-within {
-  border-color: var(--interactive-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--interactive-accent) 18%, transparent);
+  border-color: var(--db-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--db-accent) 18%, transparent);
 }
 
 .db-plans-input-wrap .db-todo-add-btn.db-todo-add-btn-left {
@@ -1091,7 +1091,7 @@ body,
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  background: var(--interactive-accent);
+  background: var(--db-accent);
   color: white;
   font-size: 18px;
   font-weight: 500;
@@ -1104,10 +1104,6 @@ body,
 
 .db-plans-input-wrap .db-todo-add-btn.db-todo-add-btn-left:hover {
   filter: brightness(1.08);
-}
-
-.db-plans-input-wrap .db-todo-add-btn.db-todo-add-btn-left:active {
-  transform: scale(0.92);
 }
 
 
@@ -1125,24 +1121,24 @@ body,
   border-radius: 999px;
   font-size: 12px;
   cursor: pointer;
-  border: 1px solid var(--background-modifier-border);
-  background: var(--background-secondary);
+  border: 1px solid var(--db-border);
+  background: var(--db-surface2);
   transition: all 0.15s ease;
   -webkit-user-select: none;
   user-select: none;
 }
 
 .db-priority-btn:hover {
-  border-color: var(--interactive-accent);
+  border-color: var(--db-accent);
 }
 
 .db-priority-popover {
   position: absolute;
   z-index: 100;
   background: var(--db-bg-primary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 10px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  border: 1px solid var(--db-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15, 15, 15, 0.12);
   padding: 4px;
   min-width: 140px;
   margin-top: 2px;
@@ -1165,11 +1161,11 @@ body,
 }
 
 .db-priority-option.active {
-  background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
-  color: color-mix(in srgb, var(--interactive-accent) 65%, var(--text-normal));
+  background: color-mix(in srgb, var(--db-accent) 10%, transparent);
+  color: color-mix(in srgb, var(--db-accent) 65%, var(--db-text));
 }
 
-.db-priority-option.clear { color: var(--text-muted); }
+.db-priority-option.clear { color: var(--db-text-muted); }
 
 
 
@@ -1210,10 +1206,10 @@ body,
   text-align: center;
   font-size: 18px;
   padding: 4px 6px;
-  border: 1px solid var(--background-modifier-border);
+  border: 1px solid var(--db-border);
   border-radius: 8px;
-  background: var(--background-primary);
-  color: var(--text-normal);
+  background: var(--db-surface);
+  color: var(--db-text);
 }
 
 .db-mood-edit-label {
@@ -1221,34 +1217,34 @@ body,
   min-width: 0;
   min-height: 40px;
   padding: 8px 10px;
-  border: 1px solid var(--background-modifier-border);
+  border: 1px solid var(--db-border);
   border-radius: 8px;
-  background: var(--background-primary);
-  color: var(--text-normal);
+  background: var(--db-surface);
+  color: var(--db-text);
   font-size: 13px;
 }
 
 .db-mood-edit-emoji:focus,
 .db-mood-edit-label:focus {
   outline: none;
-  border-color: var(--interactive-accent);
+  border-color: var(--db-accent);
 }
 
 /* 手机端主题/WebView 常把 input 的 -webkit-text-fill-color 覆盖成透明，
    导致表情/含义文字整框空白（PC 端不复现）。这里锁定文字与底色。 */
 .db-settings-v2 .db-mood-edit-emoji,
 .db-settings-v2 .db-mood-edit-label {
-  color: var(--text-normal) !important;
+  color: var(--db-text) !important;
   -webkit-text-fill-color: currentColor !important;
-  background-color: var(--background-primary) !important;
+  background-color: var(--db-surface) !important;
   font-size: 14px;
-  caret-color: var(--interactive-accent);
+  caret-color: var(--db-accent);
   box-sizing: border-box;
 }
 
 .db-settings-v2 .db-mood-edit-emoji::placeholder,
 .db-settings-v2 .db-mood-edit-label::placeholder {
-  color: var(--text-faint);
+  color: var(--db-text-sub);
   opacity: 1;
   -webkit-text-fill-color: currentColor;
 }
@@ -1260,8 +1256,8 @@ body,
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  color: var(--color-red, #ef4444);
-  background: color-mix(in srgb, var(--color-red, #ef4444) 10%, transparent);
+  color: #c4554d;
+  background: color-mix(in srgb, #c4554d 10%, transparent);
   cursor: pointer;
   font-size: 18px;
   line-height: 1;
@@ -1269,17 +1265,17 @@ body,
 }
 
 .db-mood-edit-del:hover {
-  background: color-mix(in srgb, var(--color-red, #ef4444) 18%, transparent);
+  background: color-mix(in srgb, #c4554d 18%, transparent);
 }
 
 .db-mood-add-btn {
   align-self: flex-start;
   min-height: 40px;
   padding: 8px 16px;
-  border-radius: 10px;
-  border: 1.5px dashed var(--background-modifier-border);
+  border-radius: 4px;
+  border: 1.5px dashed var(--db-border);
   background: transparent;
-  color: var(--text-muted);
+  color: var(--db-text-muted);
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
@@ -1287,8 +1283,8 @@ body,
 }
 
 .db-mood-add-btn:hover {
-  border-color: var(--interactive-accent);
-  color: color-mix(in srgb, var(--interactive-accent) 65%, var(--text-normal));
+  border-color: var(--db-accent);
+  color: color-mix(in srgb, var(--db-accent) 65%, var(--db-text));
 }
 
 .db-mood-add-btn.is-disabled {
@@ -1325,22 +1321,22 @@ body,
   height: 24px;
   flex-shrink: 0;
   border-radius: 7px;
-  background: var(--interactive-accent);
-  color: var(--text-on-accent, #fff);
+  background: var(--db-accent);
+  color: #ffffff;
 }
 
 .db-set-group-icon svg { width: 14px; height: 14px; }
 
 .db-set-group-title {
   font-size: 14px;
-  font-weight: 700;
-  color: var(--text-normal);
+  font-weight: 600;
+  color: var(--db-text);
 }
 
 .db-set-group-body {
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 14px;
-  background: var(--background-secondary);
+  border: 1px solid var(--db-border);
+  border-radius: 4px;
+  background: var(--db-surface2);
   overflow: hidden;
   padding: 4px 0;
 }
@@ -1354,7 +1350,7 @@ body,
 }
 
 .db-set-group-body > .setting-item + .setting-item {
-  border-top: 1px solid var(--background-modifier-border);
+  border-top: 1px solid var(--db-border);
 }
 
 .db-set-group-body > .db-settings-hint { padding: 6px 16px 10px; }
@@ -1374,14 +1370,14 @@ body,
   display: flex;
   align-items: center;
   min-width: 0;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 10px;
-  background: var(--background-primary);
+  border: 1px solid var(--db-border);
+  border-radius: 4px;
+  background: var(--db-surface);
 }
 
 .db-set-row.is-dragging {
-  border-color: var(--interactive-accent);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
+  background: var(--db-bg-hover);
+  box-shadow: none;
 }
 
 /* 章节行 / 添加行缩进一级，体现归属 */
@@ -1396,16 +1392,16 @@ body,
   min-width: 0;
   min-height: 48px;
   padding: 8px 4px 8px 12px;
-  border-radius: 10px 0 0 10px;
+  border-radius: 4px 0 0 4px;
   cursor: pointer;
   -webkit-user-select: none;
   user-select: none;
 }
 
-.db-set-row-main:hover { background: var(--background-modifier-hover); }
+.db-set-row-main:hover { background: var(--db-bg-hover); }
 
 .db-set-row-main:focus-visible {
-  outline: 2px solid var(--interactive-accent);
+  outline: 2px solid var(--db-accent);
   outline-offset: -2px;
 }
 
@@ -1417,10 +1413,10 @@ body,
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
-  color: var(--interactive-accent);
+  background: color-mix(in srgb, var(--db-accent) 12%, transparent);
+  color: var(--db-accent);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .db-set-emoji { font-size: 16px; flex-shrink: 0; line-height: 1; }
@@ -1428,7 +1424,7 @@ body,
 .db-set-item-title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--text-normal);
+  color: var(--db-text);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1437,7 +1433,7 @@ body,
 
 .db-set-item-sub {
   font-size: 11px;
-  color: var(--text-faint);
+  color: var(--db-text-sub);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -1460,7 +1456,7 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-faint);
+  color: var(--db-text-sub);
   cursor: grab;
   touch-action: none;
   -webkit-user-select: none;
@@ -1468,7 +1464,7 @@ body,
 }
 
 .db-set-row-drag svg { width: 16px; height: 16px; }
-.db-set-row-drag:active { cursor: grabbing; color: var(--text-muted); }
+.db-set-row-drag:active { cursor: grabbing; color: var(--db-text-muted); }
 
 /* ⋮ 溢出菜单按钮（版块操作） */
 .db-set-more {
@@ -1479,20 +1475,20 @@ body,
   align-items: center;
   justify-content: center;
   border-radius: 0 10px 10px 0;
-  color: var(--text-faint);
+  color: var(--db-text-sub);
   cursor: pointer;
 }
 
 .db-set-more svg { width: 18px; height: 18px; }
-.db-set-more:hover { color: var(--text-muted); background: var(--background-modifier-hover); }
+.db-set-more:hover { color: var(--db-text-muted); background: var(--db-bg-hover); }
 
 /* 虚线「+ 添加章节」行 */
 .db-set-row-add {
   min-height: 40px;
   justify-content: center;
-  border: 1.5px dashed var(--background-modifier-border);
+  border: 1.5px dashed var(--db-border);
   background: transparent;
-  color: var(--text-muted);
+  color: var(--db-text-muted);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -1500,7 +1496,7 @@ body,
   user-select: none;
 }
 
-.db-set-row-add:hover { border-color: var(--interactive-accent); color: var(--interactive-accent); }
+.db-set-row-add:hover { border-color: var(--db-accent); color: var(--db-accent); }
 .db-set-row-add.is-disabled { opacity: 0.45; }
 
 /* ── 胶囊按钮（可见/隐藏、默认展开/收起） ── */
@@ -1516,13 +1512,13 @@ body,
 }
 
 .db-set-pill.on {
-  background: color-mix(in srgb, var(--color-green, #22c55e) 16%, transparent);
-  color: color-mix(in srgb, var(--color-green, #22c55e) 75%, var(--text-normal));
+  background: color-mix(in srgb, #448361 16%, transparent);
+  color: color-mix(in srgb, #448361 75%, var(--db-text));
 }
 
 .db-set-pill.off {
-  background: color-mix(in srgb, var(--text-faint) 20%, transparent);
-  color: var(--text-muted);
+  background: color-mix(in srgb, var(--db-text-sub) 20%, transparent);
+  color: var(--db-text-muted);
 }
 
 /* ── 章节编辑弹层：桌面居中小窗，手机端底部滑出（Bottom Sheet） ── */
@@ -1554,15 +1550,15 @@ body,
   gap: 8px;
   flex-shrink: 0;
   padding: 12px 8px 12px 16px;
-  border-bottom: 1px solid var(--background-modifier-border);
+  border-bottom: 1px solid var(--db-border);
 }
 
 .db-sheet-title {
   flex: 1 1 0;
   min-width: 0;
   font-size: 15px;
-  font-weight: 700;
-  color: var(--text-normal);
+  font-weight: 600;
+  color: var(--db-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1574,13 +1570,13 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
-  color: var(--text-muted);
+  border-radius: 4px;
+  color: var(--db-text-muted);
   cursor: pointer;
 }
 
 .db-sheet-close svg { width: 18px; height: 18px; }
-.db-sheet-close:hover { background: var(--background-modifier-hover); }
+.db-sheet-close:hover { background: var(--db-bg-hover); }
 
 /* 唯一滚动层：表单体 */
 .db-sheet-scroll {
@@ -1596,35 +1592,35 @@ body,
   gap: 10px;
   flex-shrink: 0;
   padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
-  border-top: 1px solid var(--background-modifier-border);
+  border-top: 1px solid var(--db-border);
 }
 
 .db-sheet-del {
   min-height: 44px;
   padding: 0 14px;
   flex-shrink: 0;
-  border: 1px solid color-mix(in srgb, var(--color-red, #ef4444) 35%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--color-red, #ef4444) 8%, transparent);
-  color: var(--color-red, #ef4444);
+  border: 1px solid color-mix(in srgb, #c4554d 35%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, #c4554d 8%, transparent);
+  color: #c4554d;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
 }
 
 .db-sheet-del:hover {
-  background: color-mix(in srgb, var(--color-red, #ef4444) 16%, transparent);
+  background: color-mix(in srgb, #c4554d 16%, transparent);
 }
 
 .db-sheet-done {
   flex: 1 1 0;
   min-height: 44px;
   border: none;
-  border-radius: 12px;
-  background: var(--interactive-accent);
-  color: var(--text-on-accent, #fff);
+  border-radius: 4px;
+  background: var(--db-accent);
+  color: #ffffff;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -1645,7 +1641,7 @@ body,
   max-width: 100%;
   margin: 0;
   transform: none;
-  border-radius: 16px 16px 0 0;
+  border-radius: 8px 8px 0 0;
   border-bottom: none;
   max-height: 88%;
   animation: db-sheet-up 0.22s ease;
@@ -1660,7 +1656,7 @@ body,
   width: 36px;
   height: 4px;
   border-radius: 2px;
-  background: var(--background-modifier-border-hover, var(--background-modifier-border));
+  background: var(--db-border-hair);
 }
 
 /* 单行输入弹窗（重命名版块） */
@@ -1683,14 +1679,14 @@ body,
 .db-set-field-label {
   font-size: 11.5px;
   font-weight: 600;
-  color: var(--text-muted);
+  color: var(--db-text-muted);
 }
 
 .db-set-field-ctl { min-width: 0; }
 
 .db-set-field-hint {
   font-size: 11px;
-  color: var(--text-faint);
+  color: var(--db-text-sub);
   line-height: 1.45;
 }
 
@@ -1698,10 +1694,10 @@ body,
   width: 100%;
   min-height: 40px;
   padding: 8px 10px;
-  border: 1px solid var(--background-modifier-border);
+  border: 1px solid var(--db-border);
   border-radius: 8px;
-  background: var(--background-primary);
-  color: var(--text-normal);
+  background: var(--db-surface);
+  color: var(--db-text);
   font-size: 13px;
 }
 
@@ -1709,7 +1705,7 @@ select.db-set-input { cursor: pointer; }
 
 .db-set-input:focus {
   outline: none;
-  border-color: var(--interactive-accent);
+  border-color: var(--db-accent);
 }
 
 .db-set-input-mono {
@@ -1725,18 +1721,18 @@ select.db-set-input { cursor: pointer; }
   min-height: 40px;
   margin-top: 12px;
   padding: 10px;
-  border: 1.5px dashed var(--background-modifier-border);
-  border-radius: 10px;
+  border: 1.5px dashed var(--db-border);
+  border-radius: 4px;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--db-text-muted);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
 }
 
 .db-set-add:hover {
-  border-color: var(--interactive-accent);
-  color: var(--interactive-accent);
+  border-color: var(--db-accent);
+  color: var(--db-accent);
 }
 
 .db-set-add.is-disabled { opacity: 0.45; }
@@ -1754,7 +1750,7 @@ select.db-set-input { cursor: pointer; }
   margin: 0 0 18px;
   font-size: 13px;
   line-height: 1.6;
-  color: var(--text-muted);
+  color: var(--db-text-muted);
 }
 
 .db-set-confirm-btns {
@@ -1820,22 +1816,21 @@ select.db-set-input { cursor: pointer; }
 .db-save-btn,
 .db-save-btn-sticky {
   min-height: 44px;
-  border-radius: 14px;
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-  will-change: transform;
+  border-radius: 4px;
+  background: var(--db-accent);
+  color: #ffffff;
+  box-shadow: none;
+  transition: background 0.15s ease, opacity 0.15s ease;
 }
 .db-save-btn:active,
 .db-save-btn-sticky:active {
-  transform: scale(0.98);
+  background: var(--db-accent-hover);
 }
 .db-todo-checkbox,
 .db-plan-edit-done {
   width: 18px;
   height: 18px;
-  accent-color: var(--interactive-accent);
+  accent-color: var(--db-accent);
 }
 .db-todo-add-btn,
 .db-todo-add-btn-left {
@@ -1850,29 +1845,29 @@ select.db-set-input { cursor: pointer; }
 
 /* ── 卡片与输入件：原生表面 + hairline 边框 + 轻投影 ── */
 .db-textarea, .db-plan-edit-text, .db-plan-edit-title{
-  border-radius: 12px;
-  background: var(--background-primary);
-  border: 1px solid var(--background-modifier-border);
-  color: var(--text-normal);
+  border-radius: 4px;
+  background: var(--db-surface);
+  border: 1px solid var(--db-border);
+  color: var(--db-text);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .db-textarea:focus{
-  border-color: var(--interactive-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--interactive-accent) 18%, transparent);
+  border-color: var(--db-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--db-accent) 18%, transparent);
 }
 
 /* ── 语义色改用 Obsidian 原生色变量（过期/完成/优先级） ── */
 .db-todo-due.overdue{
-  background: color-mix(in srgb, var(--color-red, #d32f2f) 14%, transparent);
-  color: var(--color-red, #d32f2f);
-  border-color: color-mix(in srgb, var(--color-red, #d32f2f) 30%, transparent);
+  background: color-mix(in srgb, #c4554d 14%, transparent);
+  color: #c4554d;
+  border-color: color-mix(in srgb, #c4554d 30%, transparent);
 }
 /* 完成徽标柔和配色（后写覆盖，与原级联顺序一致） */
 .db-todo-completed-item,
 .db-review-todo-completed-item {
-  background: color-mix(in srgb, var(--color-green, #4caf50) 14%, transparent);
-  border-color: color-mix(in srgb, var(--color-green, #4caf50) 30%, transparent);
-  color: var(--color-green, #4caf50);
+  background: color-mix(in srgb, #448361 14%, transparent);
+  border-color: color-mix(in srgb, #448361 30%, transparent);
+  color: #448361;
 }
 
 /* ════════════════════════════════════════════════════════
@@ -1889,25 +1884,25 @@ select.db-set-input { cursor: pointer; }
 
 /* ── 设计令牌 ── */
 .db-root {
-  --db-bg:          var(--background-primary);
-  --db-surface:     var(--background-secondary);
-  --db-surface-alt: var(--background-primary-alt);
-  --db-border:      var(--background-modifier-border);
-  --db-border-hair: var(--background-modifier-border-hover);
-  --db-accent:      var(--interactive-accent);
-  --db-accent-text: var(--text-on-accent);
-  --db-text:        var(--text-normal);
-  --db-text-muted:  var(--text-muted);
-  --db-text-faint:  var(--text-faint);
-  --db-shadow-sm:   0 1px 3px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.02);
-  --db-shadow-md:   0 4px 12px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.03);
-  --db-shadow-lg:   0 8px 24px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.04);
-  --db-radius:      16px;
-  --db-radius-lg:   24px;
+  --db-bg:          var(--notion-paper);
+  --db-surface:     var(--notion-page);
+  --db-surface-alt: var(--notion-hover);
+  --db-border:      var(--notion-hairline);
+  --db-border-hair: var(--notion-hairline);
+  --db-accent:      var(--notion-blue);
+  --db-accent-text: #ffffff;
+  --db-text:        var(--notion-ink);
+  --db-text-muted:  #787774;
+  --db-text-faint:  #9e9c98;
+  --db-shadow-sm:   none;
+  --db-shadow-md:   none;
+  --db-shadow-lg:   none;
+  --db-radius:      4px;
+  --db-radius-lg:   4px;
   --db-radius-pill: 999px;
 
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
-               var(--font-interface), "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+               var(--font-interface), "PingFang SC", "Microsoft YaHei", sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -1975,7 +1970,7 @@ select.db-set-input { cursor: pointer; }
   align-items: center;
   gap: 8px;
   font-size: 20px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--db-text);
 }
@@ -2017,7 +2012,6 @@ select.db-set-input { cursor: pointer; }
   border-color: var(--db-border-hair);
 }
 .db-icon-btn:active {
-  transform: scale(0.92);
   opacity: 0.7;
 }
 
@@ -2114,7 +2108,7 @@ select.db-set-input { cursor: pointer; }
   gap: 6px;
   padding: 8px 4px 4px;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--db-text-faint);
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -2143,7 +2137,6 @@ select.db-set-input { cursor: pointer; }
   will-change: transform;
 }
 .db-stat-card:active {
-  transform: scale(0.97);
   box-shadow: var(--db-shadow-md);
 }
 
@@ -2159,7 +2152,7 @@ select.db-set-input { cursor: pointer; }
   justify-content: center;
   width: 40px;
   height: 40px;
-  border-radius: 12px;
+  border-radius: 4px;
   background: var(--db-surface-alt);
   color: var(--db-text-muted);
 }
@@ -2175,7 +2168,7 @@ select.db-set-input { cursor: pointer; }
 }
 .db-stat-value {
   font-size: 24px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--db-text);
   line-height: 1.1;
@@ -2209,7 +2202,6 @@ select.db-set-input { cursor: pointer; }
   will-change: transform;
   min-height: 64px;
 }
-.db-toggle-card:active { transform: scale(0.985); }
 
 .db-toggle-left {
   display: flex;
@@ -2224,7 +2216,7 @@ select.db-set-input { cursor: pointer; }
   justify-content: center;
   width: 40px;
   height: 40px;
-  border-radius: 12px;
+  border-radius: 4px;
   background: var(--db-surface-alt);
   color: var(--db-text-muted);
   flex-shrink: 0;
@@ -2272,7 +2264,7 @@ select.db-set-input { cursor: pointer; }
   height: 27px;
   border-radius: 50%;
   background: #ffffff;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.05);
+  box-shadow: none;
   transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
   will-change: transform;
 }
@@ -2316,7 +2308,7 @@ select.db-set-input { cursor: pointer; }
   justify-content: center;
   width: 36px;
   height: 36px;
-  border-radius: 10px;
+  border-radius: 4px;
   background: var(--db-surface-alt);
   color: var(--db-text-muted);
   flex-shrink: 0;
@@ -2421,15 +2413,15 @@ select.db-set-input { cursor: pointer; }
 /* 外壳：与原 .db-textarea 一致的圆角边框输入区 */
 .db-live-editor {
   width: 100%;
-  border: 1.5px solid var(--db-border, var(--background-modifier-border));
-  border-radius: 14px;
-  background: var(--db-surface, var(--background-primary));
+  border: 1.5px solid var(--db-border, var(--db-border));
+  border-radius: 4px;
+  background: var(--db-surface, var(--db-surface));
   overflow: hidden;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .db-live-editor:focus-within {
-  border-color: var(--interactive-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--interactive-accent) 18%, transparent);
+  border-color: var(--db-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--db-accent) 18%, transparent);
 }
 
 /* 清除 embed 容器与 MSV 自带的边框/背景/内边距 */
@@ -2470,7 +2462,7 @@ select.db-set-input { cursor: pointer; }
   padding: 0 2px;
 }
 .db-live-editor .cm-placeholder {
-  color: var(--db-text-muted, var(--text-muted));
+  color: var(--db-text-muted, var(--db-text-muted));
   font-style: normal;
 }
 /* 内嵌输入区里标题不放大，避免一两行标题撑高输入框 */
@@ -2521,7 +2513,7 @@ select.db-set-input { cursor: pointer; }
   line-height: 1.5;
 }
 .db-live-editor-plan .cm-placeholder {
-  color: var(--text-faint);
+  color: var(--db-text-sub);
 }
 
 
@@ -2529,7 +2521,7 @@ select.db-set-input { cursor: pointer; }
 .db-live-editor-fallback .db-live-textarea {
   width: 100%;
   border: none;
-  border-radius: 14px;
+  border-radius: 4px;
   background: transparent;
   min-height: 60px;
   padding: 10px 12px;
@@ -2558,8 +2550,8 @@ select.db-set-input { cursor: pointer; }
 /* ── 顶部记录卡片 ── */
 .db-composer {
   flex-shrink: 0;
-  background: var(--db-surface, var(--background-primary));
-  border-bottom: 1px solid var(--db-border, var(--background-modifier-border));
+  background: var(--db-surface, var(--db-surface));
+  border-bottom: 1px solid var(--db-border, var(--db-border));
   box-shadow: var(--db-shadow-sm, 0 1px 2px rgba(0,0,0,0.04));
   padding: 10px 14px 8px;
   z-index: 5;
@@ -2720,7 +2712,6 @@ select.db-set-input { cursor: pointer; }
   transition: background-color 0.15s ease, transform 0.1s ease;
 }
 .db-journal-root .db-section-trigger:hover { background: var(--db-bg-hover); }
-.db-journal-root .db-section-trigger:active { transform: scale(0.97); }
 .db-journal-root .db-section-trigger-emoji {
   font-size: 16px;
   line-height: 1;
@@ -2751,7 +2742,7 @@ select.db-set-input { cursor: pointer; }
   min-width: 40px;
   padding: 0;
   border: none;
-  border-radius: 10px;
+  border-radius: 4px;
   background: transparent;
   color: var(--db-text-muted);
   cursor: pointer;
@@ -2763,7 +2754,6 @@ select.db-set-input { cursor: pointer; }
   background: var(--db-bg-hover);
   color: var(--db-text);
 }
-.db-journal-root .db-topbar-btn:active { transform: scale(0.92); }
 .db-journal-root .db-topbar-btn.is-active,
 .db-journal-root .db-topbar-btn.has-filter {
   color: var(--db-accent);
@@ -2773,7 +2763,7 @@ select.db-set-input { cursor: pointer; }
 /* 键盘可达性（skill 规则 40）：聚焦环 */
 .db-journal-root .db-topbar-btn:focus-visible,
 .db-journal-root .db-section-trigger:focus-visible {
-  outline: 2px solid var(--interactive-accent);
+  outline: 2px solid var(--db-accent);
   outline-offset: 2px;
 }
 
@@ -2794,9 +2784,9 @@ select.db-set-input { cursor: pointer; }
   padding: 0 4px;
   border-radius: 999px;
   background: var(--db-accent);
-  color: var(--text-on-accent);
+  color: #ffffff;
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 16px;
   text-align: center;
   box-sizing: border-box;
@@ -2835,7 +2825,7 @@ select.db-set-input { cursor: pointer; }
 }
 .db-today-label {
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--db-text-sub);
 }
@@ -2891,7 +2881,7 @@ select.db-set-input { cursor: pointer; }
 /* 筛选态跨日期分组标题 */
 .db-entry-day {
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.03em;
   color: var(--db-text-sub);
   padding: 12px 4px 0;
@@ -2990,7 +2980,7 @@ select.db-set-input { cursor: pointer; }
 
 .db-entry-title {
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   margin-bottom: 4px;
 }
 
@@ -3017,11 +3007,10 @@ select.db-set-input { cursor: pointer; }
   transition: background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
 }
 .db-entry-tag:hover { background: color-mix(in srgb, var(--db-accent) 28%, transparent); }
-.db-entry-tag:active { transform: scale(0.94); }
 /* 点击叠加进筛选的标签：实心高亮 */
 .db-entry-tag.is-active {
   background: var(--db-accent);
-  color: var(--text-on-accent);
+  color: #ffffff;
   font-weight: 600;
 }
 
@@ -3075,7 +3064,7 @@ select.db-set-input { cursor: pointer; }
 .db-entry-todo-item.drop-after { box-shadow: inset 0 -2px 0 var(--db-accent); }
 /* 一级未完成＝轻微半透明红底，表达紧急（已完成/子任务不标） */
 .db-entry-todo-item:not(.done):not(.sub) {
-  background: color-mix(in srgb, var(--color-red, #e74c3c) 7%, transparent);
+  background: color-mix(in srgb, #c4554d 7%, transparent);
   border-radius: 8px;
   padding-left: 8px;
   padding-right: 8px;
@@ -3101,16 +3090,16 @@ select.db-set-input { cursor: pointer; }
 }
 .db-entry-checkbox.checked::after {
   content: "✓";
-  color: var(--text-on-accent);
+  color: #ffffff;
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 600;
 }
 /* 有子任务且未完成的父任务：方形「子任务」图标（点击展开/收起），区别于普通圆形勾选框；
    子任务全部完成后回到上面的统一完成态样式 */
 .db-entry-checkbox.has-kids:not(.checked) {
   border-radius: 5px;
-  border-color: color-mix(in srgb, var(--text-muted) 75%, transparent);
-  color: var(--text-muted);
+  border-color: color-mix(in srgb, var(--db-text-muted) 75%, transparent);
+  color: var(--db-text-muted);
 }
 .db-entry-checkbox.has-kids:not(.checked):hover {
   border-color: var(--db-accent);
@@ -3126,7 +3115,7 @@ select.db-set-input { cursor: pointer; }
   stroke-width: 2.4;
 }
 .db-entry-checkbox:focus-visible {
-  outline: 2px solid var(--interactive-accent);
+  outline: 2px solid var(--db-accent);
   outline-offset: 2px;
 }
 
@@ -3143,7 +3132,7 @@ select.db-set-input { cursor: pointer; }
 /* 顶级任务文字可点击进入详情 */
 .db-entry-todo-text.clickable { cursor: pointer; }
 .db-entry-todo-text.clickable:focus-visible {
-  outline: 2px solid var(--interactive-accent);
+  outline: 2px solid var(--db-accent);
   outline-offset: 2px;
   border-radius: 6px;
 }
@@ -3158,7 +3147,7 @@ select.db-set-input { cursor: pointer; }
   color: var(--db-text-muted);
   white-space: nowrap;
 }
-.db-entry-due.overdue { color: var(--color-red, #e74c3c); }
+.db-entry-due.overdue { color: #c4554d; }
 
 /* 计划完成进度 */
 .db-entry-progress {
@@ -3209,13 +3198,13 @@ select.db-set-input { cursor: pointer; }
 .db-entry-edit-actions .mod-cta {
   background: var(--db-accent);
   border-color: var(--db-accent);
-  color: var(--text-on-accent);
+  color: #ffffff;
 }
 .db-entry-edit-cancel {
-  color: var(--text-danger);
+  color: #c4554d;
 }
 .db-entry-edit-save {
-  color: var(--text-success);
+  color: #448361;
 }
 
 /* ════════════════════════════════════════════════════════
@@ -3252,7 +3241,7 @@ select.db-set-input { cursor: pointer; }
 }
 .db-filter-count-num {
   font-size: 20px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--db-accent);
   line-height: 1.2;
   letter-spacing: 0.01em;
@@ -3470,11 +3459,10 @@ body .db-journal-root .db-filter-q:focus {
   background: var(--db-accent-soft);
   color: var(--db-accent);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
   transition: transform 0.1s ease, background-color 0.15s ease;
 }
-.db-habits-add:active { transform: scale(0.96); }
 .db-habits-add-icon { display: flex; align-items: center; }
 .db-habits-add-icon svg { width: 15px; height: 15px; }
 
@@ -3538,7 +3526,7 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-habit-row-name {
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3567,7 +3555,6 @@ body .db-journal-root .db-filter-q:focus {
   cursor: pointer;
   transition: transform 0.1s ease, background-color 0.15s ease, border-color 0.15s ease;
 }
-.db-habit-check:active { transform: scale(0.9); }
 .db-habit-check-dot {
   width: 12px;
   height: 12px;
@@ -3581,13 +3568,13 @@ body .db-journal-root .db-filter-q:focus {
 .db-habit-check.done .db-habit-check-dot { background: #fff; }
 .db-habit-check-plus {
   font-size: 14px;
-  font-weight: 800;
+  font-weight: 600;
   line-height: 1;
   color: var(--habit-color, var(--db-accent));
 }
 .db-habit-check-count {
   font-size: 9px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.1;
   color: var(--db-text-muted);
   font-variant-numeric: tabular-nums;
@@ -3641,7 +3628,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-detail-modal h3 {
   margin: 0 0 14px;
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 600;
 }
 .modal-content.db-habit-edit-modal,
 .modal-content.db-habit-note-modal,
@@ -3663,17 +3650,17 @@ body .db-journal-root .db-filter-q:focus {
   min-height: 84px;
   padding: 10px 12px;
   margin-bottom: 16px;
-  border: 1px solid var(--background-modifier-border);
+  border: 1px solid var(--db-border);
   border-radius: var(--db-radius-sm);
-  background: var(--background-secondary);
-  color: var(--text-normal);
+  background: var(--db-surface2);
+  color: var(--db-text);
   font-size: 14px;
   line-height: 1.6;
   resize: vertical;
 }
 .db-habit-note-input:focus {
   outline: none;
-  border-color: var(--interactive-accent);
+  border-color: var(--db-accent);
 }
 
 /* ── 新建 / 编辑习惯 ── */
@@ -3694,30 +3681,30 @@ body .db-journal-root .db-filter-q:focus {
   padding: 10px 8px;
   text-align: center;
   font-size: 22px;
-  border: 1px solid var(--background-modifier-border);
+  border: 1px solid var(--db-border);
   border-radius: var(--db-radius-sm);
-  background: var(--background-secondary);
-  color: var(--text-normal);
+  background: var(--db-surface2);
+  color: var(--db-text);
 }
 .db-habit-edit-name {
   flex: 1 1 auto;
   min-width: 0;
   padding: 11px 12px;
-  border: 1px solid var(--background-modifier-border);
+  border: 1px solid var(--db-border);
   border-radius: var(--db-radius-sm);
-  background: var(--background-secondary);
-  color: var(--text-normal);
+  background: var(--db-surface2);
+  color: var(--db-text);
   font-size: 15px;
 }
 .db-habit-edit-emoji:focus,
 .db-habit-edit-name:focus {
   outline: none;
-  border-color: var(--interactive-accent);
+  border-color: var(--db-accent);
 }
 .db-habit-edit-label {
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-muted);
+  color: var(--db-text-muted);
 }
 
 .db-habit-color-row {
@@ -3734,10 +3721,9 @@ body .db-journal-root .db-filter-q:focus {
   border: 2px solid transparent;
   transition: transform 0.12s ease;
 }
-.db-habit-color-swatch:active { transform: scale(0.92); }
 .db-habit-color-swatch.selected {
-  transform: scale(1.12);
-  box-shadow: 0 0 0 2px var(--background-primary), 0 0 0 4px var(--interactive-accent);
+  box-shadow: 0 0 0 2px var(--db-surface), 0 0 0 4px var(--db-accent);
+  border-color: var(--db-accent);
 }
 
 .db-habit-stepper {
@@ -3745,7 +3731,7 @@ body .db-journal-root .db-filter-q:focus {
   flex-direction: row;
   align-items: stretch;
   align-self: flex-start;
-  border: 1px solid var(--background-modifier-border);
+  border: 1px solid var(--db-border);
   border-radius: var(--db-radius-sm);
   overflow: hidden;
 }
@@ -3755,20 +3741,20 @@ body .db-journal-root .db-filter-q:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--background-secondary);
-  color: var(--text-normal);
+  background: var(--db-surface2);
+  color: var(--db-text);
   font-size: 18px;
   font-weight: 600;
   cursor: pointer;
   user-select: none;
 }
-.db-habit-step-btn:hover { background: var(--background-modifier-hover); }
+.db-habit-step-btn:hover { background: var(--db-bg-hover); }
 .db-habit-step-val {
   min-width: 52px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
+  font-weight: 600;
   font-size: 15px;
   font-variant-numeric: tabular-nums;
 }
@@ -3782,26 +3768,26 @@ body .db-journal-root .db-filter-q:focus {
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  border: 1.5px solid var(--background-modifier-border);
+  border: 1.5px solid var(--db-border);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-muted);
+  color: var(--db-text-muted);
   font-size: 13px;
   cursor: pointer;
   transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 .db-weekday-toggle.on {
-  background: var(--interactive-accent);
-  border-color: var(--interactive-accent);
-  color: var(--text-on-accent);
-  font-weight: 700;
+  background: var(--db-accent);
+  border-color: var(--db-accent);
+  color: #ffffff;
+  font-weight: 600;
 }
 .db-habit-edit-hint {
   margin: -4px 0 12px;
   font-size: 11px;
   line-height: 1.6;
-  color: var(--text-faint);
+  color: var(--db-text-sub);
 }
 
 /* ── 打卡类型 / 常用时间（编辑习惯弹窗） ── */
@@ -3817,20 +3803,19 @@ body .db-journal-root .db-filter-q:focus {
   align-items: center;
   min-height: 40px;
   padding: 8px 16px;
-  border: 1.5px solid var(--background-modifier-border);
+  border: 1.5px solid var(--db-border);
   border-radius: 999px;
-  color: var(--text-muted);
+  color: var(--db-text-muted);
   font-size: 13.5px;
   font-weight: 600;
   cursor: pointer;
   user-select: none;
   transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
-.db-habit-type-chip:active { transform: scale(0.97); }
 .db-habit-type-chip.on {
-  border-color: var(--interactive-accent);
+  border-color: var(--db-accent);
   background: var(--db-accent-soft);
-  color: var(--text-normal);
+  color: var(--db-text);
 }
 .db-habit-quicktimes-row {
   display: flex;
@@ -3841,7 +3826,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-habit-quicktimes-empty {
   font-size: 12px;
   line-height: 36px;
-  color: var(--text-faint);
+  color: var(--db-text-sub);
 }
 .db-habit-quicktime-chip {
   display: inline-flex;
@@ -3849,10 +3834,10 @@ body .db-journal-root .db-filter-q:focus {
   gap: 4px;
   height: 36px;
   padding: 0 6px 0 12px;
-  border: 1px solid var(--background-modifier-border);
+  border: 1px solid var(--db-border);
   border-radius: 999px;
-  background: var(--background-secondary);
-  color: var(--text-normal);
+  background: var(--db-surface2);
+  color: var(--db-text);
   font-size: 14px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -3864,13 +3849,13 @@ body .db-journal-root .db-filter-q:focus {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  color: var(--text-faint);
+  color: var(--db-text-sub);
   font-size: 15px;
   line-height: 1;
   cursor: pointer;
   transition: background-color 0.15s ease, color 0.15s ease;
 }
-.db-habit-quicktime-del:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.db-habit-quicktime-del:hover { background: var(--db-bg-hover); color: var(--db-text); }
 .db-habit-quicktimes-add {
   display: flex;
   flex-direction: row;
@@ -3880,14 +3865,14 @@ body .db-journal-root .db-filter-q:focus {
 .db-habit-quicktime-input {
   height: 40px;
   padding: 6px 10px;
-  border: 1px solid var(--background-modifier-border);
+  border: 1px solid var(--db-border);
   border-radius: var(--db-radius-sm);
-  background: var(--background-secondary);
-  color: var(--text-normal);
+  background: var(--db-surface2);
+  color: var(--db-text);
   font-size: 15px;
   font-variant-numeric: tabular-nums;
 }
-.db-habit-quicktime-input:focus { outline: none; border-color: var(--interactive-accent); }
+.db-habit-quicktime-input:focus { outline: none; border-color: var(--db-accent); }
 .db-habit-quicktime-addbtn {
   height: 40px;
   display: inline-flex;
@@ -3895,35 +3880,34 @@ body .db-journal-root .db-filter-q:focus {
   padding: 0 16px;
   border-radius: 999px;
   background: var(--db-accent-soft);
-  color: var(--text-normal);
+  color: var(--db-text);
   font-size: 13.5px;
   font-weight: 600;
   cursor: pointer;
   user-select: none;
   transition: transform 0.1s ease;
 }
-.db-habit-quicktime-addbtn:active { transform: scale(0.97); }
 
 /* ── 打卡时间选择弹窗（上下班型） ── */
 .db-checkin-time-modal .db-checkin-time-date {
   margin: -8px 0 14px;
   font-size: 12px;
-  color: var(--text-faint);
+  color: var(--db-text-sub);
 }
 .db-checkin-time-input {
   width: 100%;
   height: 64px;
   margin-bottom: 14px;
-  border: 1px solid var(--background-modifier-border);
+  border: 1px solid var(--db-border);
   border-radius: var(--db-radius);
-  background: var(--background-secondary);
-  color: var(--text-normal);
+  background: var(--db-surface2);
+  color: var(--db-text);
   font-size: 30px;
-  font-weight: 700;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
-.db-checkin-time-input:focus { outline: none; border-color: var(--interactive-accent); }
+.db-checkin-time-input:focus { outline: none; border-color: var(--db-accent); }
 .db-checkin-time-quick-row {
   display: flex;
   flex-direction: row;
@@ -3936,25 +3920,24 @@ body .db-journal-root .db-filter-q:focus {
   width: 100%;
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-muted);
+  color: var(--db-text-muted);
 }
 .db-checkin-time-quick-chip {
   min-height: 44px;
   display: inline-flex;
   align-items: center;
   padding: 0 18px;
-  border: 1.5px solid var(--background-modifier-border);
+  border: 1.5px solid var(--db-border);
   border-radius: 999px;
-  color: var(--text-normal);
+  color: var(--db-text);
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   user-select: none;
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
-.db-checkin-time-quick-chip:hover { border-color: var(--interactive-accent); background: var(--db-accent-soft); }
-.db-checkin-time-quick-chip:active { transform: scale(0.96); }
+.db-checkin-time-quick-chip:hover { border-color: var(--db-accent); background: var(--db-accent-soft); }
 
 /* 上班 / 下班 角色选择（默认按顺序推断，可手动切换；无进行中班次时下班禁用） */
 .db-checkin-role-row {
@@ -3969,28 +3952,27 @@ body .db-journal-root .db-filter-q:focus {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1.5px solid var(--background-modifier-border);
+  border: 1.5px solid var(--db-border);
   border-radius: 999px;
-  color: var(--text-normal);
+  color: var(--db-text);
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
   user-select: none;
   transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
-.db-checkin-role-chip:hover { border-color: var(--interactive-accent); }
+.db-checkin-role-chip:hover { border-color: var(--db-accent); }
 .db-checkin-role-chip.is-active {
-  border-color: var(--interactive-accent);
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
+  border-color: var(--db-accent);
+  background: var(--db-accent);
+  color: #ffffff;
 }
 .db-checkin-role-chip.is-disabled { opacity: 0.4; cursor: default; }
-.db-checkin-role-chip:not(.is-disabled):active { transform: scale(0.96); }
 
 /* 「手动设置」按钮（展开自定义时间输入）与输入区 */
 .db-checkin-time-manual-btn {
   border-style: dashed;
-  color: var(--text-muted);
+  color: var(--db-text-muted);
   font-size: 14px;
   font-weight: 600;
 }
@@ -4020,7 +4002,7 @@ body .db-journal-root .db-filter-q:focus {
   padding: 20px;
   text-align: center;
   font-size: 13px;
-  color: var(--text-faint);
+  color: var(--db-text-sub);
 }
 .db-habit-day-row {
   display: flex;
@@ -4029,20 +4011,20 @@ body .db-journal-root .db-filter-q:focus {
   gap: 10px;
   padding: 9px 12px;
   border-radius: var(--db-radius-sm);
-  background: var(--background-secondary);
+  background: var(--db-surface2);
 }
 .db-habit-day-row.skipped { opacity: 0.72; }
 .db-habit-day-time {
   flex-shrink: 0;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .db-habit-day-note {
   flex: 1 1 auto;
   min-width: 0;
   font-size: 13px;
-  color: var(--text-muted);
+  color: var(--db-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4055,17 +4037,17 @@ body .db-journal-root .db-filter-q:focus {
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  color: var(--color-red, #e74c3c);
+  color: #c4554d;
   cursor: pointer;
 }
-.db-habit-day-del:hover { background: var(--background-modifier-hover); }
+.db-habit-day-del:hover { background: var(--db-bg-hover); }
 .db-habit-day-del svg { width: 15px; height: 15px; }
 .db-habit-day-row.skipped button {
   margin-left: auto;
   padding: 5px 12px;
   border-radius: 6px;
-  border: 1px solid var(--background-modifier-border);
-  background: var(--background-secondary);
+  border: 1px solid var(--db-border);
+  background: var(--db-surface2);
   font-size: 12px;
   cursor: pointer;
 }
@@ -4088,7 +4070,6 @@ body .db-journal-root .db-filter-q:focus {
   transition: background-color 0.15s ease, transform 0.1s ease;
 }
 .db-habit-day-add:hover { background: var(--db-accent-soft); }
-.db-habit-day-add:active { transform: scale(0.98); }
 .db-habit-day-add.busy { opacity: 0.5; pointer-events: none; }
 .db-habit-day-add-icon { display: flex; align-items: center; }
 .db-habit-day-add-icon svg { width: 15px; height: 15px; }
@@ -4115,7 +4096,7 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-detail-card-title {
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
 }
 .db-detail-overview {
   background: var(--db-surface2);
@@ -4150,7 +4131,7 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-detail-overview-value {
   font-size: 17px;
-  font-weight: 800;
+  font-weight: 600;
   color: var(--db-accent);
   font-variant-numeric: tabular-nums;
 }
@@ -4212,7 +4193,7 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-heatmap-scale-cell.month {
   color: var(--db-text-muted);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .db-heatmap-cell {
@@ -4224,7 +4205,7 @@ body .db-journal-root .db-filter-q:focus {
   background: color-mix(in srgb, var(--db-text-muted) 14%, transparent);
   transition: transform 0.1s ease;
 }
-.db-heatmap-cell:hover { transform: scale(1.25); }
+.db-heatmap-cell:hover { box-shadow: 0 0 0 1.5px var(--db-text); }
 .db-heatmap-cell.lv1 { background: color-mix(in srgb, var(--db-accent) 30%, transparent); }
 .db-heatmap-cell.lv2 { background: color-mix(in srgb, var(--db-accent) 52%, transparent); }
 .db-heatmap-cell.lv3 { background: color-mix(in srgb, var(--db-accent) 74%, transparent); }
@@ -4234,7 +4215,7 @@ body .db-journal-root .db-filter-q:focus {
   border: 1px solid color-mix(in srgb, var(--db-text-muted) 18%, transparent);
 }
 .db-heatmap-cell.skipped {
-  background: color-mix(in srgb, var(--color-yellow, #e0a800) 42%, var(--db-surface2));
+  background: color-mix(in srgb, #cb912f 42%, var(--db-surface2));
 }
 .db-heatmap-cell.rest {
   background: transparent;
@@ -4267,7 +4248,7 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-heatmap-metric-label { color: var(--db-text-muted); }
 .db-heatmap-metric-value {
-  font-weight: 700;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .db-heatmap-legend {
@@ -4330,7 +4311,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-trend-tab.active {
   background: var(--db-surface);
   color: var(--db-text);
-  font-weight: 700;
+  font-weight: 600;
   box-shadow: var(--db-shadow-sm);
 }
 .db-trend-range {
@@ -4570,8 +4551,8 @@ body .db-journal-root .db-filter-q:focus {
   user-select: none;
 }
 .db-plan-edit-modal .db-plan-edit-move:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
+  background: var(--db-bg-hover);
+  color: var(--db-text);
 }
 
 
@@ -4720,7 +4701,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-memo-pill:hover { color: var(--db-text); }
 .db-memo-pill.is-active {
   background: var(--db-accent);
-  color: var(--text-on-accent);
+  color: #ffffff;
 }
 .db-memo-pill-icon { display: flex; align-items: center; }
 .db-memo-pill-icon svg { width: 12px; height: 12px; }
@@ -4818,7 +4799,7 @@ body .db-journal-root .db-filter-q:focus {
   height: 100%;
   background: var(--db-surface);
   border-right: 1px solid var(--db-border);
-  box-shadow: 4px 0 20px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 8px 24px rgba(15, 15, 15, 0.12);
   display: flex;
   flex-direction: column;
   animation: db-drawer-in 0.22s ease-out;
@@ -4912,7 +4893,7 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-memo-stat-num {
   font-size: 20px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--db-accent);
   line-height: 1.2;
   letter-spacing: 0.01em;
@@ -5058,7 +5039,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-composer-bar .db-memo-tb-btn {
   width: 34px;
   height: 34px;
-  border-radius: 10px;
+  border-radius: 4px;
   color: var(--db-text-muted);
 }
 .db-composer-bar .db-memo-tb-btn svg { width: 19px; height: 19px; }
@@ -5067,7 +5048,7 @@ body .db-journal-root .db-filter-q:focus {
 /* 触控端：功能栏按钮加大命中区（规则 5），左组允许换行兜底极窄宽度 */
 @media (hover: none) {
   .db-composer-bar-left { flex-wrap: wrap; }
-  .db-composer-bar .db-memo-tb-btn { width: 40px; height: 40px; border-radius: 12px; }
+  .db-composer-bar .db-memo-tb-btn { width: 40px; height: 40px; border-radius: 4px; }
   .db-composer-bar .db-memo-tb-btn svg { width: 20px; height: 20px; }
   .db-composer-bar .db-mood-toggle { font-size: 19px; }
 }
@@ -5079,7 +5060,7 @@ body .db-journal-root .db-filter-q:focus {
   border-radius: 50%;
   border: none;
   background: var(--db-accent);
-  color: var(--text-on-accent);
+  color: #ffffff;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -5087,7 +5068,6 @@ body .db-journal-root .db-filter-q:focus {
   transition: transform 0.1s ease, opacity 0.15s ease;
 }
 .db-composer-send svg { width: 19px; height: 19px; }
-.db-composer-send:active { transform: scale(0.92); }
 .db-composer-send.loading { opacity: 0.55; pointer-events: none; }
 
 /* 抽屉导航菜单(Phase 6) */
@@ -5099,7 +5079,7 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-memo-nav-item {
   padding: 9px 12px;
-  border-radius: 10px;
+  border-radius: 4px;
   cursor: pointer;
   font-size: 13px;
   font-weight: 400;
@@ -5108,7 +5088,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-memo-nav-item:hover { background: var(--db-bg-hover); }
 .db-memo-nav-item.is-active {
   background: var(--db-accent);
-  color: var(--text-on-accent);
+  color: #ffffff;
 }
 .db-memo-nav-label { display: block; }
 
@@ -5123,7 +5103,7 @@ body .db-journal-root .db-filter-q:focus {
   gap: 8px;
   margin-bottom: 10px;
 }
-.db-random-memo-title { font-size: 15px; font-weight: 700; }
+.db-random-memo-title { font-size: 15px; font-weight: 600; }
 .db-random-memo-count { font-size: 11px; color: var(--db-text-muted); }
 .db-random-memo-body {
   min-height: 90px;
@@ -5181,11 +5161,10 @@ body .db-journal-root .db-filter-q:focus {
   max-width: 92%;
   max-height: 88%;
   border-radius: 8px;
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
-  animation: db-img-zoom 0.18s ease-out;
+  box-shadow: 0 8px 24px rgba(15, 15, 15, 0.12);
+  animation: db-img-fade 0.18s ease-out;
 }
 @keyframes db-img-fade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes db-img-zoom { from { transform: scale(0.92); } to { transform: scale(1); } }
 
 /* 筛选结果分页尾标(Phase 8) */
 .db-stream-tail { padding: 8px 0; text-align: center; }
@@ -5202,7 +5181,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-editor-card {
   background: transparent;
   border: none;
-  border-radius: 14px;
+  border-radius: 4px;
   padding: 12px 16px 10px;
   margin-bottom: 4px;
   box-shadow: none;
@@ -5270,8 +5249,8 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-editor-send svg { width: 15px; height: 15px; }
 .db-editor-send.is-active {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
+  background: var(--db-accent);
+  color: #ffffff;
   cursor: pointer;
 }
 .db-editor-send.is-active:hover { filter: brightness(1.08); }
@@ -5281,7 +5260,7 @@ body .db-journal-root .db-filter-q:focus {
 /* 桌面动作按钮录音态(双态按钮:默认麦克风,有文字变发送) */
 .db-editor-send { cursor: pointer; }
 .db-editor-send.recording {
-  color: var(--color-red, #e93147);
+  color: #c4554d;
   background: var(--db-surface2);
   animation: db-pulse 1.2s ease-in-out infinite;
 }
@@ -5300,7 +5279,7 @@ body .db-journal-root .db-filter-q:focus {
   cursor: pointer;
   transition: background-color 0.15s ease, color 0.15s ease;
 }
-.db-entry-pin:hover { background: color-mix(in srgb, var(--db-accent) 30%, transparent); color: var(--text-on-accent); }
+.db-entry-pin:hover { background: color-mix(in srgb, var(--db-accent) 30%, transparent); color: #ffffff; }
 .db-entry-pin svg { width: 11px; height: 11px; }
 .db-entry-head .db-entry-flag.archived {
   font-size: 10px;
@@ -5315,8 +5294,8 @@ body .db-journal-root .db-filter-q:focus {
 .db-editor-rec-time {
   flex-shrink: 0;
   font-size: 12px;
-  font-weight: 700;
-  color: var(--color-red, #e93147);
+  font-weight: 600;
+  color: #c4554d;
   font-variant-numeric: tabular-nums;
 }
 
@@ -5329,11 +5308,11 @@ body .db-journal-root .db-filter-q:focus {
   height: 34px;
   padding: 0 10px;
   border: none;
-  border-radius: 9px;
+  border-radius: 4px;
   background: transparent;
 }
 .db-composer-bar .db-priority-btn.db-priority-btn-compact:hover {
-  background: var(--background-modifier-hover);
+  background: var(--db-bg-hover);
 }
 .db-composer-bar .db-priority-btn.db-priority-btn-compact .db-priority-label {
   font-size: 12px;
@@ -5356,8 +5335,8 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-date-select-month {
   font-size: 14px;
-  font-weight: 700;
-  color: var(--text-normal);
+  font-weight: 600;
+  color: var(--db-text);
 }
 .db-date-select-nav {
   width: 34px;
@@ -5365,13 +5344,13 @@ body .db-journal-root .db-filter-q:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 9px;
+  border-radius: 4px;
   font-size: 20px;
   line-height: 1;
-  color: var(--text-muted);
+  color: var(--db-text-muted);
   cursor: pointer;
 }
-.db-date-select-nav:hover { background: var(--background-modifier-hover); }
+.db-date-select-nav:hover { background: var(--db-bg-hover); }
 .db-date-select-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
@@ -5380,7 +5359,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-date-select-weekday {
   text-align: center;
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--db-text-muted);
   padding: 4px 0;
 }
 .db-date-select-day {
@@ -5388,20 +5367,20 @@ body .db-journal-root .db-filter-q:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
+  border-radius: 4px;
   font-size: 13px;
   cursor: pointer;
-  color: var(--text-normal);
+  color: var(--db-text);
 }
-.db-date-select-day:hover { background: var(--background-modifier-hover); }
+.db-date-select-day:hover { background: var(--db-bg-hover); }
 .db-date-select-day.today {
-  color: var(--interactive-accent);
-  font-weight: 700;
+  color: var(--db-accent);
+  font-weight: 600;
 }
 .db-date-select-day.selected {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  font-weight: 700;
+  background: var(--db-accent);
+  color: #ffffff;
+  font-weight: 600;
 }
 .db-date-select-quick {
   display: flex;
@@ -5416,11 +5395,11 @@ body .db-journal-root .db-filter-q:focus {
   padding: 0 10px;
 }
 .db-composer-bar .db-plans-due-btn.has-due {
-  color: var(--interactive-accent);
+  color: var(--db-accent);
 }
 .db-plans-due-flag {
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -5483,14 +5462,13 @@ body .db-journal-root .db-filter-q:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
+  border-radius: 4px;
   color: var(--db-text-muted);
   cursor: pointer;
   user-select: none;
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 .db-td-head-btn:hover { background: var(--db-bg-hover); color: var(--db-text); }
-.db-td-head-btn:active { transform: scale(0.92); }
 .db-td-head-btn svg { width: 18px; height: 18px; stroke-width: 1.9; }
 .db-td-head-btn:focus-visible,
 .db-td-check:focus-visible,
@@ -5500,7 +5478,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-td-foot-btn:focus-visible,
 .db-td-sheet-row:focus-visible,
 .db-td-sheet-icon:focus-visible {
-  outline: 2px solid var(--interactive-accent);
+  outline: 2px solid var(--db-accent);
   outline-offset: 2px;
 }
 
@@ -5524,8 +5502,8 @@ body .db-journal-root .db-filter-q:focus {
   padding: 6px 0 calc(8px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
   background: var(--db-surface);
   border-top: 1px solid var(--db-border);
-  border-radius: var(--db-radius-lg) var(--db-radius-lg) 0 0;
-  box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.12);
+  border-radius: 8px 8px 0 0;
+  box-shadow: 0 8px 24px rgba(15, 15, 15, 0.12);
   transform: translateY(105%);
   opacity: 0;
   pointer-events: none;
@@ -5547,13 +5525,12 @@ body .db-journal-root .db-filter-q:focus {
   gap: 5px;
   min-width: 56px;
   padding: 6px 4px;
-  border-radius: 10px;
+  border-radius: 4px;
   cursor: pointer;
   user-select: none;
   transition: background-color 0.15s ease, transform 0.1s ease;
 }
 .db-td-sheet-icon:hover { background: var(--db-bg-hover); }
-.db-td-sheet-icon:active { transform: scale(0.94); }
 .db-td-sheet-icon-glyph {
   width: 34px;
   height: 34px;
@@ -5575,10 +5552,10 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-td-sheet-icon.is-active .db-td-sheet-icon-label { color: var(--db-accent); font-weight: 600; }
 .db-td-sheet-icon.td-delete:hover .db-td-sheet-icon-glyph {
-  border-color: var(--color-red, #e74c3c);
-  color: var(--color-red, #e74c3c);
+  border-color: #c4554d;
+  color: #c4554d;
 }
-.db-td-sheet-icon.td-delete:hover .db-td-sheet-icon-label { color: var(--color-red, #e74c3c); }
+.db-td-sheet-icon.td-delete:hover .db-td-sheet-icon-label { color: #c4554d; }
 .db-td-sheet-list { padding: 4px 0 2px; }
 .db-td-sheet-row {
   display: flex;
@@ -5630,13 +5607,12 @@ body .db-journal-root .db-filter-q:focus {
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
 }
-.db-td-check:active { transform: scale(0.9); }
 .db-td-check.checked { background: var(--db-accent); border-color: var(--db-accent); }
 .db-td-check.checked::after {
   content: "✓";
-  color: var(--text-on-accent);
+  color: #ffffff;
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 600;
 }
 .db-td-check.has-kids:not(.checked) {
   border-radius: 7px;
@@ -5668,17 +5644,17 @@ body .db-journal-root .db-filter-q:focus {
 .db-td-due.is-set { color: var(--db-text-secondary); }
 .db-td-due.is-set .db-td-due-wd { color: var(--db-text-muted); }
 .db-td-due.is-overdue {
-  color: var(--color-red, #e74c3c);
-  background: color-mix(in srgb, var(--color-red, #e74c3c) 10%, transparent);
+  color: #c4554d;
+  background: color-mix(in srgb, #c4554d 10%, transparent);
 }
-.db-td-due.is-overdue .db-td-due-wd { color: var(--color-red, #e74c3c); opacity: 0.8; }
+.db-td-due.is-overdue .db-td-due-wd { color: #c4554d; opacity: 0.8; }
 .db-td-due-flag {
   padding: 1px 6px;
   border-radius: 999px;
   font-size: 11px;
-  font-weight: 700;
-  color: var(--text-normal);
-  background: color-mix(in srgb, var(--color-red, #e74c3c) 22%, transparent);
+  font-weight: 600;
+  color: var(--db-text);
+  background: color-mix(in srgb, #c4554d 22%, transparent);
 }
 
 /* 优先级胶囊：点开四级弹出层（沿用输入条那套 .db-priority-popover / -option） */
@@ -5729,7 +5705,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-td-body input.db-td-title::placeholder { color: var(--db-text-sub); font-weight: 500; }
 .db-td-body input.db-td-title:hover { border-bottom-color: var(--db-border); }
 .db-td-body input.db-td-title:focus {
-  border-bottom-color: var(--interactive-accent);
+  border-bottom-color: var(--db-accent);
   outline: none;
   box-shadow: none;
 }
@@ -5776,9 +5752,9 @@ body .db-journal-root .db-filter-q:focus {
 .db-td-sub-check.checked { background: var(--db-accent); border-color: var(--db-accent); }
 .db-td-sub-check.checked::after {
   content: "✓";
-  color: var(--text-on-accent);
+  color: #ffffff;
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 600;
 }
 .db-td-sub > input.db-td-sub-text {
   -webkit-appearance: none;
@@ -5828,7 +5804,7 @@ body .db-journal-root .db-filter-q:focus {
   height: auto;
   padding: 7px 10px;
   border: 1px dashed var(--db-border);
-  border-radius: 9px;
+  border-radius: 4px;
   background: transparent;
   font-size: 13.5px;
   color: var(--db-text);
@@ -5837,16 +5813,16 @@ body .db-journal-root .db-filter-q:focus {
 .db-td-sub-add > input.db-td-sub-add-input:focus {
   outline: none;
   border-style: solid;
-  border-color: var(--interactive-accent);
+  border-color: var(--db-accent);
   box-shadow: 0 0 0 3px var(--db-accent-soft);
 }
 .db-td-sub-add-btn {
   flex-shrink: 0;
   padding: 7px 14px;
   border: none;
-  border-radius: 9px;
+  border-radius: 4px;
   background: var(--db-accent);
-  color: var(--text-on-accent);
+  color: #ffffff;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -5854,7 +5830,6 @@ body .db-journal-root .db-filter-q:focus {
   transition: background-color 0.15s ease, transform 0.1s ease;
 }
 .db-td-sub-add-btn:hover { background: var(--db-accent-hover); }
-.db-td-sub-add-btn:active { transform: scale(0.96); }
 
 /* 描述：扁平、无边框（图片 / 录音嵌入都写在这里）
    降级方案（移动端）外壳是 .db-live-editor-fallback、内层 textarea 是 .db-live-textarea；
@@ -5903,7 +5878,7 @@ body .db-journal-root .db-filter-q:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
+  border-radius: 4px;
   color: var(--db-text-muted);
   cursor: pointer;
   user-select: none;
@@ -5913,11 +5888,10 @@ body .db-journal-root .db-filter-q:focus {
   background: var(--db-accent-soft);
   color: var(--db-accent);
 }
-.db-td-foot-btn:active { transform: scale(0.92); }
 .db-td-foot-btn svg { width: 17px; height: 17px; stroke-width: 1.9; }
 .db-td-foot-btn.recording {
-  color: var(--color-red, #ef4444);
-  background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
+  color: #c4554d;
+  background: color-mix(in srgb, #c4554d 12%, transparent);
   animation: db-pulse 1.2s ease-in-out infinite;
 }
 
@@ -5943,7 +5917,7 @@ body .db-journal-root .db-filter-q:focus {
 .is-phone .db-td-head {
   padding: calc(10px + var(--safe-area-inset-top, env(safe-area-inset-top, 0px))) 8px 10px;
 }
-.is-phone .db-td-head-btn { width: 40px; height: 40px; border-radius: 12px; }
+.is-phone .db-td-head-btn { width: 40px; height: 40px; border-radius: 4px; }
 .is-phone .db-td-head-btn svg { width: 20px; height: 20px; }
 .is-phone .db-td-head-title { font-size: 14px; }
 .is-phone .db-td-body { padding: 18px 16px 24px; }
@@ -5969,7 +5943,7 @@ body .db-journal-root .db-filter-q:focus {
 .is-phone .db-td-desc .db-live-editor .cm-editor,
 .is-phone .db-td-desc .db-live-textarea { font-size: 14.5px; line-height: 1.8; }
 .is-phone .db-td-foot { gap: 4px; padding: 8px 10px calc(8px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))); }
-.is-phone .db-td-foot-btn { width: 44px; height: 44px; border-radius: 12px; }
+.is-phone .db-td-foot-btn { width: 44px; height: 44px; border-radius: 4px; }
 .is-phone .db-td-foot-btn svg { width: 20px; height: 20px; }
 .is-phone .db-td-sheet { padding-bottom: calc(10px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))); }
 .is-phone .db-td-sheet-icons { padding: 10px 14px 14px; gap: 6px; }
@@ -6045,14 +6019,13 @@ body .db-journal-root .db-filter-q:focus {
   transition: background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
 }
 .db-plan-sort-chip:hover { background: var(--db-bg-hover); }
-.db-plan-sort-chip:active { transform: scale(0.96); }
 .db-plan-sort-chip.active {
   background: var(--db-accent);
-  color: var(--text-on-accent);
-  font-weight: 700;
+  color: #ffffff;
+  font-weight: 600;
 }
 .db-plan-sort-chip:focus-visible {
-  outline: 2px solid var(--interactive-accent);
+  outline: 2px solid var(--db-accent);
   outline-offset: 2px;
 }
 .db-plan-sort-reset {
@@ -6071,7 +6044,6 @@ body .db-journal-root .db-filter-q:focus {
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 .db-plan-sort-reset:hover { background: var(--db-bg-hover); color: var(--db-text); }
-.db-plan-sort-reset:active { transform: scale(0.99); }
 .db-plan-sort-reset-icon { display: inline-flex; }
 .db-plan-sort-reset-icon svg { width: 13px; height: 13px; stroke-width: 2; }
 
@@ -6088,9 +6060,9 @@ body .db-journal-root .db-filter-q:focus {
    ═══════════════════════════════════════════════════════ */
 .db-led-root,
 .db-led-overlay {
-  --led-in:  var(--color-green, #22c55e);
-  --led-out: var(--color-red, #ef4444);
-  --led-tr:  var(--text-muted, #8e8e93);   /* 转账：中性灰 */
+  --led-in:  #448361;
+  --led-out: #c4554d;
+  --led-tr:  #787774;   /* 转账：中性灰 */
 }
 .db-led-root {
   display: flex;
@@ -6115,12 +6087,11 @@ body .db-journal-root .db-filter-q:focus {
   border: none;
   border-radius: var(--db-radius);
   background: var(--db-accent);
-  color: var(--text-on-accent, #fff);
+  color: #ffffff;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
 }
-.db-led-header .db-led-add:active { transform: scale(0.97); }
 .db-led-add-icon { display: inline-flex; }
 .db-led-add-icon svg { width: 14px; height: 14px; }
 
@@ -6177,7 +6148,7 @@ body .db-journal-root .db-filter-q:focus {
   flex: 0 0 36px;
   width: 36px;
   height: 36px;
-  border-radius: 10px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -6218,7 +6189,7 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-led-row-amount {
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--db-text);
 }
@@ -6267,7 +6238,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-led-btn-ghost[disabled] { opacity: .45; cursor: default; }
 
 .db-led-io-card { gap: 8px; }
-.db-led-io-tip { font-size: 14px; font-weight: 650; color: var(--db-text); }
+.db-led-io-tip { font-size: 14px; font-weight: 600; color: var(--db-text); }
 .db-led-io-vault { display: flex; gap: 8px; align-items: center; }
 .db-led-io-vault .db-led-input { flex: 1 1 0; min-width: 0; }
 .db-led-io-files { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
@@ -6284,10 +6255,10 @@ body .db-journal-root .db-filter-q:focus {
 }
 
 .db-led-io-detect { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.db-led-io-detect-name { font-size: 18px; font-weight: 700; color: var(--db-text); }
+.db-led-io-detect-name { font-size: 18px; font-weight: 600; color: var(--db-text); }
 .db-led-io-detect-conf {
   font-size: 11.5px;
-  font-weight: 650;
+  font-weight: 600;
   padding: 2px 8px;
   border-radius: 999px;
   color: var(--db-text-muted);
@@ -6298,8 +6269,8 @@ body .db-journal-root .db-filter-q:focus {
   background: color-mix(in srgb, var(--led-in) 14%, var(--db-surface));
 }
 .db-led-io-detect-conf.is-mid {
-  color: color-mix(in srgb, var(--color-orange, #f59e0b) 82%, var(--db-text));
-  background: color-mix(in srgb, var(--color-orange, #f59e0b) 14%, var(--db-surface));
+  color: color-mix(in srgb, #d9730d 82%, var(--db-text));
+  background: color-mix(in srgb, #d9730d 14%, var(--db-surface));
 }
 .db-led-io-miss { font-size: 12px; color: color-mix(in srgb, var(--led-out) 82%, var(--db-text)); }
 .db-led-io-selects { flex-direction: row; flex-wrap: wrap; gap: 8px; }
@@ -6397,10 +6368,10 @@ body .db-journal-root .db-filter-q:focus {
 /* 预览：统计条 + 勾选列表 */
 .db-led-io-bar { gap: 8px; }
 .db-led-io-stat { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--db-text-muted); }
-.db-led-io-stat .is-sel { color: var(--db-accent); font-weight: 650; }
+.db-led-io-stat .is-sel { color: var(--db-accent); font-weight: 600; }
 .db-led-io-stat .is-bad { color: color-mix(in srgb, var(--led-out) 82%, var(--db-text)); }
 .db-led-io-stat .is-dup { color: var(--db-text-sub); }
-.db-led-io-stat .is-warn { color: color-mix(in srgb, var(--color-orange, #f59e0b) 82%, var(--db-text)); }
+.db-led-io-stat .is-warn { color: color-mix(in srgb, #d9730d 82%, var(--db-text)); }
 .db-led-io-tools,
 .db-led-io-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .db-led-io-list { padding: 0 12px; }
@@ -6449,12 +6420,12 @@ body .db-journal-root .db-filter-q:focus {
 .db-led-io-warn {
   font-size: 11px;
   margin-top: 1px;
-  color: color-mix(in srgb, var(--color-orange, #f59e0b) 78%, var(--db-text));
+  color: color-mix(in srgb, #d9730d 78%, var(--db-text));
 }
 .db-led-io-right { flex: 0 0 auto; text-align: right; }
 .db-led-io-amount {
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--db-text);
 }
@@ -6497,7 +6468,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-led-sum-cell {
   padding: 8px 6px;
   border-radius: var(--db-radius);
-  background: color-mix(in srgb, var(--text-normal) 4%, var(--db-surface));
+  background: color-mix(in srgb, var(--db-text) 4%, var(--db-surface));
   text-align: center;
   min-width: 0;
 }
@@ -6506,7 +6477,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-led-sum-label { font-size: 11px; color: var(--db-text-muted); }
 .db-led-sum-value {
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 600;
   margin-top: 2px;
   color: var(--db-text);
   font-variant-numeric: tabular-nums;
@@ -6534,7 +6505,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-led-hero-value {
   margin-top: 3px;
   font-size: 19px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--db-text);
   font-variant-numeric: tabular-nums;
   overflow: hidden;
@@ -6552,15 +6523,14 @@ body .db-journal-root .db-filter-q:focus {
   min-height: 48px;
   margin: 0;
   border: none;
-  border-radius: 14px;
-  background: var(--db-accent, var(--interactive-accent));
-  color: var(--text-on-accent, #fff);
+  border-radius: 4px;
+  background: var(--db-accent, var(--db-accent));
+  color: #ffffff;
   font-size: 15px;
-  font-weight: 650;
+  font-weight: 600;
   cursor: pointer;
   box-shadow: var(--db-shadow-sm);
 }
-.db-led-cta:active { transform: scale(0.99); }
 .db-led-cta-icon { display: inline-flex; }
 .db-led-cta-icon svg { width: 18px; height: 18px; }
 
@@ -6589,7 +6559,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-led-bar {
   height: 8px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--text-normal) 6%, var(--db-surface));
+  background: color-mix(in srgb, var(--db-text) 6%, var(--db-surface));
   overflow: hidden;
 }
 .db-led-bar-fill {
@@ -6621,7 +6591,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-led-nav-btn:active { background: var(--db-bg-hover); }
 .db-led-nav-label {
   font-size: 15px;
-  font-weight: 650;
+  font-weight: 600;
   color: var(--db-text);
   min-width: 110px;
   text-align: center;
@@ -6670,7 +6640,7 @@ body .db-journal-root .db-filter-q:focus {
   gap: 8px;
   padding: 0 2px;
 }
-.db-led-day-date { font-size: 13px; font-weight: 650; color: var(--db-text); }
+.db-led-day-date { font-size: 13px; font-weight: 600; color: var(--db-text); }
 .db-led-day-sums {
   display: flex;
   align-items: baseline;
@@ -6685,7 +6655,7 @@ body .db-journal-root .db-filter-q:focus {
   white-space: nowrap;
 }
 .db-led-day-k { font-size: 11px; color: var(--db-text-muted); }
-.db-led-day-v { font-size: 12px; font-weight: 650; }
+.db-led-day-v { font-size: 12px; font-weight: 600; }
 .db-led-day-v.is-in { color: color-mix(in srgb, var(--led-in) 80%, var(--db-text)); }
 .db-led-day-v.is-out { color: color-mix(in srgb, var(--led-out) 80%, var(--db-text)); }
 .db-led-day-v.is-tr { color: color-mix(in srgb, var(--led-tr) 78%, var(--db-text)); }
@@ -6726,7 +6696,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-led-cal-cell.is-blank { cursor: default; }
 .db-led-cal-d {
   font-size: 13.5px;
-  font-weight: 650;
+  font-weight: 600;
   line-height: 1.25;
   color: var(--db-text);
   font-variant-numeric: tabular-nums;
@@ -6761,13 +6731,13 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-led-cal-cell.is-sel .db-led-cal-d {
   color: var(--db-accent);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 /* ── 资产 ── */
 .db-led-net {
   font-size: 26px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--db-text);
   font-variant-numeric: tabular-nums;
   overflow: hidden;
@@ -6786,7 +6756,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-led-acct-row + .db-led-acct-row { border-top: 1px solid color-mix(in srgb, var(--db-border) 55%, transparent); }
 /* 资产行整行可点 → 资产详情：右侧箭头提示可进 */
 .db-led-acct-row.is-link { cursor: pointer; }
-.db-led-acct-row.is-link:active { background: var(--background-modifier-hover); }
+.db-led-acct-row.is-link:active { background: var(--db-bg-hover); }
 .db-led-acct-chev { display: inline-flex; color: var(--db-text-sub); }
 .db-led-acct-chev svg { width: 16px; height: 16px; }
 
@@ -6799,7 +6769,7 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-led-asset-balance {
   font-size: 26px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.3px;
   color: var(--db-text);
 }
@@ -6855,11 +6825,11 @@ body .db-journal-root .db-filter-q:focus {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 9px;
+  border-radius: 4px;
   background: color-mix(in srgb, var(--db-text-muted) 10%, var(--db-surface));
   color: var(--db-text-muted);
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 600;
   line-height: 1;
   overflow: hidden;
 }
@@ -6881,11 +6851,11 @@ body .db-journal-root .db-filter-q:focus {
   width: 18px;
   height: 18px;
   border-radius: 5px;
-  background: color-mix(in srgb, var(--text-normal) 8%, var(--db-surface, var(--background-primary)));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-normal) 12%, transparent);
-  color: var(--text-muted);
+  background: color-mix(in srgb, var(--db-text) 8%, var(--db-surface, var(--db-surface)));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--db-text) 12%, transparent);
+  color: var(--db-text-muted);
   font-size: 11.5px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1;
   flex: 0 0 auto;
 }
@@ -6944,11 +6914,11 @@ body .db-journal-root .db-filter-q:focus {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
+  border-radius: 4px;
   background: color-mix(in srgb, var(--db-text-muted) 10%, var(--db-surface));
   color: var(--db-text-muted);
   font-size: 14px;
-  font-weight: 650;
+  font-weight: 600;
   line-height: 1;
   overflow: hidden;
 }
@@ -7034,7 +7004,7 @@ body .db-journal-root .db-filter-q:focus {
   pointer-events: none;
 }
 .db-led-rpt-donut-k { font-size: 11.5px; color: var(--db-text-muted); }
-.db-led-rpt-donut-v { font-size: 15px; font-weight: 700; color: var(--db-text); font-variant-numeric: tabular-nums; }
+.db-led-rpt-donut-v { font-size: 15px; font-weight: 600; color: var(--db-text); font-variant-numeric: tabular-nums; }
 
 /* 环右侧明细：名称 · 金额 · 占比 */
 .db-led-rpt-legend { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -7137,7 +7107,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-led-rptd-hero { width: 100%; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .db-led-rptd-total {
   font-size: 28px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.15;
   color: var(--db-text);
   font-variant-numeric: tabular-nums;
@@ -7261,7 +7231,7 @@ body .db-journal-root .db-filter-q:focus {
   padding: 8px 10px;
   border: 1px solid var(--db-border);
   border-radius: var(--db-radius-sm);
-  background: var(--background-primary);
+  background: var(--db-surface);
   color: var(--db-text);
   -webkit-text-fill-color: currentColor;
   font-size: 13px;
@@ -7277,7 +7247,7 @@ body .db-journal-root .db-filter-q:focus {
   padding: 8px 10px;
   border: 1px solid var(--db-border);
   border-radius: var(--db-radius-sm);
-  background: var(--background-primary);
+  background: var(--db-surface);
   color: var(--db-text);
   font-size: 13px;
 }
@@ -7362,7 +7332,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-led-back:active { opacity: 0.6; }
 .db-led-back-icon { display: inline-flex; }
 .db-led-back-icon svg { width: 18px; height: 18px; }
-.db-led-subhead-title { font-size: 15px; font-weight: 700; color: var(--db-text); }
+.db-led-subhead-title { font-size: 15px; font-weight: 600; color: var(--db-text); }
 
 /* 二级页内小标题与分组容器 */
 .db-led-group-hint {
@@ -7472,12 +7442,11 @@ body .db-journal-root .db-filter-q:focus {
   border: none;
   border-radius: var(--db-radius-lg);
   background: var(--db-accent);
-  color: var(--text-on-accent, #fff);
+  color: #ffffff;
   font-size: 15px;
-  font-weight: 650;
+  font-weight: 600;
   cursor: pointer;
 }
-.db-led-save:active { transform: scale(0.98); }
 .db-led-del-big {
   flex: 0 0 auto;
   min-height: 46px;
@@ -7498,7 +7467,7 @@ body .db-journal-root .db-filter-q:focus {
   gap: 4px;
   padding: 4px;
   border-radius: var(--db-radius-lg);
-  background: color-mix(in srgb, var(--text-normal) 5%, var(--db-surface));
+  background: color-mix(in srgb, var(--db-text) 5%, var(--db-surface));
 }
 .db-led-seg-btn {
   min-height: 38px;
@@ -7548,7 +7517,7 @@ body .db-journal-root .db-filter-q:focus {
   color: var(--db-text);
   -webkit-text-fill-color: currentColor;
   font-size: 30px;
-  font-weight: 700;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   padding: 4px 2px 8px;
 }
@@ -7560,7 +7529,7 @@ body .db-journal-root .db-filter-q:focus {
   padding: 6px 10px;
   border: 1px solid var(--db-border);
   border-radius: var(--db-radius-sm);
-  background: var(--background-primary);
+  background: var(--db-surface);
   color: var(--db-text-muted);
   font-size: 13px;
 }
@@ -7576,7 +7545,7 @@ body .db-journal-root .db-filter-q:focus {
   padding: 8px 10px;
   border: 1px solid var(--db-border);
   border-radius: var(--db-radius-sm);
-  background: var(--background-primary);
+  background: var(--db-surface);
   color: var(--db-text);
   -webkit-text-fill-color: currentColor;
   font-size: 13px;
@@ -7589,7 +7558,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-led-adv {
   border: 1px solid var(--db-border);
   border-radius: var(--db-radius);
-  background: color-mix(in srgb, var(--text-normal) 3%, var(--db-surface));
+  background: color-mix(in srgb, var(--db-text) 3%, var(--db-surface));
   overflow: hidden;
 }
 .db-led-adv-head {
@@ -7694,15 +7663,14 @@ body .db-journal-root .db-filter-q:focus {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: color-mix(in srgb, var(--text-normal) 6%, var(--db-surface));
+  background: color-mix(in srgb, var(--db-text) 6%, var(--db-surface));
   color: var(--db-text-muted);
   font-size: 17px;
-  font-weight: 650;
+  font-weight: 600;
   line-height: 1;
   transition: transform 0.12s ease, background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
 }
 .db-led-catcircle svg { width: 21px; height: 21px; }
-.db-led-catcell:active .db-led-catcircle { transform: scale(0.94); }
 .db-led-catname {
   max-width: 100%;
   font-size: 11.5px;
@@ -7719,7 +7687,7 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-led-catcell.is-active .db-led-catname {
   color: color-mix(in srgb, var(--db-accent) 72%, var(--db-text));
-  font-weight: 650;
+  font-weight: 600;
 }
 /* 有二级分类的「···」角标 */
 .db-led-catdot {
@@ -7730,18 +7698,18 @@ body .db-journal-root .db-filter-q:focus {
   min-width: 16px;
   height: 16px;
   padding: 0 2px;
-  border-radius: 9px;
+  border-radius: 4px;
   border: 2px solid var(--db-surface);
   background: color-mix(in srgb, var(--db-accent) 30%, var(--db-surface));
   color: color-mix(in srgb, var(--db-accent) 80%, var(--db-text));
   font-size: 7px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 12px;
   letter-spacing: 0.5px;
   text-align: center;
 }
 .db-led-catcell.is-active .db-led-catdot {
-  background: var(--text-on-accent, #fff);
+  background: #ffffff;
   border-color: var(--db-accent);
   color: color-mix(in srgb, var(--db-accent) 75%, var(--db-text));
 }
@@ -7760,7 +7728,7 @@ body .db-journal-root .db-filter-q:focus {
   margin: 2px 0 6px;
   padding: 10px 6px;
   border-radius: var(--db-radius-lg);
-  background: color-mix(in srgb, var(--text-normal) 4.5%, var(--db-surface));
+  background: color-mix(in srgb, var(--db-text) 4.5%, var(--db-surface));
 }
 /* 子类圆明确小于父类（父 46）：一级/二级的层级感靠这个大小差 */
 .db-led-catpanel .db-led-catcircle { width: 34px; height: 34px; background: var(--db-surface); }
@@ -7823,10 +7791,9 @@ body .db-journal-root .db-filter-q:focus {
   background: var(--db-accent-soft);
   color: color-mix(in srgb, var(--db-accent) 78%, var(--db-text));
   font-size: 14px;
-  font-weight: 650;
+  font-weight: 600;
   cursor: pointer;
 }
-.db-catmgr-add:active { transform: scale(0.99); }
 .db-catmgr-add-icon { display: inline-flex; }
 .db-catmgr-add-icon svg { width: 17px; height: 17px; }
 .db-catmgr-list { display: flex; flex-direction: column; gap: 10px; }
@@ -7862,10 +7829,10 @@ body .db-journal-root .db-filter-q:focus {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: color-mix(in srgb, var(--text-normal) 6%, var(--db-surface));
+  background: color-mix(in srgb, var(--db-text) 6%, var(--db-surface));
   color: var(--db-text-muted);
   font-size: 15px;
-  font-weight: 650;
+  font-weight: 600;
   line-height: 1;
 }
 .db-catmgr-icon svg { width: 18px; height: 18px; }
@@ -7918,7 +7885,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-cat-modal-field { display: flex; flex-direction: column; gap: 5px; }
 .db-cat-modal-label { font-size: 12px; font-weight: 600; color: var(--db-text-muted); margin-top: 4px; }
 .db-cat-icon-scroll { max-height: 250px; overflow-y: auto; padding-right: 2px; }
-.db-cat-icon-group-title { font-size: 11.5px; font-weight: 650; color: var(--db-text-sub); margin: 12px 0 6px; }
+.db-cat-icon-group-title { font-size: 11.5px; font-weight: 600; color: var(--db-text-sub); margin: 12px 0 6px; }
 .db-cat-icon-scroll .db-led-icon-grid { grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); }
 
 /* 自定义图标行：预览方块 + emoji 输入 + 上传图片（图片压成 data URL 存配置） */
@@ -8004,7 +7971,7 @@ body .db-journal-root .db-filter-q:focus {
   flex-direction: column;
   background: var(--db-surface);
   border: 1px solid var(--db-border);
-  border-radius: 10px;
+  border-radius: 4px;
   box-shadow: var(--db-shadow-md, 0 3px 8px rgba(0, 0, 0, 0.12)), 0 8px 28px rgba(0, 0, 0, 0.14);
   overflow: hidden;
   animation: db-ns-pop-in 0.12s ease-out;
@@ -8203,6 +8170,96 @@ body .db-journal-root .db-filter-q:focus {
 
 
 /* ════════════════════════════════════════════════════════
+   记账 · Notion 米纸皮肤（notion-paper）
+   全局令牌已在 body 层换成 Notion 米纸盘，这里只保留记账段的组件级覆盖：
+   主按钮 hover/按下只加深底色、行 hover 浅灰、浮层用唯一允许的柔影、
+   空态 / 概览卡用 Callout 浅灰块。交互不做位移 / 缩放 / 上浮。
+   ════════════════════════════════════════════════════════ */
+/* 浮层遮罩与 sheet：白页 + 顶部 8px 圆角 + 弹层唯一允许的柔影 */
+.db-led-overlay { background: rgba(15, 15, 15, 0.4); }
+.db-led-sheet {
+  background: var(--notion-page);
+  border-radius: 8px 8px 0 0;
+  border-top: 1px solid var(--notion-hairline);
+  box-shadow: 0 8px 24px rgba(15, 15, 15, 0.12);
+  animation: none;
+}
+.db-ns-pop {
+  animation: none;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15, 15, 15, 0.12);
+}
+.db-ns-row { border-radius: 4px; }
+
+/* 主行动按钮：hover / 按下只加深底色 */
+@media (hover: hover) {
+  .db-led-header .db-led-add:hover,
+  .db-led-cta:hover,
+  .db-led-save:hover,
+  .db-catmgr-add:hover { background: color-mix(in srgb, var(--db-accent) 88%, var(--db-text)); }
+}
+.db-led-header .db-led-add:active,
+.db-led-cta:active,
+.db-led-save:active,
+.db-catmgr-add:active { background: color-mix(in srgb, var(--db-accent) 78%, var(--db-text)); }
+
+/* 次按钮：Ghost Button——透明底、无描边，hover 只变浅灰 */
+.db-led-btn-ghost {
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--db-text);
+  font-weight: 500;
+}
+@media (hover: hover) {
+  .db-led-btn-ghost:hover { background: var(--notion-hover); }
+}
+.db-led-btn-ghost:active { background: var(--notion-hover-deep); }
+/* 危险按钮：Notion 红标签底 + 标签红字 */
+.db-led-del-big {
+  border: none;
+  border-radius: 4px;
+  background: #ffe2dd;
+  color: #c4554d;
+  font-weight: 500;
+}
+
+/* 首页概览卡 / 空态：Callout 式浅灰块（去掉渐变与虚线框） */
+.db-led-hero {
+  background: var(--notion-hover);
+  border-color: var(--notion-hairline);
+}
+.db-led-empty {
+  border: none;
+  border-radius: 4px;
+  background: var(--notion-hover);
+}
+
+/* 流水 / 菜单 / 资产行：hover 只变浅灰底（触屏用 :active 兜底） */
+@media (hover: hover) {
+  .db-led-row:hover,
+  .db-led-menu-row:hover,
+  .db-led-acct-row.is-link:hover { background: var(--notion-hover); }
+}
+
+/* 金额输入：Inline Input——只留 1px 底边线，聚焦线变蓝 */
+.db-led-amount { border-bottom-width: 1px; }
+
+/* 分类管理：拖拽中的卡只用底色提示，无阴影无上浮 */
+.db-catmgr-cat.is-dragging {
+  border-color: var(--notion-hairline);
+  background: var(--notion-hover);
+  box-shadow: none;
+}
+
+/* 删除小按钮：hover 变 Notion 红标签色（只变颜色） */
+.db-led-del:hover {
+  color: #c4554d;
+  background: #ffe2dd;
+}
+
+
+/* ════════════════════════════════════════════════════════
    追剧（drama）：列表卡片 + 页内编辑二级页
    令牌沿用 body/.db-journal-root 上的 --db-*，宽度响应只写 @container
    ════════════════════════════════════════════════════════ */
@@ -8247,11 +8304,8 @@ body .db-journal-root .db-filter-q:focus {
   margin-bottom: 4px;
   border-radius: var(--db-radius-lg, 12px);
   /* 浅紫蓝渐变，参照记账模块的 hero 卡片 */
-  background: linear-gradient(145deg,
-    color-mix(in srgb, var(--db-accent) 12%, var(--db-surface)) 0%,
-    color-mix(in srgb, var(--db-accent) 5%, var(--db-surface)) 55%,
-    var(--db-surface) 100%);
-  border: 1px solid color-mix(in srgb, var(--db-accent) 18%, var(--db-border));
+  background: var(--notion-hover);
+  border: 1px solid var(--notion-hairline);
 }
 .db-drama-sum {
   min-width: 0;
@@ -8274,16 +8328,16 @@ body .db-journal-root .db-filter-q:focus {
   min-height: 36px;
   padding: 8px 16px;
   border: none;
-  border-radius: 10px;
+  border-radius: 4px;
   background: var(--db-accent);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--db-accent) 25%, transparent);
-  color: var(--text-on-accent, #fff);
+  box-shadow: none;
+  color: #ffffff;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
-  transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
+  transition: background 0.15s ease, opacity 0.15s ease;
 }
-.db-drama-add:active { transform: scale(0.97); box-shadow: 0 1px 4px color-mix(in srgb, var(--db-accent) 20%, transparent); }
+.db-drama-add:active { background: color-mix(in srgb, var(--db-accent) 82%, var(--db-text)); }
 .db-drama-add-icon { display: inline-flex; }
 .db-drama-add-icon svg { width: 15px; height: 15px; }
 
@@ -8303,7 +8357,7 @@ body .db-journal-root .db-filter-q:focus {
   min-height: 32px;
   padding: 6px 13px;
   border: 1px solid var(--db-border);
-  border-radius: 10px;
+  border-radius: 4px;
   background: var(--db-surface);
   box-shadow: none;
   color: var(--db-text-muted);
@@ -8346,8 +8400,7 @@ body .db-journal-root .db-filter-q:focus {
   .db-drama-root button.db-drama-mini:hover { background: var(--db-bg-hover); }
   .db-drama-root button.db-drama-bump:hover { background: color-mix(in srgb, var(--db-accent) 22%, transparent); }
   .db-drama-root button.db-drama-add:hover {
-    box-shadow: 0 4px 12px color-mix(in srgb, var(--db-accent) 35%, transparent);
-    transform: translateY(-1px);
+    background: color-mix(in srgb, var(--db-accent) 88%, var(--db-text));
   }
 }
 
@@ -8370,18 +8423,15 @@ body .db-journal-root .db-filter-q:focus {
   min-width: 0;
   padding: 14px;
   border: 1px solid var(--db-border);
-  border-radius: 14px;
+  border-radius: 4px;
   background: var(--db-surface);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03), 0 4px 14px rgba(0, 0, 0, 0.03);
+  box-shadow: none;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background 0.15s ease;
 }
 @media (hover: hover) {
   .db-drama-card:hover {
     background: var(--db-bg-hover);
-    border-color: color-mix(in srgb, var(--db-accent) 35%, var(--db-border));
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.05);
-    transform: translateY(-2px);
   }
   /* 渐进披露：低频动作（豆瓣、改链接的铅笔）PC 上先藏住，悬停 / 键盘聚焦才浮出；
      触屏没有 hover，一律常显 */
@@ -8399,11 +8449,9 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-drama-empty {
   padding: 36px 20px;
-  border: 1px dashed color-mix(in srgb, var(--db-accent) 30%, var(--db-border));
-  border-radius: 12px;
-  background: linear-gradient(145deg,
-    color-mix(in srgb, var(--db-accent) 5%, var(--db-surface)) 0%,
-    var(--db-surface) 100%);
+  border: none;
+  border-radius: 4px;
+  background: var(--notion-hover);
   color: var(--db-text-muted);
   font-size: 13.5px;
   line-height: 1.7;
@@ -8426,18 +8474,15 @@ body .db-journal-root .db-filter-q:focus {
   height: 102px;
   box-sizing: border-box;
   border: 1px solid var(--db-border);
-  border-radius: 10px;
+  border-radius: 4px;
   background: var(--db-surface2);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  box-shadow: none;
   overflow: hidden;
   isolation: isolate;
-  transition: transform 0.2s ease;
 }
-/* 卡片悬停时封面微动 */
-.db-drama-card:hover .db-drama-cover { transform: scale(1.02); }
-.db-drama-cover.is-form { width: 92px; height: 138px; border-radius: 10px; cursor: default; }
-.db-drama-cover.is-tap { cursor: pointer; transition: transform 0.15s ease, opacity 0.15s ease; }
-.db-drama-cover.is-tap:active { transform: scale(0.97); opacity: 0.9; }
+.db-drama-cover.is-form { width: 92px; height: 138px; border-radius: 4px; cursor: default; }
+.db-drama-cover.is-tap { cursor: pointer; transition: opacity 0.15s ease; }
+.db-drama-cover.is-tap:active { opacity: 0.9; }
 .db-drama-cover.is-tap:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
 .db-drama-img {
   position: absolute;
@@ -8484,7 +8529,7 @@ body .db-journal-root .db-filter-q:focus {
   height: 100%;
   color: #fff;
   font-size: 24px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1;
   user-select: none;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
@@ -8573,7 +8618,6 @@ body .db-journal-root .db-filter-q:focus {
 /* 列表卡片上的状态徽标可点（弹锚定菜单就地改状态） */
 .db-drama-status.is-tap { cursor: pointer; transition: all 0.15s ease; }
 .db-drama-status.is-tap:hover { background: color-mix(in srgb, var(--db-accent) 20%, transparent); }
-.db-drama-status.is-tap:active { transform: scale(0.95); }
 .db-drama-status.is-tap:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
 .db-drama-status.is-done {
   background: color-mix(in srgb, #4c9a6a 12%, transparent);
@@ -8617,7 +8661,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-drama-count {
   flex: 0 0 auto;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--db-text);
   font-variant-numeric: tabular-nums;
 }
@@ -8675,7 +8719,7 @@ body .db-journal-root .db-filter-q:focus {
   min-height: 34px;
   padding: 6px 13px;
   border: none;
-  border-radius: 11px;
+  border-radius: 4px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -8693,7 +8737,7 @@ body .db-journal-root .db-filter-q:focus {
   font-weight: 500;
 }
 .db-drama-bump:active,
-.db-drama-link:active { transform: scale(0.96); opacity: 0.92; }
+.db-drama-link:active { opacity: 0.92; }
 .db-drama-root button.db-drama-bump:focus-visible,
 .db-drama-root button.db-drama-link:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
 .db-drama-bump-icon,
@@ -8714,7 +8758,7 @@ body .db-journal-root .db-filter-q:focus {
   min-width: 0;
   flex: 1 1 auto;
   font-size: 20px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -8757,9 +8801,9 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-drama-root button.db-drama-act.is-primary {
   background: var(--db-accent);
-  color: var(--db-accent-text, var(--text-on-accent, #fff));
+  color: var(--db-accent-text, #ffffff);
 }
-.db-drama-act:active { transform: scale(0.98); opacity: 0.92; }
+.db-drama-act:active { opacity: 0.92; }
 .db-drama-root button.db-drama-act:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
 .db-drama-act-icon { display: inline-flex; }
 .db-drama-act-icon svg { width: 15px; height: 15px; }
@@ -8943,7 +8987,7 @@ body .db-journal-root .db-filter-q:focus {
   width: 38px;
   height: 57px;
   border-radius: 6px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  box-shadow: none;
 }
 .db-drama-cover.is-tile {
   width: 84px;
@@ -9021,7 +9065,7 @@ body .db-journal-root .db-filter-q:focus {
   transition: opacity 0.15s ease, transform 0.15s ease;
 }
 .db-drama-prop-edit svg { width: 13px; height: 13px; }
-.db-drama-root button.db-drama-prop-edit:active { transform: scale(0.94); opacity: 1; }
+.db-drama-root button.db-drama-prop-edit:active { opacity: 1; }
 .db-drama-root button.db-drama-prop-edit:focus-visible {
   outline: 2px solid var(--db-accent);
   outline-offset: 1px;
@@ -9081,7 +9125,7 @@ body .db-journal-root .db-filter-q:focus {
   transition: transform 0.15s ease, opacity 0.15s ease;
 }
 .db-drama-root button.db-drama-mini.is-ghost { border-color: transparent; }
-.db-drama-mini:active { transform: scale(0.97); opacity: 0.9; }
+.db-drama-mini:active { opacity: 0.9; }
 .db-drama-root button.db-drama-mini:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
 .db-drama-mini-icon { display: inline-flex; }
 .db-drama-mini-icon svg { width: 13px; height: 13px; }
@@ -9095,16 +9139,16 @@ body .db-journal-root .db-filter-q:focus {
   margin-left: 10px;
   min-height: 34px;
   padding: 6px 14px;
-  border: 1px solid color-mix(in srgb, var(--text-error, #d1493f) 30%, transparent);
+  border: 1px solid color-mix(in srgb, #eb5757 30%, transparent);
   border-radius: var(--db-radius-sm);
   background: transparent;
   box-shadow: none;
-  color: var(--text-error, #d1493f);
+  color: #eb5757;
   font-size: 12.5px;
   cursor: pointer;
 }
 .db-drama-del:active { opacity: 0.75; }
-.db-drama-root button.db-drama-del:focus-visible { outline: 2px solid var(--text-error, #d1493f); outline-offset: 2px; }
+.db-drama-root button.db-drama-del:focus-visible { outline: 2px solid #eb5757; outline-offset: 2px; }
 .db-drama-del-icon { display: inline-flex; }
 .db-drama-del-icon svg { width: 14px; height: 14px; }
 
@@ -9123,7 +9167,7 @@ body .db-journal-root .db-filter-q:focus {
   /* 触控没有 hover：链接的下划线成为唯一「可点」提示 */
   .db-drama-prop-link-text { text-decoration: underline; text-underline-offset: 2px; }
   /* 卡片悬停效果在触屏上禁用 */
-  .db-drama-card:hover { transform: none; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03), 0 4px 14px rgba(0, 0, 0, 0.03); }
+  .db-drama-card:hover { box-shadow: none; }
   /* 封面悬停效果在触屏上禁用 */
   .db-drama-card:hover .db-drama-cover { transform: none; }
   /* 就地文本格钉在 16px：WebView 聚焦字号 <16px 的输入框会自动放大整页，键盘收了也不还原。
@@ -9197,9 +9241,7 @@ body .db-journal-root .db-filter-q:focus {
 /* ── 关掉封面：卡片只剩文字，补齐左边距 + 渐变背景 ── */
 .db-drama-card.is-bare {
   padding-left: 16px;
-  background: linear-gradient(135deg,
-    color-mix(in srgb, var(--db-accent) 3%, var(--db-surface)) 0%,
-    var(--db-surface) 100%);
+  background: var(--db-surface);
 }
 @container (max-width: 480px) {
   .db-drama-card.is-bare { padding-left: 14px; }
@@ -9265,7 +9307,7 @@ body .db-journal-root .db-filter-q:focus {
 .db-drama-vis-row.is-on .db-drama-vis-mark {
   border-color: var(--db-accent);
   background: var(--db-accent);
-  color: var(--db-accent-text, var(--text-on-accent, #fff));
+  color: var(--db-accent-text, #ffffff);
 }
 .db-drama-vis-mark svg { width: 12px; height: 12px; }
 @media (hover: none) {
@@ -9441,21 +9483,20 @@ body .db-journal-root .db-filter-q:focus {
   align-items: center;
   justify-content: center;
   background: var(--db-accent);
-  color: var(--text-on-accent, #fff);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22);
+  color: #ffffff;
+  box-shadow: 0 8px 24px rgba(15, 15, 15, 0.12);
   cursor: pointer;
   /* 长按拖动：手势全归指针事件，不触发滚动 / 长按选中 / 系统菜单 */
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
-  transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
+  transition: opacity 0.15s ease, box-shadow 0.15s ease;
 }
-.db-ai-fab:active { transform: translateX(-50%) scale(0.92); opacity: 0.92; }
-/* 长按进入拖动：放大 + 深影提示「已抓起」，松手落位 */
+.db-ai-fab:active { opacity: 0.85; }
+/* 长按进入拖动：柔影加深提示「已抓起」，松手落位（不做缩放） */
 .db-ai-fab.is-drag {
-  transform: translateX(-50%) scale(1.18);
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 8px 24px rgba(15, 15, 15, 0.28);
   opacity: 0.96;
   cursor: grabbing;
   transition: none;
@@ -9482,10 +9523,10 @@ body .db-journal-root .db-filter-q:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--background-primary);
-  border: 1px solid var(--background-modifier-border);
-  color: var(--text-muted);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.14);
+  background: var(--db-surface);
+  border: 1px solid var(--db-border);
+  color: var(--db-text-muted);
+  box-shadow: 0 8px 24px rgba(15, 15, 15, 0.12);
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
@@ -9501,7 +9542,6 @@ body .db-journal-root .db-filter-q:focus {
   transform: translateY(0);
   pointer-events: auto;
 }
-.db-scrolltop:active { transform: scale(0.92); }
 .db-scrolltop svg { width: 19px; height: 19px; }
 .db-scrolltop:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
@@ -9548,7 +9588,7 @@ body .db-journal-root .db-filter-q:focus {
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 10px;
+  border-radius: 4px;
   background: transparent;
   color: var(--db-text-muted);
   cursor: pointer;
@@ -9571,7 +9611,7 @@ body .db-journal-root .db-filter-q:focus {
   max-width: 86%;
   min-width: 0;
   padding: 9px 12px;
-  border-radius: 16px;
+  border-radius: 4px;
   font-size: 14px;
   line-height: 1.55;
 }
@@ -9589,7 +9629,7 @@ body .db-journal-root .db-filter-q:focus {
   border-bottom-left-radius: 5px;
 }
 .db-ai-msg.is-loading { color: var(--db-text-muted); font-style: italic; }
-.db-ai-msg.is-error { border-color: var(--text-error); color: var(--text-error); }
+.db-ai-msg.is-error { border-color: #eb5757; color: #eb5757; }
 .db-ai-msg.is-system { color: var(--db-text-muted); font-size: 12px; }
 .db-ai-msg.is-written { border-color: var(--db-accent); }
 .db-ai-text { white-space: pre-wrap; word-break: break-word; }
@@ -9641,7 +9681,7 @@ body .db-journal-root .db-filter-q:focus {
   font-size: 13px;
   cursor: pointer;
 }
-.db-ai-list button.db-ai-chip:hover { background: var(--background-modifier-hover); }
+.db-ai-list button.db-ai-chip:hover { background: var(--db-bg-hover); }
 .db-ai-list button.db-ai-chip:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
 
 /* 未配置模型 */
@@ -9649,7 +9689,7 @@ body .db-journal-root .db-filter-q:focus {
   align-self: stretch;
   padding: 12px 14px;
   border: 1px solid var(--db-border);
-  border-radius: 16px;
+  border-radius: 4px;
   background: var(--db-surface2);
 }
 .db-ai-setup-title { font-size: 14px; font-weight: 600; }
@@ -9658,7 +9698,7 @@ body .db-journal-root .db-filter-q:focus {
   margin-top: 10px;
   min-height: 36px;
   padding: 0 14px;
-  border-radius: 10px;
+  border-radius: 4px;
   border: none;
   background: var(--db-accent);
   color: var(--db-accent-text);
@@ -9674,7 +9714,7 @@ body .db-journal-root .db-filter-q:focus {
   gap: 10px;
   padding: 12px;
   border: 1px solid var(--db-border);
-  border-radius: 16px;
+  border-radius: 4px;
   background: var(--db-surface2);
 }
 .db-ai-pending-title { font-size: 13px; font-weight: 600; }
@@ -9682,7 +9722,7 @@ body .db-journal-root .db-filter-q:focus {
   min-width: 0;
   padding: 10px;
   border: 1px solid var(--db-border);
-  border-radius: 12px;
+  border-radius: 4px;
   background: var(--db-bg);
 }
 .db-ai-op-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
@@ -9690,7 +9730,7 @@ body .db-journal-root .db-filter-q:focus {
   flex: 0 0 auto;
   padding: 1px 7px;
   border-radius: 999px;
-  background: var(--background-modifier-hover);
+  background: var(--db-bg-hover);
   color: var(--db-text-muted);
   font-size: 11px;
 }
@@ -9706,7 +9746,7 @@ body .db-journal-root .db-filter-q:focus {
   margin-top: 6px;
   padding: 8px 10px;
   border-radius: 8px;
-  background: var(--background-primary-alt);
+  background: var(--db-surface2);
   color: var(--db-text);
   font-family: var(--font-monospace);
   font-size: 12px;
@@ -9714,12 +9754,12 @@ body .db-journal-root .db-filter-q:focus {
   white-space: pre-wrap;
   word-break: break-word;
 }
-.db-ai-op-invalid { font-size: 12px; line-height: 1.5; color: var(--text-error); }
+.db-ai-op-invalid { font-size: 12px; line-height: 1.5; color: #eb5757; }
 .db-ai-pending-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .db-ai-list button.db-ai-btn {
   min-height: 38px;
   padding: 0 16px;
-  border-radius: 10px;
+  border-radius: 4px;
   font-size: 13px;
   cursor: pointer;
 }
@@ -9753,7 +9793,7 @@ body .db-journal-root .db-filter-q:focus {
   max-height: 132px;
   padding: 9px 12px;
   border: 1px solid var(--db-border);
-  border-radius: 12px;
+  border-radius: 4px;
   background: var(--db-surface2);
   color: var(--db-text);
   font-size: 15px;
@@ -9778,7 +9818,7 @@ body .db-journal-root .db-filter-q:focus {
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 12px;
+  border-radius: 4px;
   background: var(--db-accent);
   color: var(--db-accent-text);
   cursor: pointer;
@@ -9818,32 +9858,32 @@ body .db-journal-root .db-filter-q:focus {
 
 /* ── 写入记录弹窗（App 层，不在 .db-root 容器内） ── */
 .db-ai-hist h3 { margin: 0 0 6px; font-size: 16px; font-weight: 600; }
-.db-ai-hist-hint { font-size: 12px; line-height: 1.5; color: var(--text-muted); margin-bottom: 12px; }
-.db-ai-hist-empty { padding: 18px 0; text-align: center; font-size: 13px; color: var(--text-muted); }
+.db-ai-hist-hint { font-size: 12px; line-height: 1.5; color: var(--db-text-muted); margin-bottom: 12px; }
+.db-ai-hist-empty { padding: 18px 0; text-align: center; font-size: 13px; color: var(--db-text-muted); }
 .db-ai-hist-list { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
 .db-ai-hist-row {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  border: 1px solid var(--background-modifier-border);
+  border: 1px solid var(--db-border);
   border-radius: var(--radius-m, 8px);
-  background: var(--background-secondary);
+  background: var(--db-surface2);
 }
 .db-ai-hist-row.is-undone { opacity: 0.55; }
 .db-ai-hist-meta { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.db-ai-hist-time { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.db-ai-hist-time { font-size: 11px; color: var(--db-text-sub); font-variant-numeric: tabular-nums; }
 .db-ai-hist-title {
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-normal);
+  color: var(--db-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .db-ai-hist-files {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--db-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -9852,19 +9892,42 @@ body .db-journal-root .db-filter-q:focus {
   flex: 0 0 auto;
   min-height: 32px;
   padding: 4px 12px;
-  border: 1px solid var(--background-modifier-border);
+  border: 1px solid var(--db-border);
   border-radius: var(--radius-s, 6px);
-  background: var(--background-primary);
-  color: var(--text-normal);
+  background: var(--db-surface);
+  color: var(--db-text);
   font-size: 12px;
   box-shadow: none;
   cursor: pointer;
 }
-.db-ai-hist button.db-ai-hist-btn:hover { background: var(--background-modifier-hover); }
+.db-ai-hist button.db-ai-hist-btn:hover { background: var(--db-bg-hover); }
 .db-ai-hist button.db-ai-hist-btn:disabled { opacity: 0.5; cursor: default; }
-.db-ai-hist button.db-ai-hist-btn:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
+.db-ai-hist button.db-ai-hist-btn:focus-visible { outline: 2px solid var(--db-accent); outline-offset: 2px; }
 
 @media (max-width: 620px) {
   .db-ai-hist-list { max-height: 55vh; }
   .db-ai-hist button.db-ai-hist-btn { min-height: 44px; padding: 4px 14px; }
+}
+
+/* ════════════════════════════════════════════════════════
+   Notion 米纸 · db 弹窗表面
+   Obsidian 的 .modal 面随主题变色；db 弹窗挂在 body 下拿得到全局令牌，
+   这里把插件自己的弹窗统一成白页面 + 墨色正文（固定浅色）。
+   ════════════════════════════════════════════════════════ */
+.modal.db-sheet,
+.modal.db-cat-modal,
+.modal.db-date-select-modal,
+.modal.db-plan-sort-modal,
+.modal.db-task-detail-modal,
+.modal-content.db-checkin-time-modal,
+.modal-content.db-detail-modal,
+.modal-content.db-habit-day-modal,
+.modal-content.db-habit-edit-modal,
+.modal-content.db-habit-note-modal,
+.modal-content.db-memo-search,
+.modal-content.db-plan-sort,
+.modal-content.db-random-memo,
+.modal-content.db-task-detail {
+  background: var(--notion-page);
+  color: var(--notion-ink);
 }
