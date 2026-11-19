@@ -14,6 +14,7 @@ import { migrateLegacyHabits, migrateHabitKeys } from "./habitManager";
 import { migrateStorageRoot } from "./fileManager";
 import { migrateDramaJsonToMd } from "./dramaStore";
 import { CompletionFeedback } from "./feedback";
+import { installFloatingField } from "./floatField";
 
 export default class DaybookPlugin extends Plugin {
   settings: DaybookSettings = DEFAULT_SETTINGS;
@@ -87,6 +88,10 @@ export default class DaybookPlugin extends Plugin {
         void this.activateView().then(() => this.getJournalView()?.openAiPage());
       },
     });
+
+    // 移动端键盘避让悬浮编辑（Notion 式）：聚焦文本字段会被键盘盖住时，
+    // 字段悬浮到键盘顶上方 8px；已在键盘上方则保持原位。详见 src/floatField.ts。
+    installFloatingField(this);
   }
 
   async loadSettings() {

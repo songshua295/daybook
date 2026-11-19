@@ -1,5 +1,5 @@
 /**
- * ledgerPage.ts — 记账（ledger）章节的六页 UI
+ * ledgerPage.ts — 记账（ledger）章节的七页 UI
  *
  * 页头不放页名/圆点：页名经 onPageTitle 并入顶栏章节标题（「记账 · 首页」），切页走顶栏「切换页面」菜单。
  * 记一笔 = 视图内底部浮层 sheet（不新开 tab）；编辑单条记录 = 页内整页二级页（移动端不再被浮层压掉可视面积）。
@@ -22,14 +22,14 @@ import {
   EXPENSE_COLORS, INCOME_COLORS, Box, Slice,
   compactMoney, donutArcs, niceCeil, pctText, seriesPoints, smoothAreaPath, smoothPath, toSlices,
 } from "./ledgerCharts";import {
-  LedgerStore, LedgerRecord, LedgerConfig, LedgerKind, LedgerCategory, LedgerAccount,
+  LedgerStore, LedgerRecord, LedgerConfig, LedgerKind, LedgerCategory, LedgerAccount, CategoryBudget,
   actualAmount, baseAmount, fmtMoney, round2, summarize, categoryStats,
   accountBalances, reimbTotal, makeRecordId,
 } from "./ledgerStore";
 
-type PageKind = "home" | "list" | "assets" | "stats" | "report" | "settings";
-const PAGE_ORDER: PageKind[] = ["home", "list", "assets", "stats", "report", "settings"];
-const PAGE_TITLES: Record<PageKind, string> = { home: "首页", list: "视图", assets: "资产", stats: "统计", report: "报表", settings: "设置" };
+type PageKind = "home" | "list" | "assets" | "budget" | "stats" | "report" | "settings";
+const PAGE_ORDER: PageKind[] = ["home", "list", "assets", "budget", "stats", "report", "settings"];
+const PAGE_TITLES: Record<PageKind, string> = { home: "首页", list: "视图", assets: "资产", budget: "预算", stats: "统计", report: "报表", settings: "设置" };
 
 /** 设置二级页（菜单行 → 页内整页，不弹浮层） */
 type SettingsSub = "ledgers" | "accounts" | "categories" | "currencies" | "data" | "other";
@@ -230,10 +230,164 @@ class AssetBalanceModal extends Modal {
   onClose(): void { this.contentEl.empty(); }
 }
 
+/** 总预算：金额从首次设置的月份起每月沿用；填 0 清除 */
+class BudgetTotalModal extends Modal {
+  constructor(
+    app: App,
+    private opts: {
+      month: string;
+      current: number;
+      symbol: string;
+      save: (amount: number) => Promise<void>;
+      onDone: () => void;
+    },
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.createEl("h3", { text: "总预算" });
+    const input = contentEl.createEl("input", {
+      cls: "db-led-input db-led-input-num",
+      attr: { type: "text", inputMode: "decimal", placeholder: this.opts.symbol, "aria-label": "总预算金额" },
+    });
+    input.value = this.opts.current > 0 ? String(this.opts.current) : "";
+    input.focus();
+    input.select();
+    if (this.opts.current <= 0) {
+      contentEl.createDiv({ cls: "db-led-note", text: `从 ${this.opts.month.replace("-", "年")}月 起每月沿用` });
+    }
+
+    const submit = (): void => {
+      const amount = parseFloat(input.value);
+      if (!isFinite(amount) || amount < 0) { new Notice("请输入正确的预算金额"); return; }
+      this.close();
+      void (async () => {
+        await this.opts.save(round2(amount));
+        this.opts.onDone();
+      })();
+    };
+
+    const btns = contentEl.createDiv({ cls: "db-mood-modal-btns" });
+    const cancel = btns.createEl("button", { text: "取消" });
+    cancel.onclick = () => this.close();
+    const ok = btns.createEl("button", { text: "保存", cls: "mod-cta" });
+    ok.onclick = submit;
+    input.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+  }
+
+  onClose(): void { this.contentEl.empty(); }
+}
+
+/** 分类预算：新增时选分类；「仅本月」关闭 = 从当前查看月开始每月沿用 */
+class BudgetCategoryModal extends Modal {
+  constructor(
+    app: App,
+    private opts: {
+      month: string;
+      symbol: string;
+      categories: LedgerCategory[];
+      existing?: CategoryBudget;
+      save: (b: CategoryBudget) => Promise<void>;
+      onDone: () => void;
+    },
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    const existing = this.opts.existing;
+    contentEl.createEl("h3", { text: existing ? "编辑分类预算" : "添加分类预算" });
+    let categoryId = existing?.categoryId ?? "";
+    let once = existing?.once ?? false;
+
+    if (existing) {
+      const name = this.opts.categories.find(c => c.id === existing.categoryId)?.name ?? "未分类";
+      contentEl.createDiv({ cls: "db-led-budget-modal-cat", text: name });
+    } else {
+      const field = contentEl.createDiv({ cls: "db-cat-modal-field" });
+      new NotionSelect(field, {
+        options: this.opts.categories.map(c => ({ value: c.id, label: c.name })),
+        value: "",
+        placeholder: "选择分类",
+        searchPlaceholder: "搜索分类…",
+        ariaLabel: "分类预算的分类",
+        onSelect: v => { categoryId = v; },
+      });
+    }
+
+    const input = contentEl.createEl("input", {
+      cls: "db-led-input db-led-input-num",
+      attr: { type: "text", inputMode: "decimal", placeholder: `${this.opts.symbol} 预算金额`, "aria-label": "分类预算金额" },
+    });
+    input.value = existing ? String(existing.amount) : "";
+    // 新增时先选分类：不要抢焦点弹键盘，否则下拉被键盘盖住
+    if (existing) {
+      input.focus();
+      input.select();
+    }
+
+    /* 仅本月：属性勾选框（勾上 = 一次性，不勾 = 每月沿用） */
+    const cbRow = contentEl.createDiv({ cls: "db-led-check-row" });
+    const box = cbRow.createDiv({
+      cls: `db-led-checkbox${once ? " is-checked" : ""}`,
+      attr: { role: "checkbox", tabindex: "0", "aria-checked": String(once), "aria-label": "仅本月" },
+    });
+    setIcon(box, "check");
+    cbRow.createSpan({ cls: "db-led-set-label", text: "仅本月" });
+    const state = contentEl.createDiv({ cls: "db-led-note" });
+    const syncState = () => state.setText(once ? "下月自动消失" : "每月自动沿用");
+    const toggle = () => {
+      once = !once;
+      box.toggleClass("is-checked", once);
+      box.setAttribute("aria-checked", String(once));
+      syncState();
+    };
+    syncState();
+    cbRow.addEventListener("click", toggle);
+    box.addEventListener("keydown", e => {
+      if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); toggle(); }
+    });
+
+    const submit = (): void => {
+      if (!categoryId) { new Notice("请选择分类"); return; }
+      const amount = parseFloat(input.value);
+      if (!isFinite(amount) || amount <= 0) { new Notice("请输入正确的预算金额"); return; }
+      const month = once ? this.opts.month : (existing?.month ?? this.opts.month);
+      const b: CategoryBudget = {
+        id: existing?.id ?? uid(),
+        categoryId,
+        amount: round2(amount),
+        once,
+        month,
+        createdAt: existing?.createdAt ?? Date.now(),
+      };
+      this.close();
+      void (async () => {
+        await this.opts.save(b);
+        this.opts.onDone();
+      })();
+    };
+
+    const btns = contentEl.createDiv({ cls: "db-mood-modal-btns" });
+    const cancel = btns.createEl("button", { text: "取消" });
+    cancel.onclick = () => this.close();
+    const ok = btns.createEl("button", { text: "保存", cls: "mod-cta" });
+    ok.onclick = submit;
+    input.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+  }
+
+  onClose(): void { this.contentEl.empty(); }
+}
+
 export class LedgerPage {
   private store: LedgerStore;
   private page: PageKind = "home";
   private month = moment().format("YYYY-MM");
+  /** 预算页独立的查看月份（不跟报表 / 视图的月份联动） */
+  private budgetMonth = moment().format("YYYY-MM");
   private listLedgerId = "";
   private listKind: "all" | LedgerKind = "all";
   /** 视图页当前呈现方式与日历选中日 */
@@ -276,6 +430,9 @@ export class LedgerPage {
   /** 账户图标选择页（账户管理之下的三级页，null = 不在选择图标） */
   private iconPickFor: string | null = null;
   private iconSentinelArmed = false;
+  /** 预算页从别的页进入时压一枚哨兵：返回键退回进入前的页面（如首页概览卡的预算入口） */
+  private budgetSentinelArmed = false;
+  private budgetBackTo: PageKind | null = null;
   private sentinelArmed = false;
   private destroyed = false;
   private onPop: (e: PopStateEvent) => void;
@@ -333,6 +490,18 @@ export class LedgerPage {
         this.render();
         return;
       }
+      /* 预算页压在进入前的页面之上：返回键退回上一个页面（哨兵已被系统消费） */
+      if (this.budgetSentinelArmed) {
+        this.budgetSentinelArmed = false;
+        const backTo = this.budgetBackTo;
+        this.budgetBackTo = null;
+        if (backTo && backTo !== this.page) {
+          this.page = backTo;
+          this.render();
+          scrollPageToTop(this.host);
+        }
+        return;
+      }
       if (!this.settingsSub || !this.subSentinelArmed) return;
       /* 图标选择页压在账户管理之上：返回键先退这一层（哨兵已被系统消费，不再重压） */
       if (this.iconPickFor) {
@@ -373,6 +542,8 @@ export class LedgerPage {
     if (this.assetSentinelArmed) { back++; this.assetSentinelArmed = false; this.assetDetailId = null; }
     if (this.mgrSentinelArmed) { back++; this.mgrSentinelArmed = false; this.mgrOpen = false; }
     if (this.drillSentinelArmed) { back++; this.drillSentinelArmed = false; this.reportDrill = null; }
+    if (this.budgetSentinelArmed) { back++; this.budgetSentinelArmed = false; }
+    this.budgetBackTo = null;
     if (this.iconSentinelArmed) { back++; this.iconSentinelArmed = false; this.iconPickFor = null; }
     if (this.subSentinelArmed) { back++; this.subSentinelArmed = false; this.settingsSub = null; }
     this.reclaimHistory(back);
@@ -389,11 +560,18 @@ export class LedgerPage {
   }
 
   setPage(p: PageKind): void {
+    const prevPage = this.page;
     /* 从二级页切走时回收哨兵，避免残留 history 记录（编辑页打开时顶栏仍可直达）。
        清理必须放在同页判断之前：下钻页 / 资产详情 / 设置子页等二级层盖在当前页上时
        this.page 不变，先早退会跳过拆层——切「被盖住的那一页」就第一次点不动了
        （如报表下钻页里切「报表」）。同页且无二级层时，重渲染 + 回顶也无害。 */
     let back = 0;
+    /* 离开预算页：清掉来源页（页头「返回」随之消失），手机端同时回收返回键哨兵 */
+    if (this.page === "budget" && p !== "budget") {
+      if (this.budgetSentinelArmed) back++;
+      this.budgetSentinelArmed = false;
+      this.budgetBackTo = null;
+    }
     if (this.mgrOpen) {
       if (this.mgrSentinelArmed) back++;
       this.mgrOpen = false;
@@ -427,8 +605,17 @@ export class LedgerPage {
     }
     this.reclaimHistory(back);
     this.page = p;
+    /* 预算页记住来源页（页头「返回」靠它）：要在 render 之前写入，首次进入就显示返回。
+       手机端再压一枚返回哨兵，让安卓返回键也退回进入前的页面；只有本次没有同时
+       回收二级层哨兵时才压（back === 0），避免 go(-n) 与 pushState 抢历史。 */
+    const enteringBudget = p === "budget" && prevPage !== "budget";
+    if (enteringBudget) this.budgetBackTo = prevPage;
     this.render();
     scrollPageToTop(this.host);
+    if (enteringBudget && back === 0 && Platform.isMobileApp) {
+      window.history.pushState({ daybookBack: "ledger-budget" }, "");
+      this.budgetSentinelArmed = true;
+    }
   }
 
   /**
@@ -570,6 +757,20 @@ export class LedgerPage {
     /* 首页不建页头：正文里有大 CTA「添加一条新记账」，避免两个记一笔入口 */
     if (this.page !== "home") {
       const header = host.createDiv({ cls: "db-led-header" });
+      /* 预算页是首页二级入口：页头左侧固定给返回（PC 端没有系统返回键）。
+         来源页缺失时兜底回首页，保证按钮不会因为状态异常而消失。 */
+      if (this.page === "budget") {
+        const back = header.createEl("button", {
+          cls: "db-led-back",
+          attr: { type: "button", "aria-label": "返回上一页" },
+        });
+        setIcon(back.createSpan({ cls: "db-led-back-icon" }), "chevron-left");
+        back.createSpan({ text: "返回" });
+        back.addEventListener("click", () => {
+          const to = this.budgetBackTo && this.budgetBackTo !== "budget" ? this.budgetBackTo : "home";
+          this.setPage(to);
+        });
+      }
       const addBtn = header.createEl("button", {
         cls: "db-led-add", attr: { type: "button", "aria-label": "记一笔", title: "记一笔" },
       });
@@ -583,6 +784,7 @@ export class LedgerPage {
       case "home": this.renderHome(body); break;
       case "list": this.renderList(body); break;
       case "assets": this.renderAssets(body); break;
+      case "budget": this.renderBudget(body); break;
       case "stats": this.renderStats(body); break;
       case "report": this.renderReport(body); break;
       case "settings": this.renderSettings(body); break;
@@ -668,18 +870,35 @@ export class LedgerPage {
     const cur = moment().format("YYYY-MM");
     const monthRecs = this.store.monthRecords(cur);
     const sum = summarize(monthRecs, this.cfg);
+    const budget = this.budgetForMonth(cur);
+    const days = moment(cur + "-01").daysInMonth();
 
-    /* 概览卡：本月收入 / 结余 / 支出（参照记账 App 首页头部卡） */
+    /* 概览卡：本月收入 / 支出 / 结余 + 预算 / 日均预算（点预算两格进预算页） */
     const hero = body.createDiv({ cls: "db-led-card db-led-hero" });
     const grid = hero.createDiv({ cls: "db-led-hero-grid" });
-    const cell = (label: string, value: number) => {
-      const el = grid.createDiv({ cls: "db-led-hero-cell" });
+    const cell = (label: string, value: number, cls: string) => {
+      const el = grid.createDiv({ cls: `db-led-hero-cell ${cls}` });
       el.createDiv({ cls: "db-led-hero-label", text: label });
       el.createDiv({ cls: "db-led-hero-value", text: `${value < 0 ? "-" : ""}${fmtMoney(Math.abs(value))}` });
     };
-    cell("本月收入", sum.income);
-    cell("本月结余", sum.net);
-    cell("本月支出", sum.expense);
+    cell("本月收入", sum.income, "is-in");
+    cell("本月支出", sum.expense, "is-out");
+    cell("本月结余", sum.net, sum.net >= 0 ? "is-net" : "is-out");
+
+    const budgetRow = hero.createDiv({ cls: "db-led-hero-budget" });
+    const budgetCell = (label: string, value: number, cls: string) => {
+      const el = activatable(budgetRow.createDiv({ cls: `db-led-hero-cell ${cls}` }), `打开${label}页`);
+      const lab = el.createDiv({ cls: "db-led-hero-label" });
+      lab.createSpan({ text: label });
+      setIcon(lab.createSpan({ cls: "db-led-hero-chev" }), "chevron-right");
+      el.createDiv({ cls: "db-led-hero-value", text: value > 0 ? fmtMoney(value) : "—" });
+      el.addEventListener("click", () => {
+        this.budgetMonth = moment().format("YYYY-MM");
+        this.setPage("budget");
+      });
+    };
+    budgetCell("预算", budget.total, "is-budget");
+    budgetCell("日均预算", budget.total > 0 ? budget.total / days : 0, "is-day");
 
     /* 大 CTA：添加一条新记账 */
     const cta = body.createEl("button", { cls: "db-led-cta", attr: { type: "button" } });
@@ -693,6 +912,177 @@ export class LedgerPage {
     } else {
       body.createDiv({ cls: "db-led-empty", text: "还没有记录，点上面「添加一条新记账」开始第一笔吧。数据保存在 日记目录/ledger/ 下。" });
     }
+  }
+
+  /* ────────────────────────── 预算 ────────────────────────── */
+
+  private budgetForMonth(ym: string): { total: number; categories: CategoryBudget[] } {
+    return this.store.budgetForMonth(ym);
+  }
+
+  private stepBudgetMonth(delta: number): void {
+    this.budgetMonth = moment(`${this.budgetMonth}-01`).add(delta, "month").format("YYYY-MM");
+    this.render();
+  }
+
+  /** 已过天数：过去月 = 全月；本月 = 今天几号；未来月 = 0 */
+  private monthElapsed(ym: string): number {
+    const now = moment().format("YYYY-MM");
+    if (ym < now) return moment(`${ym}-01`).daysInMonth();
+    if (ym > now) return 0;
+    return moment().date();
+  }
+
+  private categorySpendMap(ym: string): Map<string, number> {
+    const map = new Map<string, number>();
+    for (const r of this.store.records) {
+      if (r.kind !== "expense" || !r.date.startsWith(ym)) continue;
+      const key = r.categoryId || "_none";
+      map.set(key, round2((map.get(key) ?? 0) + baseAmount(r, this.cfg)));
+    }
+    return map;
+  }
+
+  private openBudgetTotalModal(): void {
+    new BudgetTotalModal(this.app, {
+      month: this.budgetMonth,
+      current: this.store.budget.total?.amount ?? 0,
+      symbol: symbolOf(this.cfg.baseCurrency),
+      save: amount => this.store.setTotalBudget(amount, this.budgetMonth),
+      onDone: () => this.render(),
+    }).open();
+  }
+
+  private openBudgetCategoryModal(existing?: CategoryBudget): void {
+    const all = this.cfg.categories.filter(c => c.kind === "expense");
+    const used = new Set(this.budgetForMonth(this.budgetMonth).categories.map(c => c.categoryId));
+    const available = all.filter(c => !used.has(c.id));
+    if (!existing) {
+      if (!all.length) { new Notice("还没有支出分类，先去分类管理里新增"); return; }
+      if (!available.length) { new Notice("本月所有支出分类都已设置预算"); return; }
+    }
+    new BudgetCategoryModal(this.app, {
+      month: this.budgetMonth,
+      symbol: symbolOf(this.cfg.baseCurrency),
+      categories: existing ? all : available,
+      existing,
+      save: b => this.store.upsertCategoryBudget(b),
+      onDone: () => this.render(),
+    }).open();
+  }
+
+  /** 预算页：右上角切月；总预算四指标 + 分类预算列表（预算 / 已用 / 占比） */
+  private renderBudget(body: HTMLElement): void {
+    const ym = this.budgetMonth;
+    const sym = symbolOf(this.cfg.baseCurrency);
+
+    const top = body.createDiv({ cls: "db-led-budget-top" });
+    this.renderMonthNav(top, m => {
+      const b = this.budgetForMonth(m);
+      return b.total > 0 || b.categories.length > 0 || this.store.monthRecords(m).length > 0;
+    }, d => this.stepBudgetMonth(d), true, this.budgetMonth);
+
+    const days = moment(`${ym}-01`).daysInMonth();
+    const spent = summarize(this.store.monthRecords(ym), this.cfg).expense;
+    const budget = this.budgetForMonth(ym);
+    const total = budget.total;
+
+    const card = body.createDiv({ cls: "db-led-card db-led-budget-card" });
+    const head = card.createDiv({ cls: "db-led-budget-head" });
+    head.createSpan({ cls: "db-led-card-title", text: "总预算" });
+    const edit = head.createEl("button", {
+      cls: "db-led-budget-edit",
+      attr: { type: "button", "aria-label": "修改总预算", title: "修改总预算" },
+    });
+    setIcon(edit, "pencil");
+    edit.addEventListener("click", () => this.openBudgetTotalModal());
+
+    const line = card.createDiv({ cls: "db-led-budget-line" });
+    line.createSpan({ cls: "db-led-budget-amount", text: total > 0 ? `${sym}${fmtMoney(total)}` : "—" });
+    if (total > 0) {
+      const rest = round2(total - spent);
+      line.createSpan({
+        cls: `db-led-budget-left${rest < 0 ? " is-over" : ""}`,
+        text: rest >= 0 ? `剩余 ${sym}${fmtMoney(rest)}` : `超支 ${sym}${fmtMoney(-rest)}`,
+      });
+      const pct = spent / total;
+      const prow = card.createDiv({ cls: "db-led-budget-progress" });
+      const bar = prow.createDiv({ cls: `db-led-budget-bar${pct > 1 ? " is-over" : ""}` });
+      bar.createDiv({ cls: "db-led-budget-bar-fill" }).style.width = `${Math.min(100, pct * 100)}%`;
+      prow.createSpan({ cls: "db-led-budget-pct", text: `${Math.round(pct * 100)}%` });
+    } else {
+      const setup = card.createEl("button", { cls: "db-led-add", attr: { type: "button" }, text: "+ 设置总预算" });
+      setup.addEventListener("click", () => this.openBudgetTotalModal());
+    }
+
+    const stats = card.createDiv({ cls: "db-led-budget-stats" });
+    const stat = (label: string, text: string, cls: string) => {
+      const el = stats.createDiv({ cls: `db-led-budget-stat ${cls}` });
+      el.createDiv({ cls: "db-led-budget-stat-label", text: label });
+      el.createDiv({ cls: "db-led-budget-stat-value", text });
+    };
+    stat("预算支出", `${sym}${fmtMoney(spent)}`, "is-out");
+    stat("日均预算", total > 0 ? `${sym}${fmtMoney(total / days)}` : "—", "is-budget");
+    const elapsed = this.monthElapsed(ym);
+    stat("日均支出", elapsed > 0 ? `${sym}${fmtMoney(spent / elapsed)}` : "—", "is-out");
+    const isCurrent = ym === moment().format("YYYY-MM");
+    const todayLeft = isCurrent && total > 0
+      ? round2((total - spent) / Math.max(1, days - moment().date() + 1))
+      : null;
+    stat(
+      "今日剩余预算",
+      todayLeft === null ? "—" : `${todayLeft < 0 ? "-" : ""}${sym}${fmtMoney(Math.abs(todayLeft))}`,
+      todayLeft !== null && todayLeft < 0 ? "is-over" : "is-left",
+    );
+
+    const catCard = body.createDiv({ cls: "db-led-card" });
+    const catHead = catCard.createDiv({ cls: "db-led-budget-head" });
+    catHead.createSpan({ cls: "db-led-card-title", text: "分类预算" });
+    const spendMap = this.categorySpendMap(ym);
+    budget.categories.forEach(c => {
+      const cat = this.catOf(c.categoryId);
+      if (!cat) return;
+      const sp = spendMap.get(c.categoryId) ?? 0;
+      const over = sp > c.amount;
+      const pct = c.amount > 0 ? sp / c.amount : 0;
+      const row = activatable(
+        catCard.createDiv({ cls: `db-led-budget-row${over ? " is-over" : ""}` }),
+        `编辑${cat.name}预算`,
+      );
+      const rowHead = row.createDiv({ cls: "db-led-budget-row-head" });
+      const icon = rowHead.createDiv({ cls: "db-led-budget-icon" });
+      renderCategoryIcon(icon, cat.icon || guessCategoryIcon(cat.name), cat.name);
+      rowHead.createSpan({ cls: "db-led-budget-cat-name", text: cat.name });
+      if (c.once) rowHead.createSpan({ cls: "db-led-budget-tag", text: "仅本月" });
+      const del = rowHead.createEl("button", {
+        cls: "db-led-del",
+        attr: { type: "button", "aria-label": `删除${cat.name}预算`, title: "删除" },
+      });
+      setIcon(del, "trash-2");
+      del.addEventListener("click", e => {
+        e.stopPropagation();
+        new ConfirmModal(this.app, "删除分类预算",
+          c.once ? `删除「${cat.name}」本月的预算？` : `删除「${cat.name}」的分类预算？之后每月都不再显示。`,
+          "删除", () => {
+            void (async () => {
+              await this.store.removeCategoryBudget(c.id);
+              this.render();
+            })();
+          }).open();
+      });
+
+      const nums = row.createDiv({ cls: "db-led-budget-nums" });
+      nums.createSpan({ cls: "db-led-budget-num-budget", text: `预算 ${sym}${fmtMoney(c.amount)}` });
+      nums.createSpan({
+        cls: `db-led-budget-num-spent${over ? " is-over" : ""}`,
+        text: `已用 ${sym}${fmtMoney(sp)} · ${Math.round(pct * 100)}%`,
+      });
+      const bar = row.createDiv({ cls: `db-led-budget-row-bar${over ? " is-over" : ""}` });
+      bar.createDiv({ cls: "db-led-budget-row-fill" }).style.width = `${Math.min(100, pct * 100)}%`;
+      row.addEventListener("click", () => this.openBudgetCategoryModal(c));
+    });
+
+    this.addLink(catCard, "添加分类预算", () => this.openBudgetCategoryModal());
   }
 
   /* ────────────────────────── 视图（流水） ────────────────────────── */
@@ -1228,18 +1618,24 @@ export class LedgerPage {
    * 月份切换条（视图页与报表页共用，切月走 stepMonth）。
    * hasData：传入时对「选中的这个月没有数据」降淡显示月份名，一眼区分有账 / 没账的月份。
    */
-  private renderMonthNav(parent: HTMLElement, hasData?: (ym: string) => boolean): void {
-    const nav = parent.createDiv({ cls: "db-led-monthnav" });
+  private renderMonthNav(
+    parent: HTMLElement,
+    hasData?: (ym: string) => boolean,
+    onStep: (delta: number) => void = d => this.stepMonth(d),
+    end = false,
+    displayed: string = this.month,
+  ): void {
+    const nav = parent.createDiv({ cls: `db-led-monthnav${end ? " is-end" : ""}` });
     const prev = nav.createEl("button", { cls: "db-led-nav-btn", attr: { type: "button", "aria-label": "上一月" } });
     setIcon(prev, "chevron-left");
-    prev.addEventListener("click", () => this.stepMonth(-1));
+    prev.addEventListener("click", () => onStep(-1));
     nav.createSpan({
-      cls: `db-led-nav-label${hasData && !hasData(this.month) ? " is-empty" : ""}`,
-      text: `${this.month.replace("-", "年")}月`,
+      cls: `db-led-nav-label${hasData && !hasData(displayed) ? " is-empty" : ""}`,
+      text: `${displayed.replace("-", "年")}月`,
     });
     const next = nav.createEl("button", { cls: "db-led-nav-btn", attr: { type: "button", "aria-label": "下一月" } });
     setIcon(next, "chevron-right");
-    next.addEventListener("click", () => this.stepMonth(1));
+    next.addEventListener("click", () => onStep(1));
   }
 
   /** 报表的逐月区间：截至当前查看月份往前的 REPORT_MONTHS 个自然月 */
@@ -2463,6 +2859,8 @@ export class LedgerPage {
        由 focusin 取消计时。监听挂在 body 上：buildSheet 原地重绘会换新 body，
        旧监听随旧节点一起丢弃。 */
     let footHideTimer: number | null = null;
+    /* 仅移动端生效：桌面端没有键盘遮挡，收起只会让返回 / 保存凭空消失 */
+    const kbAvoid = Platform.isMobileApp;
     const isField = (node: EventTarget | null): node is HTMLElement => {
       const el = node as HTMLElement | null;
       return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable === true);
@@ -2480,9 +2878,11 @@ export class LedgerPage {
       }, 150);
     };
     body.addEventListener("focusin", (e: FocusEvent) => {
+      if (!kbAvoid) return;
       if (isField(e.target)) setEditingHidden(true);
     });
     body.addEventListener("focusout", (e: FocusEvent) => {
+      if (!kbAvoid) return;
       if (isField(e.relatedTarget)) return; // 光标只是在字段间移动
       setEditingHidden(false);
     });

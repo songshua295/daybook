@@ -95,6 +95,63 @@ export interface LedgerConfig {
   username: string;
 }
 
+/**
+ * 分类预算。
+ * once = true：只在 month 这一个月生效（如本月买羽绒服）；
+ * once = false：从 month 起每月自动沿用（如餐饮）。
+ * 已支出金额不落盘，始终由当月流水实时汇总。
+ */
+export interface CategoryBudget {
+  id: string;
+  categoryId: string;
+  amount: number;
+  once: boolean;
+  month: string;             // YYYY-MM
+  createdAt: number;
+}
+
+export interface LedgerBudget {
+  /** 每月总预算；from = 从哪个月开始沿用（编辑金额不改变起始月） */
+  total: { amount: number; from: string } | null;
+  categories: CategoryBudget[];
+}
+
+export function defaultLedgerBudget(): LedgerBudget {
+  return { total: null, categories: [] };
+}
+
+function normalizeBudget(raw: unknown): LedgerBudget {
+  const out = defaultLedgerBudget();
+  if (!raw || typeof raw !== "object") return out;
+  const data = raw as { total?: unknown; categories?: unknown };
+  if (data.total && typeof data.total === "object") {
+    const t = data.total as { amount?: unknown; from?: unknown };
+    const amount = Number(t.amount);
+    if (Number.isFinite(amount) && amount > 0 && typeof t.from === "string" && /^\d{4}-\d{2}$/.test(t.from)) {
+      out.total = { amount: round2(amount), from: t.from };
+    }
+  }
+  if (Array.isArray(data.categories)) {
+    data.categories.forEach(item => {
+      if (!item || typeof item !== "object") return;
+      const b = item as Partial<CategoryBudget>;
+      const amount = Number(b.amount);
+      const month = typeof b.month === "string" ? b.month : "";
+      if (!b.id || typeof b.categoryId !== "string" || !b.categoryId || !Number.isFinite(amount) || amount <= 0) return;
+      if (!/^\d{4}-\d{2}$/.test(month)) return;
+      out.categories.push({
+        id: String(b.id),
+        categoryId: b.categoryId,
+        amount: round2(amount),
+        once: !!b.once,
+        month,
+        createdAt: Number(b.createdAt) || Date.now(),
+      });
+    });
+  }
+  return out;
+}
+
 export function defaultLedgerConfig(): LedgerConfig {
   const uid = () => `c${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`;
   return {
@@ -249,6 +306,8 @@ export class LedgerStore {
   config: LedgerConfig = defaultLedgerConfig();
   records: LedgerRecord[] = [];
   batches: LedgerImportBatch[] = [];
+  /** 预算单独存 budget.json：总预算 + 分类预算（每月沿用 / 仅当月） */
+  budget: LedgerBudget = defaultLedgerBudget();
   private loaded = false;
 
   constructor(
@@ -319,6 +378,7 @@ export class LedgerStore {
     this.config = defaultLedgerConfig();
     this.records = [];
     this.batches = [];
+    this.budget = defaultLedgerBudget();
     this.configDirty = false;
     let settingsDirty = false;
     const legacyYears = new Set<string>();
@@ -354,6 +414,10 @@ export class LedgerStore {
         if (await this.app.vault.adapter.exists(this.pathOf("imports.json"))) {
           const raw = await this.readWithBackup<unknown>(this.pathOf("imports.json"), t => JSON.parse(t));
           if (Array.isArray(raw)) this.batches = raw;
+        }
+        if (await this.app.vault.adapter.exists(this.pathOf("budget.json"))) {
+          const raw = await this.readWithBackup<unknown>(this.pathOf("budget.json"), t => JSON.parse(t));
+          this.budget = normalizeBudget(raw);
         }
         const adapter = this.app.vault.adapter;
         if (await adapter.exists(this.dir)) {
@@ -611,6 +675,54 @@ export class LedgerStore {
 
   async saveBatches(): Promise<void> {
     await this.writeAtomic(this.pathOf("imports.json"), JSON.stringify(this.batches, null, 2));
+  }
+
+  /* ── 预算（budget.json）── */
+
+  async saveBudget(): Promise<void> {
+    await this.writeAtomic(this.pathOf("budget.json"), JSON.stringify(this.budget, null, 2));
+  }
+
+  /** 某月生效的预算：总预算从起始月沿用；分类预算按「仅当月 / 每月沿用」筛选，并过滤已删除的分类 */
+  budgetForMonth(ym: string): { total: number; categories: CategoryBudget[] } {
+    const total = this.budget.total && ym >= this.budget.total.from ? this.budget.total.amount : 0;
+    const categories = this.budget.categories.filter(b => {
+      if (!this.config.categories.some(c => c.id === b.categoryId)) return false;
+      return b.once ? b.month === ym : ym >= b.month;
+    });
+    return { total, categories };
+  }
+
+  /** 设置 / 修改总预算；首次设置从 from 月起沿用，之后改金额不改起始月 */
+  async setTotalBudget(amount: number, from: string): Promise<void> {
+    if (!(amount > 0)) {
+      this.budget.total = null;
+    } else {
+      const start = this.budget.total?.from || from;
+      if (!/^\d{4}-\d{2}$/.test(start)) return;
+      this.budget.total = { amount: round2(amount), from: start };
+    }
+    await this.saveBudget();
+  }
+
+  async upsertCategoryBudget(b: CategoryBudget): Promise<void> {
+    const idx = this.budget.categories.findIndex(x => x.id === b.id);
+    if (idx >= 0) this.budget.categories[idx] = b;
+    else this.budget.categories.push(b);
+    await this.saveBudget();
+  }
+
+  async removeCategoryBudget(id: string): Promise<void> {
+    const before = this.budget.categories.length;
+    this.budget.categories = this.budget.categories.filter(x => x.id !== id);
+    if (this.budget.categories.length !== before) await this.saveBudget();
+  }
+
+  /** 分类被删除时一并清掉它的预算 */
+  async removeBudgetsForCategory(categoryId: string): Promise<void> {
+    const before = this.budget.categories.length;
+    this.budget.categories = this.budget.categories.filter(x => x.categoryId !== categoryId);
+    if (this.budget.categories.length !== before) await this.saveBudget();
   }
 
   /**

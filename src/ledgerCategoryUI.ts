@@ -379,6 +379,7 @@ export function editCategoryDialogs(
           if (targetId) await store.retargetCategory(cat.id, targetId);
           const idx = store.config.categories.indexOf(cat);
           if (idx >= 0) store.config.categories.splice(idx, 1);
+          await store.removeBudgetsForCategory(cat.id);
           await save();
           onDone();
           new Notice(count && targetId ? `已删除「${cat.name}」，${count} 条记录已转移` : `已删除「${cat.name}」`);

@@ -171,7 +171,7 @@ class DramaExitModal extends Modal {
 }
 
 export class DramaPage {
-  /** 每次渲染后通知宿主（JournalView 用它同步 AI 悬浮球显隐：编辑二级页开着要收起） */
+  /** 每次渲染后通知宿主（JournalView 用它同步回顶钮显隐：编辑二级页开着要收起） */
   onRendered: (() => void) | null = null;
 
   private store: DramaStore;

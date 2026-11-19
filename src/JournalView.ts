@@ -1239,21 +1239,15 @@ export class DaybookView extends ItemView {
   private aiPage: AiChatPage | null = null;
   private aiHiddenEls: HTMLElement[] = [];
   private aiSentinelArmed = false;
-  /** AI 悬浮球：底部居中真悬浮（挂在视图内容容器上，不进滚动容器），一键进出 */
-  private aiFabEl: HTMLElement | null = null;
   /** 回到顶部悬浮钮（仅移动端）：锚容器右下角，root 滚到深处上滑时隐现 */
   private scrollTopBtn: ScrollTopButton | null = null;
-  /** 软键盘是否弹出：弹出期间悬浮球收起，别浮在打字区上方碍事 */
+  /** 软键盘是否弹出：弹出期间回顶钮收起，别浮在打字区上方碍事 */
   private aiKbVisible = false;
-  /** AI 页输入框聚焦中：桌面端没有键盘事件，靠焦点感知编辑态收起悬浮球 */
+  /** AI 页输入框聚焦中：桌面端没有键盘事件，靠焦点感知编辑态收起回顶钮 */
   private aiEditing = false;
-  /* 悬浮球长按拖动状态：计时器 / 是否拖动中 / 拖后吞掉紧跟的 click */
-  private fabPressTimer: number | null = null;
-  private fabDragging = false;
-  private fabSuppressClick = false;
   /** AI 写过文件：关闭本页时整页重建，让当前章节读到新内容 */
   private aiDirty = false;
-  /** 记账章节：五页浮层实例（视图重建 / 关闭时销毁） */
+  /** 记账章节：多页浮层实例（视图重建 / 关闭时销毁） */
   private ledgerPage: LedgerPage | null = null;
   /** 追剧章节：列表页 + 页内编辑二级页实例 */
   private dramaPage: DramaPage | null = null;
@@ -1272,9 +1266,8 @@ export class DaybookView extends ItemView {
     this.activeSectionId = this.plugin.settings.lastSectionId || this.activeSectionId;
     this.buildUI();
     this.setupViewportAdapter();
-    this.ensureAiFab();
     // 移动端长页「回到顶部」钮：滚过约两屏再上滑才隐现，二级页 / 键盘 / 编辑态收起
-    // （收起条件与悬浮球同一组；滚动容器 = root，buildUI 只 empty 不替换，绑一次即可）
+    // （滚动容器 = root，buildUI 只 empty 不替换，绑一次即可）
     this.scrollTopBtn = new ScrollTopButton(
       this.containerEl,
       () => this.containerEl.children[1] as HTMLElement ?? null,
@@ -1310,12 +1303,8 @@ export class DaybookView extends ItemView {
     this.dramaPage = null;
     this.aiPage?.destroy();
     this.aiPage = null;
-    this.aiFabEl?.remove();
-    this.aiFabEl = null;
     this.scrollTopBtn?.destroy();
     this.scrollTopBtn = null;
-    this.cancelFabPress();
-    this.fabDragging = false;
     // 停止录音并释放资源
     if (this.mediaRecorder && this.isRecording) {
       try {
@@ -1331,13 +1320,11 @@ export class DaybookView extends ItemView {
     const vp = activeWindow.visualViewport;
     this._vpResizeHandler = () => {
       this.applyViewportSize();
-      this.applyAiFabPos();   // 容器尺寸变了（转屏 / 分栏拖拽）：位置按比例重夹
     };
     vp?.addEventListener("resize", this._vpResizeHandler);
     // 工作区尺寸变化（分栏拖拽、旋转屏幕、原生头部显隐）时重算避让与折叠
     this.registerEvent(this.app.workspace.on("resize", () => {
       this.applyViewportSize();
-      this.applyAiFabPos();
     }));
     // 安卓端 Obsidian 滚动/键盘时会显隐底部导航栏、设置键盘高度（body class/style 变化），
     // 几何有变化时重算根容器高度与底部让位，保证固定输入栏/面板不被遮挡
@@ -1355,7 +1342,7 @@ export class DaybookView extends ItemView {
     this._kbShowHandler = () => {
       this.applyViewportSize();
       this.aiKbVisible = true;
-      this.syncAiFab();
+      this.scrollTopBtn?.sync();
       // 原生层先派发事件、后落地 --keyboard-height 与动画，连续补测对齐
       activeWindow.setTimeout(() => this.applyViewportSize(), 80);
       activeWindow.setTimeout(() => this.applyViewportSize(), 300);
@@ -1363,7 +1350,7 @@ export class DaybookView extends ItemView {
     this._kbHideHandler = () => {
       this.applyViewportSize();
       this.aiKbVisible = false;
-      this.syncAiFab();
+      this.scrollTopBtn?.sync();
       activeWindow.setTimeout(() => this.applyViewportSize(), 150);
     };
     activeWindow.addEventListener("keyboardWillShow", this._kbShowHandler as EventListener);
@@ -1660,8 +1647,8 @@ export class DaybookView extends ItemView {
     if (this.filterOpen) this.openFilterPanel();
     // 重建后立即让位底部导航栏（等不到下一次视口 resize）
     this.applyViewportSize();
-    // 切章节会销毁旧页面实例（不走它们的渲染回调）：这里兜底重算悬浮球显隐
-    this.syncAiFab();
+    // 切章节会销毁旧页面实例（不走它们的渲染回调）：这里兜底重算回顶钮显隐
+    this.scrollTopBtn?.sync();
   }
 
   /** 顶栏（memos 式三区）：左=筛选、中=章节切换标题、右=操作；窄屏溢出折进「＋」菜单 */
@@ -2135,7 +2122,7 @@ export class DaybookView extends ItemView {
     this.dashEl = host;
     this.dashPage = new DashboardPage(this.app, this.plugin, host, this.containerEl, "db-page-dashboard", () => this.closeDashboard());
     void this.dashPage.open();
-    this.syncAiFab();
+    this.scrollTopBtn?.sync();
     // 哨兵历史条目：返回键弹出它 → popstate 揭开新页；没有条目时返回键会直接退出应用
     if (Platform.isMobileApp) {
       this.dashSentinelArmed = true;
@@ -2160,7 +2147,7 @@ export class DaybookView extends ItemView {
     this.dashHiddenEls = [];
     // 顶栏刚从 display:none 恢复，重测折叠布局
     this.fitTopbar();
-    this.syncAiFab();
+    this.scrollTopBtn?.sync();
   }
 
   /* ── 页内新页面：AI 助手 ──
@@ -2185,17 +2172,17 @@ export class DaybookView extends ItemView {
     const host = root.createDiv({ cls: "db-page-ai" });
     this.aiEl = host;
     this.aiDirty = false;
-    /* 输入框聚焦 = 编辑态：悬浮球收起（点击别处 / 键盘收起失焦后还原）。
+    /* 输入框聚焦 = 编辑态：回顶钮收起（点击别处 / 键盘收起失焦后还原）。
        监听挂在 AI 页宿主上，随 aiEl.remove() 一起消失，不用手动清理。 */
     host.addEventListener("focusin", (e: FocusEvent) => {
       const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT")) { this.aiEditing = true; this.syncAiFab(); }
+      if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT")) { this.aiEditing = true; this.scrollTopBtn?.sync(); }
     });
     host.addEventListener("focusout", (e: FocusEvent) => {
       const next = e.relatedTarget as HTMLElement | null;
       if (next && (next.tagName === "TEXTAREA" || next.tagName === "INPUT")) return;
       this.aiEditing = false;
-      this.syncAiFab();
+      this.scrollTopBtn?.sync();
     });
     this.aiPage = new AiChatPage(
       this.app, this.plugin, host, this.containerEl,
@@ -2203,7 +2190,7 @@ export class DaybookView extends ItemView {
       () => { this.aiDirty = true; },
     );
     void this.aiPage.open();
-    this.syncAiFab();
+    this.scrollTopBtn?.sync();
     if (Platform.isMobileApp) {
       this.aiSentinelArmed = true;
       window.history.pushState({ daybookBack: "ai-page" }, "");
@@ -2233,143 +2220,7 @@ export class DaybookView extends ItemView {
       return;
     }
     this.fitTopbar();
-    this.syncAiFab();
-  }
-
-  /**
-   * AI 悬浮球：挂在视图内容容器（containerEl）上绝对定位——root（.view-content）本身就是
-   * 滚动容器，往它里面放只会「随内容滚 / 占一行」，算不上悬浮。整页重建（buildUI 的
-   * root.empty()）动不到它，所以只在 onOpen 建一次。顺带保证容器有定位上下文可锚。
-   * 点击 = 进出 AI 页；长按（~300ms）进入拖动，位置按「x 宽度比例 + y 像素」持久化。
-   */
-  private ensureAiFab(): void {
-    if (this.aiFabEl?.isConnected) return;
-    if (getComputedStyle(this.containerEl).position === "static") {
-      this.containerEl.style.position = "relative";
-    }
-    const fab = this.containerEl.createDiv({
-      cls: "db-ai-fab",
-      attr: { role: "button", tabindex: "0", "aria-label": "打开 AI 助手", title: "AI 助手" },
-    });
-    setIcon(fab, "sparkles");
-    fab.addEventListener("click", () => {
-      /* 拖完松手的那一下 pointerup 会跟发一个 click：吞掉，别当成「点按」 */
-      if (this.fabSuppressClick) { this.fabSuppressClick = false; return; }
-      if (this.aiEl) this.closeAiPage(); else this.openAiPage();
-    });
-    fab.addEventListener("keydown", (e: KeyboardEvent) => {
-      if ((e.key === "Enter" || e.key === " ") && !e.repeat) {
-        e.preventDefault();
-        if (this.aiEl) this.closeAiPage(); else this.openAiPage();
-      }
-    });
-    /* 长按拖动：按住 ~300ms 进拖动态，跟手移动并实时记忆；轻移 / 抬手则还是普通点按。
-       监听挂 window（不 setPointerCapture），手指移出球也能继续拖。 */
-    fab.addEventListener("pointerdown", (e: PointerEvent) => {
-      if (e.pointerType === "mouse" && e.button !== 0) return;
-      const startX = e.clientX;
-      const startY = e.clientY;
-      /* 抓取偏移：拖动保持手指相对球的位置，而不是把球瞬移到指尖 */
-      const rect0 = this.containerEl.getBoundingClientRect();
-      const grabDx = (parseFloat(fab.style.left) || rect0.width / 2) - (startX - rect0.left);
-      const grabDy = (parseFloat(fab.style.bottom) || 22) - (rect0.bottom - startY);
-      this.fabPressTimer = activeWindow.setTimeout(() => {
-        this.fabPressTimer = null;
-        this.fabDragging = true;
-        fab.addClass("is-drag");
-      }, 300);
-      const move = (ev: PointerEvent) => {
-        if (!this.fabDragging) {
-          /* 还没进入拖动就滑走 = 用户在滚动页面：撤掉长按计时，别拦着 */
-          if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 8) this.cancelFabPress();
-          return;
-        }
-        ev.preventDefault();
-        this.dragAiFabTo(ev.clientX, ev.clientY, grabDx, grabDy);
-      };
-      const up = () => {
-        this.cancelFabPress();
-        if (this.fabDragging) {
-          this.fabDragging = false;
-          fab.removeClass("is-drag");
-          this.fabSuppressClick = true;
-          this.applyAiFabPos();
-          void this.plugin.saveSettings();
-        }
-        cleanup();
-      };
-      const cleanup = () => {
-        activeWindow.removeEventListener("pointermove", move);
-        activeWindow.removeEventListener("pointerup", up);
-        activeWindow.removeEventListener("pointercancel", up);
-      };
-      activeWindow.addEventListener("pointermove", move, { passive: false });
-      activeWindow.addEventListener("pointerup", up);
-      activeWindow.addEventListener("pointercancel", up);
-    });
-    /* 手机长按会弹系统菜单 / 选中文字：球上全部拦掉（右键同理） */
-    fab.addEventListener("contextmenu", e => e.preventDefault());
-    this.aiFabEl = fab;
-    this.syncAiFab();
-  }
-
-  /** 取消未触发的长按计时 */
-  private cancelFabPress(): void {
-    if (this.fabPressTimer) { activeWindow.clearTimeout(this.fabPressTimer); this.fabPressTimer = null; }
-  }
-
-  /** 拖动中：球心跟随手指（保持抓取偏移），夹在容器内，位置实时写进设置（松手才落盘） */
-  private dragAiFabTo(cx: number, cy: number, grabDx: number, grabDy: number): void {
-    const fab = this.aiFabEl;
-    if (!fab) return;
-    const rect = this.containerEl.getBoundingClientRect();
-    const w = this.containerEl.clientWidth || 1;
-    const h = this.containerEl.clientHeight || 1;
-    const r = 20;
-    const x = Math.min(Math.max(cx - rect.left + grabDx, r), Math.max(r, w - r));
-    const yBottom = Math.min(Math.max(rect.bottom - cy + grabDy, r), Math.max(r, h - r));
-    fab.style.left = `${Math.round(x)}px`;
-    fab.style.bottom = `${Math.round(yBottom)}px`;
-    this.plugin.settings.aiFabPos = { x: x / w, y: yBottom };
-  }
-
-  /** 把持久化位置落到球上：x 存宽度比例（转屏自适应），bottom 存像素；越界夹回容器内 */
-  private applyAiFabPos(minBottom = 0): void {
-    const fab = this.aiFabEl;
-    if (!fab) return;
-    const w = this.containerEl.clientWidth || 320;
-    const h = this.containerEl.clientHeight || 480;
-    const pos = this.plugin.settings.aiFabPos;
-    const r = 20;
-    const x = pos ? pos.x * w : w / 2;
-    const y = Math.max(pos ? pos.y : 22, minBottom);
-    fab.style.left = `${Math.round(Math.min(Math.max(x, r), Math.max(r, w - r)))}px`;
-    fab.style.bottom = `${Math.round(Math.min(Math.max(y, r), Math.max(r, h - r)))}px`;
-  }
-
-  /**
-   * AI 悬浮球显隐：统计面板 / 记账、追剧编辑二级页 / 软键盘弹出时收起（前两者自带返回，
-   * 编辑页底部是全宽吸底操作条，球停底部会压住「确定」；键盘弹出时别浮在打字区上）。
-   * AI 页里保持显示——点击即退出，但位置要抬到底部输入条上方，别压住输入框。
-   * 编辑页的开 / 关通过 LedgerPage.onPageTitle 与 DramaPage.onRendered 回调同步到这里。
-   */
-  private syncAiFab(): void {
-    // 回顶钮与悬浮球共用同一组收起时机（二级页 / 键盘 / 编辑态），跟随这里一起重算
     this.scrollTopBtn?.sync();
-    const fab = this.aiFabEl;
-    if (!fab) return;
-    const hide = !!(
-      this.dashEl || this.aiKbVisible || this.aiEditing ||
-      this.ledgerPage?.isEditing() || this.dramaPage?.isEditing()
-    );
-    fab.style.display = hide ? "none" : "";
-    if (hide) return;
-    let minBottom = 0;
-    if (this.aiEl) {
-      const composer = this.aiEl.querySelector(".db-ai-composer");
-      if (composer instanceof HTMLElement) minBottom = composer.offsetHeight + 10;
-    }
-    this.applyAiFabPos(minBottom);
   }
 
   /** 追剧「显示字段」抽屉：逐字段开关，点一下即时写设置并就地重排列表 */
@@ -2582,7 +2433,7 @@ export class DaybookView extends ItemView {
     else this.renderMemosTab(container, section);
   }
 
-  /** 记账：五页（首页/视图/资产/统计/设置）在页面内渲染，记一笔为贴视口底部的浮层 sheet */
+  /** 记账：七页（首页/视图/资产/预算/统计/报表/设置）在页面内渲染，记一笔为贴视口底部的浮层 sheet */
   private async renderLedgerTab(container: HTMLElement) {
     container.empty();
     container.addClass("db-ledger-tab");
@@ -2593,8 +2444,8 @@ export class DaybookView extends ItemView {
       if (this._currentSection?.type !== "ledger") return;
       const lbl = this.topbarEl?.querySelector(".db-section-trigger-label");
       if (lbl) lbl.setText(`${this._currentSection.label} · ${t}`);
-      // 每次记账页渲染（含编辑二级页进出）都会走这里：顺路同步悬浮球显隐
-      this.syncAiFab();
+      // 每次记账页渲染（含编辑二级页进出）都会走这里：顺路同步回顶钮显隐
+      this.scrollTopBtn?.sync();
     };
     await this.ledgerPage.mount();
   }
@@ -2605,8 +2456,8 @@ export class DaybookView extends ItemView {
     container.addClass("db-drama-tab");
     this.dramaPage?.destroy();
     this.dramaPage = new DramaPage(this.app, this.plugin, container);
-    // 追剧每次渲染（含编辑二级页进出）通知悬浮球同步显隐
-    this.dramaPage.onRendered = () => this.syncAiFab();
+    // 追剧每次渲染（含编辑二级页进出）通知回顶钮同步显隐
+    this.dramaPage.onRendered = () => this.scrollTopBtn?.sync();
     await this.dramaPage.mount();
   }
 

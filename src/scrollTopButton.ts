@@ -3,7 +3,7 @@
  *
  * 首页内容（今日记录流懒加载、记账 / 追剧列表等）在 .db-journal-root 里可以滚很长，
  * 手机上滚深了再回顶很费指头。本钮锚在视图内容容器（containerEl）右下角——
- * 与 AI 悬浮球同款锚定：不进滚动容器（absolute 放进滚动容器会被拉成整页内容高度），
+ * 绝对定位挂容器、不进滚动容器（absolute 放进滚动容器会被拉成整页内容高度），
  * 底部让位 --db-bottom-inset（导航栏 / 手势条；JournalView.applyViewportSize 把同一个值
  * 在 root 和容器上各写一份，按钮在 root 外也能读到）。
  *
@@ -15,7 +15,7 @@
  * - 出现后有下滑动作 → 立即隐没；回到距顶部约半屏内 → 无条件隐没（太浅没必要）；
  * - 点按 = 平滑回顶：点下即隐，动画期间的滚动事件不参与判定，
  *   手指一碰就打断动画，深处会重新亮出。
- * 二级页 / 键盘 / 编辑态（与 AI 悬浮球同一组条件）由 isSuppressed 强制隐藏。
+ * 二级页 / 键盘 / 编辑态由 isSuppressed 强制隐藏。
  * 仅移动端挂载（Platform.isMobileApp）：桌面端滚轮回顶毫无压力，不添乱。
  */
 import { Platform, setIcon } from "obsidian";

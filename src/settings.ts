@@ -169,8 +169,6 @@ export interface DaybookSettings {
   aiBaseUrl?: string;               // 覆盖厂商默认地址；空 = 用预设
   aiModel?: string;                 // 覆盖厂商默认模型；空 = 用预设
   aiApiKey?: string;                // 第三方 API Key（存在 data.json 内，仅本机）
-  /** AI 悬浮球位置：x = 容器宽度的比例（0~1），y = 距容器底部的像素；缺省 = 底部居中 22px */
-  aiFabPos?: { x: number; y: number };
 }
 
 /** 数据根与记账默认（所有类型默认目录统一在 Daybook/ 下） */
@@ -255,7 +253,7 @@ export const SECTION_TYPE_INFO: Record<SectionType, { label: string; emoji: stri
   memos: { label: "闪念", emoji: "⚡", desc: "快速记录，支持加粗/删除线/双链/图片/标签" },
   plans: { label: "待办计划", emoji: "\u{1F4C5}", desc: "待办输入 + 日期提取 + 优先级 + 子任务" },
   habits: { label: "习惯打卡", emoji: "\u{1F4A7}", desc: "每习惯一个 md（默认 Daybook/habits/习惯名.md，可手动编辑）· 详情页含打卡月历 + 周/月/年趋势图" },
-  ledger: { label: "记账", emoji: "\u{1F4B0}", desc: "记一笔/视图/资产/统计/设置 五页 · 数据存 hledger journal（默认 Daybook/记账/，后缀可在设置中改）" },
+  ledger: { label: "记账", emoji: "\u{1F4B0}", desc: "记一笔/视图/资产/预算/统计/报表/设置 七页 · 数据存 hledger journal（默认 Daybook/记账/，后缀可在设置中改）" },
   drama: { label: "追剧", emoji: "\u{1F4FA}", desc: "剧集卡片列表 + 页内编辑 · 数据存 Daybook/drama/shows.md（中文键值 + 笔记区，不写日记正文）" },
 };
 
