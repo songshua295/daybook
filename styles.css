@@ -1616,8 +1616,10 @@ body,
   min-height: 0;
 }
 
-/* Obsidian 默认关闭按钮可能挂在 .modal-container 下（不是 .modal 子元素），用 :has 一并隐藏 */
-.modal-container:has(.db-sheet) .modal-close-button { display: none; }
+/* Obsidian 默认关闭按钮可能挂在 .modal-container 下（不是 .modal 子元素），用 :has 一并隐藏；
+   新版类名是 .modal-header-button，旧版是 .modal-close-button，两个都挡 */
+.modal-container:has(.db-sheet) .modal-close-button,
+.modal-container:has(.db-sheet) .modal-header-button { display: none; }
 
 .db-sheet-head {
   display: flex;
@@ -5569,9 +5571,15 @@ body .db-journal-root .db-filter-q:focus {
   border-radius: var(--db-radius-lg);
   background: var(--db-bg);
 }
-/* 用页面自带的收起按钮，隐藏 Obsidian 默认标题栏与右上角 × */
+/* 计划详情顶栏：左上自绘「⌄ 关闭」+ 右上「更多」。
+   原生帧（标题栏 / 右上 ×）全部隐藏；× 在新版叫 .modal-header-button、
+   旧版叫 .modal-close-button，再按结构兜底：.modal 下除正文外都不显示 */
+.modal-container:has(.db-task-detail-modal) .modal > :not(.modal-content),
+.modal-container:has(.db-task-detail-modal) .modal-close-button,
+.modal-container:has(.db-task-detail-modal) .modal-header-button,
 .db-task-detail-modal .modal-header,
-.db-task-detail-modal .modal-close-button {
+.db-task-detail-modal .modal-close-button,
+.db-task-detail-modal .modal-header-button {
   display: none;
 }
 .modal-content.db-task-detail {
@@ -6161,7 +6169,8 @@ body .db-journal-root .db-filter-q:focus {
 }
 /* 面板自带「点外面 / Esc」关闭，不需要原生标题栏与 × */
 .db-plan-sort-modal .modal-header,
-.db-plan-sort-modal .modal-close-button { display: none; }
+.db-plan-sort-modal .modal-close-button,
+.db-plan-sort-modal .modal-header-button { display: none; }
 .modal-content.db-plan-sort {
   display: flex;
   flex-direction: column;
@@ -6238,7 +6247,7 @@ body .db-journal-root .db-filter-q:focus {
 
 
 /* ════════════════════════════════════════════════════════
-   14. 记账章节（db-led-*）：七页（首页/视图/资产/预算/统计/报表/设置）+ 记一笔 sheet
+   14. 记账章节（db-led-*）：六页（首页/资产/预算/统计/报表/设置）+ 首页 FAB / 所有交易页 / 日历详情页 + 记一笔 sheet
    配色沿用 db tokens：收入绿 / 支出红 / 强调 accent（与习惯、计划章节同色板）
    ═══════════════════════════════════════════════════════ */
 .db-led-root,
@@ -6254,6 +6263,9 @@ body .db-journal-root .db-filter-q:focus {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* 同 .db-page：撑满 .db-scroll（≥滚动容器一屏），短内容时 FAB / 批量操作条仍压在底边 */
+  flex: 1 1 auto;
+  min-height: 100%;
 }
 
 /* ── 页头：仅记一笔按钮（页名在顶栏章节标题，圆点已移除） ── */
@@ -6285,7 +6297,7 @@ body .db-journal-root .db-filter-q:focus {
 @media (hover: hover) {
   .db-led-root .db-led-header button.db-led-back:hover { background: var(--notion-hover); }
 }
-.db-led-header .db-led-add {
+.db-led-header .db-led-add, .db-led-subhead .db-led-add {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -6809,6 +6821,322 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-led-cta-icon { display: inline-flex; }
 .db-led-cta-icon svg { width: 18px; height: 18px; }
+
+/* ── 首页 FAB：外层 sticky 压滚动容器底边（height:0 不占文档流），内层绝对定位 ── */
+.db-led-fab-wrap {
+  position: sticky;
+  bottom: calc(12px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  height: 0;
+  z-index: 30;
+}
+.db-led-fab {
+  position: absolute;
+  right: 14px;
+  bottom: 0;
+  width: 54px;
+  height: 54px;
+  border: none;
+  border-radius: 50%;
+  background: var(--db-cta);
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  /* FAB 是真正浮起来的元素：全风格少数允许阴影处之一 */
+  box-shadow: 0 8px 24px rgba(15, 15, 15, 0.18);
+}
+.db-led-fab:active { background: color-mix(in srgb, var(--db-accent) 78%, var(--db-text)); }
+.db-led-fab-icon { display: inline-flex; }
+.db-led-fab-icon svg { width: 22px; height: 22px; }
+
+/* ── 首页分区头：标题 + 右侧圆形箭头（最近交易 → 所有交易） ── */
+.db-led-sec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 2px 0;
+}
+.db-led-sec-title { font-size: 13px; font-weight: 600; color: var(--db-text-muted); }
+.db-led-sec-more {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--db-text-sub);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.db-led-sec-more:active { background: var(--notion-hover-deep); }
+@media (hover: hover) {
+  .db-led-sec-more:hover { background: var(--notion-hover); }
+}
+.db-led-sec-more svg { width: 18px; height: 18px; }
+
+/* ── 首页紧凑日历卡：格子单行更矮，整卡可点（点击进日历详情页） ── */
+/* 首页日历卡：日期退成浅灰，收 / 支 / 转金额用墨色，让数据本身成为焦点 */
+.db-led-cal-home { cursor: pointer; }
+.db-led-cal-home .db-led-cal-d {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--db-text-sub);
+}
+.db-led-cal-home .db-led-cal-cell.is-weekend .db-led-cal-d { color: var(--db-text-sub); }
+.db-led-cal-home .db-led-cal-lines { min-height: 0; gap: 0; }
+.db-led-cal-home .db-led-cal-line {
+  font-size: 9.5px;
+  line-height: 1.2;
+  font-weight: 500;
+  letter-spacing: -0.1px;
+}
+.db-led-cal-home .db-led-cal-line.is-in { color: color-mix(in srgb, var(--led-in) 45%, var(--db-text)); }
+.db-led-cal-home .db-led-cal-line.is-out { color: color-mix(in srgb, var(--led-out) 45%, var(--db-text)); }
+.db-led-cal-home .db-led-cal-line.is-tr { color: color-mix(in srgb, var(--led-tr) 55%, var(--db-text)); }
+.db-led-cal-home .db-led-cal-cell { padding: 3px 0 2px; }
+
+/* ── 所有交易页：头部右侧图标钮 + spacer ── */
+.db-led-subhead-spacer { flex: 1 1 0; min-width: 0; }
+.db-led-more {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--db-text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.db-led-more:active { background: var(--notion-hover-deep); }
+@media (hover: hover) {
+  .db-led-more:hover { background: var(--notion-hover); }
+}
+.db-led-more svg { width: 19px; height: 19px; }
+
+/* 搜索 + 筛选工具行 */
+.db-led-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.db-led-search {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius);
+  background: var(--db-surface);
+}
+.db-led-search:focus-within { border-color: var(--db-accent); }
+.db-led-search-icon { display: inline-flex; color: var(--db-text-sub); }
+.db-led-search-icon svg { width: 15px; height: 15px; }
+.db-led-search-input {
+  flex: 1 1 0;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--db-text);
+  -webkit-text-fill-color: currentColor;
+  font-size: 13.5px;
+}
+.db-led-search-input:focus { outline: none; box-shadow: none; }
+.db-led-tool-btn {
+  flex: 0 0 auto;
+  position: relative;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius);
+  background: var(--db-surface);
+  color: var(--db-text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.db-led-tool-btn:active { background: var(--notion-hover); }
+@media (hover: hover) {
+  .db-led-tool-btn:hover { background: var(--notion-hover); }
+}
+.db-led-tool-btn svg { width: 17px; height: 17px; }
+.db-led-tool-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--db-accent);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* 计数灰字 + 汇总卡（复用 db-led-sum 三格网格）；列表延续正文分组的 12px 呼吸 */
+.db-led-count { font-size: 11.5px; color: var(--db-text-sub); padding: 0 2px; }
+.db-led-rec-sum { padding: 8px 10px; }
+.db-led-rec-top { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.db-led-rec-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* 分块加载哨兵：零高度不可见，仅给 IntersectionObserver 观察 */
+.db-led-rec-sentinel { height: 1px; }
+
+/* ── 批量模式：行首勾选框 + 底部操作条 ── */
+.db-led-rec-list.is-batching { padding-bottom: 84px; }
+.db-led-recwrap {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 4px;
+}
+.db-led-recwrap .db-led-row { flex: 1 1 0; min-width: 0; }
+.db-led-check {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid var(--db-border);
+  border-radius: 50%;
+  background: var(--db-surface);
+  cursor: pointer;
+}
+.db-led-check.is-on {
+  position: relative;
+  border-color: var(--db-accent);
+  background: var(--db-accent);
+}
+.db-led-check.is-on::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 2.5px;
+  width: 5px;
+  height: 10px;
+  border-right: 2px solid #ffffff;
+  border-bottom: 2px solid #ffffff;
+  transform: rotate(45deg);
+}
+.db-led-batchbar-wrap {
+  position: sticky;
+  bottom: 0;
+  height: 0;
+  z-index: 29;
+}
+.db-led-batchbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px calc(10px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  background: var(--db-surface);
+  border-top: 1px solid var(--db-border);
+  box-shadow: 0 -8px 24px rgba(15, 15, 15, 0.12);
+}
+.db-led-batchbar-count {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--db-text);
+}
+.db-led-batchbar .db-led-save { flex: 0 0 auto; min-height: 44px; padding: 0 20px; font-size: 14px; }
+.db-led-batchbar .db-led-del-big { min-height: 44px; padding: 0 14px; }
+
+/* ── 筛选 sheet：排序单选行 ── */
+.db-led-radio-list { display: flex; flex-direction: column; gap: 2px; }
+.db-led-radio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 10px;
+  border-radius: var(--db-radius);
+  cursor: pointer;
+  user-select: none;
+  color: var(--db-text);
+  font-size: 13.5px;
+}
+.db-led-radio:active { background: var(--notion-hover-deep); }
+@media (hover: hover) {
+  .db-led-radio:hover { background: var(--notion-hover); }
+}
+.db-led-radio.is-active { background: var(--notion-hover); font-weight: 600; }
+.db-led-radio-check { display: inline-flex; margin-left: auto; color: var(--db-accent); }
+.db-led-radio-check svg { width: 16px; height: 16px; }
+
+/* 筛选 sheet 头部：重置 + spacer + 关闭 */
+.db-led-sheet-head-spacer { flex: 1 1 0; }
+.db-led-sheet-title { font-size: 14.5px; font-weight: 600; color: var(--db-text); }
+
+/* ── 批量编辑 sheet：可勾选字段行（勾上才出现控件） ── */
+.db-led-bf { display: flex; flex-direction: column; gap: 6px; }
+.db-led-bf-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 4px;
+  border-radius: var(--db-radius);
+  cursor: pointer;
+  user-select: none;
+}
+.db-led-bf-head:active { background: var(--notion-hover); }
+@media (hover: hover) {
+  .db-led-bf-head:hover { background: var(--notion-hover); }
+}
+.db-led-bf-label { font-size: 13.5px; color: var(--db-text); }
+.db-led-bf.is-on .db-led-bf-label { font-weight: 600; }
+.db-led-bf-prev {
+  margin-left: auto;
+  max-width: 45%;
+  font-size: 12px;
+  color: var(--db-text-sub);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-led-bf-ctl { padding: 0 4px 6px 28px; }
+.db-led-bf-ctl .db-led-input { width: 100%; max-width: none; }
+.db-led-bf-ctl .db-led-date { width: 100%; }
+
+/* 筛选 sheet 的日期 / 金额输入在两列网格里拉满列宽（去掉流水行语境的限宽） */
+.db-led-sheet .db-led-two .db-led-date,
+.db-led-sheet .db-led-two .db-led-input-num { width: 100%; max-width: none; }
+
+/* 触控端放大纯图标小钮（≥40px），满足触控目标下限 */
+@media (hover: none) {
+  .db-led-sec-more { width: 40px; height: 40px; }
+  .db-led-more { width: 40px; height: 40px; }
+  .db-led-tool-btn { width: 40px; height: 40px; }
+  .db-led-radio { min-height: 44px; }
+}
+
+@container (max-width: 360px) {
+  .db-led-fab { width: 50px; height: 50px; right: 10px; }
+  .db-led-bf-prev { display: none; }
+}
 
 /* ── 分类占比条（fill 宽度静态设置，不做过渡动画） ── */
 .db-led-bar-row { padding: 6px 0 2px; }
@@ -7711,6 +8039,8 @@ body .db-journal-root .db-filter-q:focus {
 }
 .db-led-set-row > :nth-child(3) { grid-column: 1; }
 .db-led-set-row > :nth-child(4) { grid-column: 2; justify-self: start; }
+/* 设置二级页的多行列表容器（手机单列；宽容器里由 @container 改成两列卡片） */
+.db-led-set-list { display: flex; flex-direction: column; }
 .db-led-input {
   width: 100%;
   min-width: 0;
@@ -7801,6 +8131,52 @@ body .db-journal-root .db-filter-q:focus {
   opacity: 0.6;
 }
 .db-led-menu-chev svg { width: 14px; height: 14px; }
+
+/* ── PC 宽容器：设置页列表分栏（手机 / PC 侧栏保持单列） ── */
+@container (min-width: 720px) {
+  /* 设置菜单：六项拆成两列卡片，不再是一张拉满宽度的长列表 */
+  .db-led-card.db-led-menu {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    overflow: visible;
+  }
+  .db-led-card.db-led-menu .db-led-menu-row {
+    height: auto;
+    min-height: 60px;
+    padding: 10px 14px;
+    border: 1px solid var(--db-border);
+    border-radius: var(--db-radius);
+    background: var(--db-surface);
+    box-shadow: none;
+  }
+  /* 二级页列表（账本 / 账户 / 币种）：每条一行卡片，两列并排 */
+  .db-led-set-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .db-led-set-list > .db-led-set-row {
+    padding: 10px 12px;
+    border: 1px solid var(--db-border);
+    border-radius: var(--db-radius);
+    background: var(--db-surface);
+  }
+  /* 单行设置（创建用户）：限宽，别让输入框横贯整页 */
+  .db-led-body > .db-led-set-row { max-width: 620px; }
+  /* 分类卡片两列；展开的卡片占满整行，二级分类不挤在半栏里 */
+  .db-led-body .db-catmgr-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    align-items: start;
+  }
+  .db-led-body .db-catmgr-list .db-catmgr-cat.is-open { grid-column: 1 / -1; }
+}
 
 /* 二级页头：返回 + 组标题 */
 .db-led-subhead { display: flex; align-items: center; gap: 6px; }
@@ -7933,7 +8309,8 @@ body .db-journal-root .db-filter-q:focus {
    光标离开输入框再落回来。底部条 display:none 顺势把空间让给表单；
    头部「返回」用 visibility 保住占位，页签不因 space-between 左右跳 */
 .db-led-sheet-foot.is-inputting { display: none; }
-.db-led-back.is-inputting { visibility: hidden; }
+/* visibility:hidden 仍会接收点击：收起期间点中返回的隐形区域会莫名关闭编辑页 */
+.db-led-back.is-inputting { visibility: hidden; pointer-events: none; }
 .db-led-save {
   flex: 1 1 0;
   min-width: 0;
@@ -8556,7 +8933,7 @@ body .db-journal-root .db-filter-q:focus {
 
 /* ── 触控增强：44px 触摸目标 ── */
 @media (hover: none) {
-  .db-led-header .db-led-add,
+  .db-led-header .db-led-add, .db-led-subhead .db-led-add,
   .db-led-select,
   .db-led-date { min-height: 44px; }
   .db-ns-trigger { min-height: 44px; }
@@ -8662,6 +9039,9 @@ body .db-journal-root .db-filter-q:focus {
   .db-led-cal-lines { min-height: 24px; }
   .db-led-cal-cell { padding: 3px 0; }
   .db-led-cal-sum { gap: 10px; }
+  /* 首页紧凑卡：约 45px 的格子里要放三行金额，字号再收一档 */
+  .db-led-cal-home .db-led-cal-d { font-size: 11px; }
+  .db-led-cal-home .db-led-cal-line { font-size: 8.5px; }
   /* 报表：极窄容器里环形图再收一档，占比列让位给名称 */
   .db-led-rpt-donut-box,
   .db-led-rpt-donut-svg { width: 94px; height: 94px; }
@@ -8707,14 +9087,16 @@ body .db-journal-root .db-filter-q:focus {
 
 /* 主行动按钮：hover / 按下只加深底色 */
 @media (hover: hover) {
-  .db-led-header .db-led-add:hover,
+  .db-led-header .db-led-add, .db-led-subhead .db-led-add:hover,
   .db-led-cta:hover,
   .db-led-save:hover,
+  .db-led-fab:hover,
   .db-catmgr-add:hover { background: color-mix(in srgb, var(--db-accent) 88%, var(--db-text)); }
 }
-.db-led-header .db-led-add:active,
+.db-led-header .db-led-add, .db-led-subhead .db-led-add:active,
 .db-led-cta:active,
 .db-led-save:active,
+.db-led-fab:active,
 .db-catmgr-add:active { background: color-mix(in srgb, var(--db-accent) 78%, var(--db-text)); }
 
 /* 次按钮：Ghost Button——透明底、无描边，hover 只变浅灰 */
@@ -8839,6 +9221,12 @@ body .db-journal-root .db-filter-q:focus {
 @media (hover: hover) {
   .db-led-save:hover,
   .db-led-cta:hover { background: color-mix(in srgb, var(--notion-accent) 88%, var(--notion-ink)); }
+}
+/* FAB：同一套主色与按压反馈 */
+.db-led-fab { background: var(--db-cta); }
+.db-led-fab:active { background: color-mix(in srgb, var(--notion-accent) 78%, var(--notion-ink)); }
+@media (hover: hover) {
+  .db-led-fab:hover { background: color-mix(in srgb, var(--notion-accent) 88%, var(--notion-ink)); }
 }
 
 /* 6) 动效：去掉位移 / 缩放，只留颜色与透明度过渡 */
@@ -10584,7 +10972,7 @@ body .db-journal-root .db-filter-q:focus {
   .db-plan-sort-reset:active { background: var(--db-bg-hover); color: var(--db-text); }
   .db-led-del:active { color: color-mix(in srgb, var(--led-out) 85%, var(--db-text)); background: color-mix(in srgb, var(--led-out) 10%, transparent); }
   .db-ns-trigger:active { background: var(--notion-hover-deep); }
-  .db-led-header .db-led-add:active, .db-led-cta:active, .db-led-save:active, .db-catmgr-add:active { background: color-mix(in srgb, var(--db-accent) 88%, var(--db-text)); }
+  .db-led-header .db-led-add, .db-led-subhead .db-led-add:active, .db-led-cta:active, .db-led-save:active, .db-led-fab:active, .db-catmgr-add:active { background: color-mix(in srgb, var(--db-accent) 88%, var(--db-text)); }
   .db-led-btn-ghost:active { background: var(--notion-hover); }
   .db-led-row:active, .db-led-menu-row:active, .db-led-acct-row.is-link:active { background: var(--notion-hover); }
   .db-led-del:active { color: #c4554d; background: #ffe2dd; }
@@ -10606,8 +10994,9 @@ body .db-journal-root .db-filter-q:focus {
 
 /* ════════════════════════════════════════════════════════
    移动端键盘避让「镜像悬浮编辑框」（Notion 式，src/floatField.ts 驱动）
-   原字段不动；被键盘盖住时在键盘顶上方浮现镜像编辑卡（挂 body 层），
-   输入实时双向同步；键盘收起 / 失焦后 150ms 透明过渡平滑消失。
+   原字段不动；被键盘盖住时浮现镜像编辑卡：优先盖在原字段原位（顶缘实时
+   跟随原字段），字段整体没入键盘时才退为贴键盘顶浮现；输入实时双向同步；
+   键盘收起 / 失焦后 150ms 透明过渡平滑消失。
    放在文件最末：镜像卡继承原字段的类样式，卡片外观由本节压轴生效。
    ════════════════════════════════════════════════════════ */
 .db-field-mirror {

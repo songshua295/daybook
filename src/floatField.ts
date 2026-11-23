@@ -8,10 +8,12 @@ import { Plugin, Platform } from "obsidian";
  * 一级「滚动避让（抖动）」：字段所在滚动容器还有向上滚动的余地时，
  *   平滑滚动把字段带到键盘上方可见区——覆盖大多数中部字段，不打扰；
  * 二级「镜像悬浮编辑框」：滚动余地不足（内容底部最后几个元素，滚到底也
- *   到不了键盘上方）或字段位于不可滚动容器时，在键盘上方浮现镜像编辑卡
- *   （原字段不动），输入实时双向同步；键盘收起 / 失焦后平滑消失，内容
- *   无损保留在原字段。卡片采用输入附件栏模式（iOS / Notion 移动端同款）：
- *   底边贴键盘顶、高度随内容向上生长，位置只由键盘高度决定。
+ *   到不了键盘上方）或字段位于不可滚动容器时，浮现镜像编辑卡（原字段不动），
+ *   输入实时双向同步；键盘收起 / 失焦后平滑消失，内容无损保留在原字段。
+ *   卡片位置优先跟随原字段：顶缘对齐原字段顶缘、白卡盖在其原位（Notion
+ *   移动端属性编辑同款），底缘钳在键盘顶上方 8px、绝不没入键盘；原字段顶缘
+ *   离键盘顶放不下一张最小高度的卡（字段整体被键盘盖住）时，才退为输入
+ *   附件栏模式：底边贴键盘顶、高度随内容向上生长。
  *
  * 实现要点：
  * - 镜像卡挂在 body 层（position:fixed），完全避开视图 DOM 的包含块 /
@@ -20,7 +22,10 @@ import { Plugin, Platform } from "obsidian";
  *   草稿即时更新）；应用层改原字段 → 同步进镜像（syncing 标志防回环）。
  * - 键盘几何只用真实测量：视觉视口收缩 + Obsidian 容器收缩 + 布局视口收缩
  *   基线（adjustResize 机型 innerH 与 vp.height 同时收缩、差值≈0，必须用
- *   「无键盘基线 innerH」对比检测，否则永不触发）。
+ *   「无键盘基线 innerH」对比检测，否则永不触发）。测量护栏与 sheet 抬升
+ *   底缘兜底和 ledgerPage.syncKeyboardInset 同款（真机验证过）：scale ≠ 1
+ *   与键盘动画中间帧的 vp 几何不换算（否则幻影键盘线把镜像钉在屏中固定
+ *   位置）；「记一笔」sheet 已抬升时其底缘即键盘顶，DOM 实测优先采纳。
  * - 弹窗 / 菜单不接管；「记一笔」sheet（.db-led-overlay，自带滚动 body、无
  *   自有字段避让）的字段同样适用；吸底操作 sheet 等其他 fixed 祖先跳过。
  * - CM6（.db-live-editor）与 contenteditable 不做镜像（自带键盘适配）。
@@ -38,6 +43,10 @@ interface MirrorState {
   /** 悬浮期间锚点（视口坐标） */
   left: number;
   width: number;
+  /** 原字段顶缘（视口坐标，创建时快照）：实时 rect 读不到时的兜底锚点 */
+  fieldTop: number;
+  /** 最近一次测量的键盘遮挡线：输入长高重钉时复用 */
+  line: number;
   cleanup: Array<() => void>;
 }
 
@@ -59,21 +68,27 @@ interface KbInfo {
 /**
  * 键盘几何测量（全部真实信号，不信任 --keyboard-height）。
  * 任一信号成立即判定键盘弹出；遮挡线取各信号的最小值（最保守）：
- * - kbVp：视觉视口收缩量（pan / 覆盖式键盘）
+ * - kbVp：视觉视口收缩量（pan / 覆盖式键盘）。两道护栏与
+ *   ledgerPage.syncKeyboardInset 同款（真机验证过）：scale ≠ 1（捏合 / 系统
+ *   显示缩放）时 vp 几何换算出的「幻影键盘线」会让镜像被钉在屏中固定线上，
+ *   弃用；visibleBottom ≤ 半屏是键盘动画中间帧的瞬态异常，弃用
  * - 视图容器底：Obsidian 收缩工作区（.workspace-leaf-content / .app-container）
  * - 布局视口收缩基线：adjustResize 机型 innerH 与 vp.height 同时收缩、差值≈0，
  *   只能与「无键盘基线 idleInnerH」对比才能检出
  * - 原生输入工具栏（.mobile-toolbar）停靠在下半屏 → 其顶缘即遮挡线，
  *   且工具栏可见本身就是键盘弹出的信号
+ * - sheet 已被键盘让位抬升（.db-led-overlay 写入了 bottom）→ 其底缘就是键盘
+ *   顶的 DOM 实测值，比任何 vp 几何换算都可靠，sheet 内字段优先采纳
  */
-function measureKeyboard(win: Window): KbInfo {
+function measureKeyboard(win: Window, anchor?: HTMLElement | null): KbInfo {
   const innerH = win.innerHeight;
   const vp = win.visualViewport as VisualViewport | null;
   // 基线：取历史最大 innerH（键盘收起时视口最高）
   if (innerH > idleInnerH) idleInnerH = innerH;
   let kbVp = 0;
-  if (vp && vp.height > 0) {
-    kbVp = Math.max(0, innerH - Math.round(vp.height + vp.offsetTop));
+  if (vp && vp.height > 0 && vp.scale === 1) {
+    const visibleBottom = Math.round(vp.height + vp.offsetTop);
+    if (visibleBottom > innerH / 2) kbVp = Math.max(0, innerH - visibleBottom);
   }
   // 视图容器底：Obsidian 收缩的是工作区 leaf 容器（与 JournalView 同一信号源）
   const viewContainer =
@@ -94,6 +109,14 @@ function measureKeyboard(win: Window): KbInfo {
     }
   }
   line = Math.max(line, Math.round(innerH * 0.25));
+  // sheet 抬升兜底：anchor 在已抬升的「记一笔」sheet 内 → overlay 底缘即键盘顶。
+  // 只在比当前估计更低（更贴近键盘）时采纳——修正幻影线偏高的情形，
+  // 不覆盖工具栏顶缘这种更精确的「键盘 + 工具栏组件」上缘
+  const sheetEl = anchor?.closest(".db-led-overlay") as HTMLElement | null;
+  if (sheetEl && sheetEl.style.bottom) {
+    const sb = Math.round(sheetEl.getBoundingClientRect().bottom);
+    if (sb > innerH * 0.25 && sb < line) line = sb;
+  }
   const kb = innerH - line;
   const shrink = idleInnerH > 0 ? idleInnerH - innerH : 0;
   const open = kb > 20 || shrink > 20 || toolbarDocked;
@@ -128,30 +151,52 @@ function mirrorableTarget(target: EventTarget | null): HTMLInputElement | HTMLTe
   return el as HTMLInputElement | HTMLTextAreaElement;
 }
 
+/** 镜像卡最小高度：原字段顶缘到键盘顶低于此值时立不起卡，退回键盘顶吸附 */
+const MIRROR_MIN_H = 44;
+
 /**
- * 把镜像框钉在键盘顶上方：底边贴键盘顶（留 8px 间距），高度随内容
- * 向上生长（autoGrow），顶到可用空间后卡内滚动。键盘高度 / 视口变化时
- * 重复调用重钉。bottom 锚定保证卡片位置只由键盘高度决定，永远紧贴
- * 键盘（iOS 输入附件栏模式），不会因原字段高度被顶到屏幕上方。
+ * 钉镜像卡：位置优先跟随原字段——顶缘对齐原字段顶缘（视口坐标实时读取，
+ * sheet 抬升 / 宿主重排后自动跟上），白卡盖在原字段原位（Notion 移动端
+ * 属性编辑同款）；底缘钳在键盘顶上方 8px，绝不没入键盘。原字段顶缘到键盘
+ * 顶放不下一张最小高度的卡（字段整体被键盘盖住）时，退为输入附件栏模式：
+ * 底边贴键盘顶，高度随内容向上生长。两种模式顶到可用空间后都卡内滚动。
+ * 键盘高度 / 视口 / 原字段位置变化时重复调用重钉。
  */
 function positionMirror(win: Window, s: MirrorState, line: number): void {
+  s.line = line;
   const innerH = win.innerHeight;
-  const avail = Math.max(line - 16, 80);
-  s.mirror.style.top = "auto";
-  s.mirror.style.bottom = `${Math.round(innerH - line + 8)}px`;
+  const maxBottom = line - 8;            // 键盘顶上方 8px
+  const avail = Math.max(line - 16, 80); // 吸附模式的可用高度
   s.mirror.style.left = `${Math.round(s.left)}px`;
   s.mirror.style.width = `${Math.round(s.width)}px`;
-  s.mirror.style.maxHeight = `${Math.round(avail)}px`;
-  autoGrow(s);
-}
 
-/** 镜像 textarea 随内容长高（bottom 锚定 → 向上生长，不超过键盘上方空间） */
-function autoGrow(s: MirrorState): void {
-  if (!(s.mirror instanceof HTMLTextAreaElement)) return;
-  s.mirror.style.height = "auto";
-  const maxH = parseFloat(s.mirror.style.maxHeight) || 400;
-  const h = Math.max(44, Math.min(s.mirror.scrollHeight, maxH));
-  s.mirror.style.height = `${Math.round(h)}px`;
+  // 自然内容高度：textarea 先放开高度量 scrollHeight；单行 input 用自身布局高度
+  const isTa = s.mirror instanceof HTMLTextAreaElement;
+  if (isTa) s.mirror.style.height = "auto";
+  const contentH = isTa
+    ? Math.max(MIRROR_MIN_H, s.mirror.scrollHeight)
+    : s.mirror.offsetHeight;
+
+  // 原字段顶缘实时读取（sheet 抬升 / 重排后跟随）；读不到再用创建时快照
+  let fieldTop = s.fieldTop;
+  const or = s.original.getBoundingClientRect();
+  if (s.original.isConnected && (or.width > 0 || or.height > 0)) fieldTop = or.top;
+
+  // 跟随模式：原字段顶缘到键盘顶能立起一张最小高度的卡 → 盖在原字段原位
+  const followMaxH = Math.max(maxBottom - fieldTop, 0);
+  if (followMaxH >= Math.min(contentH, MIRROR_MIN_H)) {
+    const h = Math.min(contentH, followMaxH);
+    s.mirror.style.top = `${Math.round(fieldTop)}px`;
+    s.mirror.style.bottom = "auto";
+    s.mirror.style.height = `${Math.round(h)}px`;
+    s.mirror.style.maxHeight = `${Math.round(followMaxH)}px`;
+    return;
+  }
+  // 吸附模式：字段整体被键盘盖住 → 底边贴键盘顶上方 8px，向上生长
+  s.mirror.style.top = "auto";
+  s.mirror.style.bottom = `${Math.round(innerH - line + 8)}px`;
+  s.mirror.style.height = `${Math.round(Math.min(contentH, avail))}px`;
+  s.mirror.style.maxHeight = `${Math.round(avail)}px`;
 }
 
 /** 镜像 → 原字段：写回并派发 input / change（应用层草稿即时更新） */
@@ -211,7 +256,7 @@ function scrollFieldIntoView(el: HTMLElement, line: number): boolean {
 /** 创建镜像框并接管焦点（光标在末尾） */
 function createMirror(el: HTMLInputElement | HTMLTextAreaElement, win: Window): void {
   const doc = el.ownerDocument;
-  const { line } = measureKeyboard(win);
+  const { line } = measureKeyboard(win, el);
   const rect = el.getBoundingClientRect();
   const innerW = win.innerWidth;
   const margin = 12;
@@ -242,6 +287,8 @@ function createMirror(el: HTMLInputElement | HTMLTextAreaElement, win: Window): 
     committed: false,
     left,
     width,
+    fieldTop: rect.top,
+    line,
     cleanup: [],
   };
   state = s;
@@ -249,8 +296,12 @@ function createMirror(el: HTMLInputElement | HTMLTextAreaElement, win: Window): 
 
   el.classList.add("db-field-mirroring");
 
-  // 镜像输入 → 写回原字段
-  const onMirrorInput = () => { syncToOriginal(); autoGrow(s); };
+  // 镜像输入 → 写回原字段，并按新内容高度重钉（跟随模式顶缘不动向下长，
+  // 顶到键盘顶后卡内滚动；吸附模式底边不动向上长）
+  const onMirrorInput = () => {
+    syncToOriginal();
+    if (state === s && !s.committed) positionMirror(win, s, s.line);
+  };
   // 原字段被应用层改动 → 同步进镜像（避开自己写回触发的回环）
   const onOriginalInput = () => {
     if (state !== s || s.syncing) return;
@@ -283,6 +334,13 @@ function createMirror(el: HTMLInputElement | HTMLTextAreaElement, win: Window): 
   s.cleanup.push(() => el.removeEventListener("input", onOriginalInput));
 
   positionMirror(win, s, line);
+  // 同一轮事件里宿主可能还在改几何（pan 机型 sheet 抬升与 vp resize 同派发、
+  // 且晚于本模块监听）：落定后重测遮挡线 + 按实时 rect 再钉一次，
+  // 别把卡片留在抬升前 / 键盘动画中间帧的旧位置
+  win.setTimeout(() => {
+    if (state !== s || s.committed) return;
+    positionMirror(win, s, measureKeyboard(win, s.original).line);
+  }, 0);
   mirror.focus();
   try {
     const len = mirror.value.length;
@@ -293,7 +351,13 @@ function createMirror(el: HTMLInputElement | HTMLTextAreaElement, win: Window): 
 }
 
 /** 提交并平滑移除镜像框；内容已在每次输入时实时写回，此处只收尾 */
-function commit(reason: string): void {
+/**
+ * 提交并平滑移除镜像框；内容已在每次输入时实时写回，此处只收尾。
+ * newFocus：因切到其他字段而提交时传入新聚焦元素，随补派的 focusout 的
+ * relatedTarget 带出去——宿主表单靠它区分「字段间切换」（不恢复 UI，
+ * 由新字段的 focusin 继续收起）与「真正离开字段」（恢复）。
+ */
+function commit(reason: string, newFocus?: EventTarget | null): void {
   const s = state;
   if (!s || s.committed) return;
   s.committed = true;
@@ -302,6 +366,14 @@ function commit(reason: string): void {
   for (const fn of s.cleanup) { try { fn(); } catch { /* 忽略 */ } }
   s.cleanup = [];
   s.original.classList.remove("db-field-mirroring");
+  // 镜像挂在表单之外（body 层 / sheet 浮层），它的失焦事件到不了宿主表单
+  // 监听器；补派一次 focusout 通知「光标已离开」，否则移动端「光标在输入框
+  // 时收起返回 / 保存条」的联动会永远等不到恢复，返回按钮卡在隐藏态
+  try {
+    s.original.dispatchEvent(
+      new FocusEvent("focusout", { bubbles: true, relatedTarget: newFocus ?? null }),
+    );
+  } catch { /* 极端环境缺 FocusEvent 构造器，忽略 */ }
   const mirror = s.mirror;
   state = null;
   // 平滑消失：150ms 透明过渡后移除（reduced-motion 立即）
@@ -321,7 +393,11 @@ function evaluate(win: Window): void {
     commit("zoom-changed");
     return;
   }
-  const m = measureKeyboard(win);
+  // 遮挡线测量带上锚点字段：已有镜像 → 原字段，否则当前聚焦字段
+  // （measureKeyboard 靠它识别「记一笔」sheet 的抬升，见其文档注释）
+  const ae = win.document.activeElement;
+  const anchor = state?.original ?? (ae instanceof HTMLElement ? mirrorableTarget(ae) : null);
+  const m = measureKeyboard(win, anchor && anchor.isConnected ? anchor : null);
 
   if (state) {
     // 已有镜像：键盘收起 → 提交；高度变化 → 重钉
@@ -331,8 +407,7 @@ function evaluate(win: Window): void {
   }
   if (!m.open) { cancelRecheck(); return; }
   // 键盘已弹出：评估当前聚焦字段
-  const ae = win.document.activeElement;
-  const el = ae instanceof HTMLElement ? mirrorableTarget(ae) : null;
+  const el = anchor;
   if (!el || !el.isConnected) return;
   const rect = el.getBoundingClientRect();
   const covered = rect.bottom > m.line - 6 && rect.top < win.innerHeight;
@@ -357,12 +432,10 @@ function scheduleRecheck(win: Window, el: HTMLElement, line: number): void {
   recheckTimer = win.setTimeout(() => {
     recheckTimer = null;
     if (state) return; // 已升级镜像
-    const m = measureKeyboard(win);
-    if (!m.open) return;
-    const tb = 0; void tb;
     const el2 = el.isConnected ? el : (win.document.activeElement as HTMLElement | null);
-    if (!el2 || !el2.isConnected) return;
-    if (!mirrorableTarget(el2)) return;
+    if (!el2 || !el2.isConnected || !mirrorableTarget(el2)) return;
+    const m = measureKeyboard(win, el2);
+    if (!m.open) return;
     const rect = el2.getBoundingClientRect();
     if (rect.bottom > m.line - 6) createMirror(el2 as HTMLInputElement | HTMLTextAreaElement, win);
   }, 360); // 平滑滚动约 300ms，留出落定余量
@@ -392,7 +465,7 @@ export function installFloatingField(plugin: Plugin): void {
     if (state && (t === state.mirror || state.mirror.contains(t))) return;
     if (commitTimer !== null) { clearTimeout(commitTimer); commitTimer = null; }
     cancelRecheck();
-    if (state) commit("switch-field");
+    if (state) commit("switch-field", t);
     const win = t.ownerDocument.defaultView;
     if (!win) return;
     // 焦点在字段上且键盘已弹出（如从字段 A 切到字段 B）→ 立即评估
@@ -404,6 +477,18 @@ export function installFloatingField(plugin: Plugin): void {
   if (vp) {
     plugin.registerDomEvent(vp as unknown as HTMLElement, "resize", () => {
       evaluate(window);
+    });
+    // 视觉视口滚动（pan 机型 pan 偏移漂移、sheet 抬升只发 scroll 不发 resize）：
+    // 已有镜像时按实时 rect + 新遮挡线重钉，保持跟随原字段；无镜像不评估，
+    // 滚动避让仍只由 resize / focusin 流程触发，避免页面滚动被带着抖动
+    plugin.registerDomEvent(vp as unknown as HTMLElement, "scroll", () => {
+      const s = state;
+      if (!s || s.committed) return;
+      if (vp && activeScale > 0 && Math.abs(vp.scale - activeScale) > 0.01) {
+        commit("zoom-changed");
+        return;
+      }
+      positionMirror(window, s, measureKeyboard(window, s.original).line);
     });
   }
   // Obsidian 键盘收起事件（Capacitor 注入）：立即提交

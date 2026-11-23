@@ -1273,7 +1273,9 @@ export class DaybookView extends ItemView {
       () => this.containerEl.children[1] as HTMLElement ?? null,
       () => !!(
         this.dashEl || this.aiEl || this.aiKbVisible || this.aiEditing ||
-        this.ledgerPage?.isEditing() || this.dramaPage?.isEditing()
+        this.ledgerPage?.isEditing() || this.dramaPage?.isEditing() ||
+        // 记账首页右下角是「记一笔」FAB：回到顶部钮让位
+        (this._currentSection?.type === "ledger" && this.ledgerPage?.isHome())
       ),
     );
     this.scrollTopBtn.mount();
@@ -2433,7 +2435,7 @@ export class DaybookView extends ItemView {
     else this.renderMemosTab(container, section);
   }
 
-  /** 记账：七页（首页/视图/资产/预算/统计/报表/设置）在页面内渲染，记一笔为贴视口底部的浮层 sheet */
+  /** 记账：六页（首页/资产/预算/统计/报表/设置）在页面内渲染，记一笔为贴视口底部的浮层 sheet */
   private async renderLedgerTab(container: HTMLElement) {
     container.empty();
     container.addClass("db-ledger-tab");

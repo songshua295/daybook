@@ -1,7 +1,9 @@
 /**
- * ledgerPage.ts — 记账（ledger）章节的七页 UI
+ * ledgerPage.ts — 记账（ledger）章节的六页 UI
  *
  * 页头不放页名/圆点：页名经 onPageTitle 并入顶栏章节标题（「记账 · 首页」），切页走顶栏「切换页面」菜单。
+ * 首页 = 概览卡 + 当月日历卡（点进日历详情页）+ 最近交易（近 3 天，最多 20 条，右侧箭头进「所有交易」页）；
+ * 「记一笔」= 首页右下角悬浮按钮（FAB）与其他页页头按钮。
  * 记一笔 = 视图内底部浮层 sheet（不新开 tab）；编辑单条记录 = 页内整页二级页（移动端不再被浮层压掉可视面积）。
  * 安卓返回键经 popstate 哨兵逐层剥离。
  * 金额口径说明见 ledgerStore 头注释；页内「设置」同步展示给用户。
@@ -27,17 +29,46 @@ import {
   accountBalances, reimbTotal, makeRecordId,
 } from "./ledgerStore";
 
-type PageKind = "home" | "list" | "assets" | "budget" | "stats" | "report" | "settings";
-const PAGE_ORDER: PageKind[] = ["home", "list", "assets", "budget", "stats", "report", "settings"];
-const PAGE_TITLES: Record<PageKind, string> = { home: "首页", list: "视图", assets: "资产", budget: "预算", stats: "统计", report: "报表", settings: "设置" };
+type PageKind = "home" | "assets" | "budget" | "stats" | "report" | "settings";
+const PAGE_ORDER: PageKind[] = ["home", "assets", "budget", "stats", "report", "settings"];
+const PAGE_TITLES: Record<PageKind, string> = { home: "首页", assets: "资产", budget: "预算", stats: "统计", report: "报表", settings: "设置" };
 
 /** 设置二级页（菜单行 → 页内整页，不弹浮层） */
 type SettingsSub = "ledgers" | "accounts" | "categories" | "currencies" | "data" | "other";
 const SUB_TITLES: Record<SettingsSub, string> = { ledgers: "账本管理", accounts: "账户管理", categories: "分类管理", currencies: "币种管理", data: "导入 / 导出", other: "其他设置" };
 
-/** 「视图」页的呈现方式：日历（月历格子 + 当天流水）/ 流水（按天分组的列表）。新增视图只需往这里加一项。 */
-type ViewMode = "calendar" | "list";
-const VIEW_MODES: { key: ViewMode; label: string }[] = [{ key: "calendar", label: "日历" }, { key: "list", label: "流水" }];
+/** 「所有交易」页的排序方式；金额排序按基准币折算口径比较 */
+type RecSort = "date-desc" | "date-asc" | "amt-desc" | "amt-asc";
+const REC_SORTS: { key: RecSort; label: string }[] = [
+  { key: "date-desc", label: "日期从新到旧" },
+  { key: "date-asc", label: "日期从旧到新" },
+  { key: "amt-desc", label: "金额从大到小" },
+  { key: "amt-asc", label: "金额从小到大" },
+];
+/** 「所有交易」页的筛选条件（全部为空 = 不筛选）。商家 = 记录的「商家 / 其他」字段精确值 */
+interface RecFilter {
+  dateFrom: string;          // YYYY-MM-DD
+  dateTo: string;
+  minAmt: string;            // 基准币金额下限（原始输入）
+  maxAmt: string;
+  kinds: LedgerKind[];       // 空 = 全部类型
+  catId: string;
+  subId: string;
+  accountId: string;         // 转出 / 转入任一侧命中即算
+  ledgerId: string;
+  merchant: string;
+  dow: number[];             // 周几（0=周日），空 = 全部
+  budgetId: string;          // 分类预算 id：按预算挂的分类过滤
+}
+const emptyRecFilter = (): RecFilter => ({
+  dateFrom: "", dateTo: "", minAmt: "", maxAmt: "", kinds: [],
+  catId: "", subId: "", accountId: "", ledgerId: "", merchant: "", dow: [], budgetId: "",
+});
+/** 分块加载：首屏与每次滚动追加的条数（按记录条数计，日分组随时会切） */
+const REC_CHUNK = 60;
+/** 首页「最近交易」：近 3 天（含今天）最多 20 条 */
+const RECENT_DAYS = 2;
+const RECENT_MAX = 20;
 
 /**
  * 「报表」页的统计维度。
@@ -388,11 +419,34 @@ export class LedgerPage {
   private month = moment().format("YYYY-MM");
   /** 预算页独立的查看月份（不跟报表 / 视图的月份联动） */
   private budgetMonth = moment().format("YYYY-MM");
-  private listLedgerId = "";
-  private listKind: "all" | LedgerKind = "all";
-  /** 视图页当前呈现方式与日历选中日 */
-  private viewMode: ViewMode = "calendar";
+  /** 日历选中日（日历详情页用；首页紧凑卡点格子会带日期进来） */
   private selDate = moment().format("YYYY-MM-DD");
+  /** 首页日历卡独立查看的月份（可切月 / 跨年，点月份名回本月；不影响概览卡的「本月」口径） */
+  private homeCalMonth = moment().format("YYYY-MM");
+  /** 日历详情页（null = 不在该页）：月导航 + 月历 + 当天流水，从首页日历卡进入 */
+  private calOpen = false;
+  private calSentinelArmed = false;
+  /** 所有交易页（null = 不在该页）：搜索 / 筛选 / 排序 / 汇总 / 分块加载 / 批量编辑 */
+  private allRecOpen = false;
+  private allRecSentinelArmed = false;
+  private recQuery = "";
+  private recFilter: RecFilter = emptyRecFilter();
+  private recSort: RecSort = "date-desc";
+  private recFiltered: LedgerRecord[] = [];
+  private recShown = REC_CHUNK;      // 本页已渲染到的记录条数（跨重渲染保留，筛选变化才重置）
+  private recCursor = 0;             // 追加渲染游标：已实际画出的条数
+  private recGroupIdx = 0;           // 追加渲染游标：已画出的日分组序号（仅日期排序分组模式用）
+  private recListEl: HTMLElement | null = null;
+  private recTopEl: HTMLElement | null = null;
+  private recBarEl: HTMLElement | null = null;
+  private recFlatCard: HTMLElement | null = null;
+  private recObserver: IntersectionObserver | null = null;
+  /** 批量编辑：选择模式 + 已选记录；批量 sheet 的字段开启集合与草稿值 */
+  private batchMode = false;
+  private selectedIds = new Set<string>();
+  private batchOn = new Set<string>();
+  private batchVals: Record<string, string> = {};
+  private batchAdvOpen = false;
   /** 报表页：分组字段（小类 / 大类 / 账户）；月份沿用 this.month */
   private reportDim: ReportDim = "sub";
   /** 报表下钻页（null = 在报表主页）；哨兵让安卓返回键先退回报表主页 */
@@ -483,6 +537,18 @@ export class LedgerPage {
         this.closeOverlay(false);
         return;
       }
+      /* 所有交易页 / 日历详情页压在首页之上（记一笔 sheet / 编辑页压在它们之上，
+         已由上面的分支先剥）：返回键先退回首页（哨兵已被系统消费） */
+      if (this.allRecOpen) {
+        this.allRecSentinelArmed = false;
+        this.closeAllRecords(false);
+        return;
+      }
+      if (this.calOpen) {
+        this.calSentinelArmed = false;
+        this.closeCalendarDetail(false);
+        return;
+      }
       /* 报表明细页压在报表页之上：返回键先退回报表页（哨兵已被系统消费） */
       if (this.reportDrill) {
         this.drillSentinelArmed = false;
@@ -540,6 +606,8 @@ export class LedgerPage {
     let back = 0;
     if (this.editSentinelArmed) { back++; this.editSentinelArmed = false; this.editRec = null; }
     if (this.assetSentinelArmed) { back++; this.assetSentinelArmed = false; this.assetDetailId = null; }
+    if (this.allRecSentinelArmed) { back++; this.allRecSentinelArmed = false; this.allRecOpen = false; }
+    if (this.calSentinelArmed) { back++; this.calSentinelArmed = false; this.calOpen = false; }
     if (this.mgrSentinelArmed) { back++; this.mgrSentinelArmed = false; this.mgrOpen = false; }
     if (this.drillSentinelArmed) { back++; this.drillSentinelArmed = false; this.reportDrill = null; }
     if (this.budgetSentinelArmed) { back++; this.budgetSentinelArmed = false; }
@@ -552,6 +620,11 @@ export class LedgerPage {
     this.sheetEl = null;
     this.editFormEl = null;
     this.detachVpListener();
+    this.detachRecObserver();
+    this.recListEl = null;
+    this.recTopEl = null;
+    this.recBarEl = null;
+    this.recFlatCard = null;
   }
 
   /** 顶栏「切换页面」菜单用：当前页 + 全部页面 */
@@ -587,6 +660,18 @@ export class LedgerPage {
       if (this.assetSentinelArmed) back++;
       this.assetSentinelArmed = false;
       this.assetDetailId = null;
+    }
+    if (this.allRecOpen) {
+      if (this.allRecSentinelArmed) back++;
+      this.allRecSentinelArmed = false;
+      this.allRecOpen = false;
+      this.batchMode = false;
+      this.selectedIds.clear();
+    }
+    if (this.calOpen) {
+      if (this.calSentinelArmed) back++;
+      this.calSentinelArmed = false;
+      this.calOpen = false;
     }
     if (this.reportDrill) {
       if (this.drillSentinelArmed) back++;
@@ -624,6 +709,13 @@ export class LedgerPage {
    */
   isEditing(): boolean {
     return !!this.editRec || !!this.overlay;
+  }
+
+  /** 是否停在记账首页本体（FAB 占据右下角：「回到顶部」钮为此让位） */
+  isHome(): boolean {
+    return !this.destroyed && this.page === "home"
+      && !this.editRec && !this.allRecOpen && !this.calOpen
+      && !this.assetDetailId && !this.settingsSub && !this.reportDrill;
   }
 
   /**
@@ -676,6 +768,8 @@ export class LedgerPage {
       r.date,
       r.clock ?? "",
       r.note,
+      r.other || "",
+      r.address || "",
       (r.tags ?? []).join(" "),
       cat?.name ?? "",
       sub?.name ?? "",
@@ -753,8 +847,10 @@ export class LedgerPage {
     if (this.assetDetailId) { this.renderAssetDetail(host); return; }
     if (this.settingsSub) { this.renderSettingsSub(host); return; }
     if (this.reportDrill) { this.renderReportDrill(host); return; }
+    if (this.allRecOpen) { this.renderAllRecords(host); return; }
+    if (this.calOpen) { this.renderCalendarDetail(host); return; }
 
-    /* 首页不建页头：正文里有大 CTA「添加一条新记账」，避免两个记一笔入口 */
+    /* 首页不建页头：右下角悬浮按钮（FAB）承担「记一笔」入口 */
     if (this.page !== "home") {
       const header = host.createDiv({ cls: "db-led-header" });
       /* 预算页是首页二级入口：页头左侧固定给返回（PC 端没有系统返回键）。
@@ -782,13 +878,25 @@ export class LedgerPage {
     const body = host.createDiv({ cls: "db-led-body" });
     switch (this.page) {
       case "home": this.renderHome(body); break;
-      case "list": this.renderList(body); break;
       case "assets": this.renderAssets(body); break;
       case "budget": this.renderBudget(body); break;
       case "stats": this.renderStats(body); break;
       case "report": this.renderReport(body); break;
       case "settings": this.renderSettings(body); break;
     }
+    /* FAB 放在 host 末尾：sticky 压在滚动容器底边（见 renderFab） */
+    if (this.page === "home") this.renderFab(host);
+  }
+
+  /** 首页右下角悬浮按钮：外层 sticky + 高度 0 压在滚动容器底边，内层绝对定位不占文档流 */
+  private renderFab(host: HTMLElement): void {
+    const wrap = host.createDiv({ cls: "db-led-fab-wrap" });
+    const fab = wrap.createEl("button", {
+      cls: "db-led-fab",
+      attr: { type: "button", "aria-label": "记一笔", title: "记一笔" },
+    });
+    setIcon(fab.createSpan({ cls: "db-led-fab-icon" }), "plus");
+    fab.addEventListener("click", () => this.openRecordSheet(this.blankDraft("expense")));
   }
 
   /** 小节卡片：标题 + 内容 */
@@ -836,8 +944,16 @@ export class LedgerPage {
     row.addEventListener("click", onClick);
   }
 
-  /** 一天的记录：日期行（M月D日 周X + 收/支/转彩色合计）在卡片外，行内容在白卡里 */
-  private dayCard(parent: HTMLElement, date: string, dayRecs: LedgerRecord[]): void {
+  /**
+   * 一天的记录：日期行（M月D日 周X + 收/支/转彩色合计）在卡片外，行内容在白卡里。
+   * onRow 定制行渲染（所有交易页的批量勾选），缺省 = 点行进整页编辑。
+   */
+  private dayCard(
+    parent: HTMLElement,
+    date: string,
+    dayRecs: LedgerRecord[],
+    onRow: (parent: HTMLElement, r: LedgerRecord) => void = (p, r) => this.recordRow(p, r, () => this.openRecordEditor(this.draftFrom(r))),
+  ): void {
     const d = moment(date);
     const wrap = parent.createDiv({ cls: "db-led-day" });
     const head = wrap.createDiv({ cls: "db-led-day-head" });
@@ -854,14 +970,18 @@ export class LedgerPage {
     part("支", daySum.expense, "is-out");
     if (trSum > 0) part("转", trSum, "is-tr");
     const card = wrap.createDiv({ cls: "db-led-card db-led-day-card" });
-    dayRecs.forEach(r => this.recordRow(card, r, () => this.openRecordEditor(this.draftFrom(r))));
+    dayRecs.forEach(r => onRow(card, r));
   }
 
   /** 按日期分组（新→旧）渲染一组记录 */
-  private renderDayGroups(parent: HTMLElement, recs: LedgerRecord[]): void {
+  private renderDayGroups(
+    parent: HTMLElement,
+    recs: LedgerRecord[],
+    onRow?: (parent: HTMLElement, r: LedgerRecord) => void,
+  ): void {
     const byDate = new Map<string, LedgerRecord[]>();
     recs.forEach(r => { if (!byDate.has(r.date)) byDate.set(r.date, []); byDate.get(r.date)!.push(r); });
-    [...byDate.keys()].sort((a, b) => b.localeCompare(a)).forEach(date => this.dayCard(parent, date, byDate.get(date)!));
+    [...byDate.keys()].sort((a, b) => b.localeCompare(a)).forEach(date => this.dayCard(parent, date, byDate.get(date)!, onRow));
   }
 
   /* ────────────────────────── 首页 ────────────────────────── */
@@ -900,18 +1020,57 @@ export class LedgerPage {
     budgetCell("预算", budget.total, "is-budget");
     budgetCell("日均预算", budget.total > 0 ? budget.total / days : 0, "is-day");
 
-    /* 大 CTA：添加一条新记账 */
-    const cta = body.createEl("button", { cls: "db-led-cta", attr: { type: "button" } });
-    setIcon(cta.createSpan({ cls: "db-led-cta-icon" }), "square-pen");
-    cta.createSpan({ text: "添加一条新记账" });
-    cta.addEventListener("click", () => this.openRecordSheet(this.blankDraft("expense")));
+    /* 当月日历卡：格子显示每天收/支，点格子（或卡片空白）进日历详情页 */
+    this.renderHomeCalendar(body);
 
-    const recent = this.store.records.slice(0, 30);
+    /* 最近交易：近 3 天（含今天）最多 20 条；右侧箭头进「所有交易」页 */
+    const head = body.createDiv({ cls: "db-led-sec-head" });
+    head.createSpan({ cls: "db-led-sec-title", text: "最近交易" });
+    const more = head.createEl("button", {
+      cls: "db-led-sec-more",
+      attr: { type: "button", "aria-label": "查看所有交易", title: "所有交易" },
+    });
+    setIcon(more, "chevron-right");
+    more.addEventListener("click", () => this.openAllRecords());
+
+    const cutoff = moment().subtract(RECENT_DAYS, "days").format("YYYY-MM-DD");
+    let recent = this.store.records.filter(r => r.date >= cutoff);
+    if (!recent.length) {
+      /* 近 3 天没有交易：回落到最近有记录的 3 天（records 已按日期新→旧，去重后取前三天） */
+      const keep = new Set([...new Set(this.store.records.map(r => r.date))].slice(0, RECENT_DAYS + 1));
+      recent = this.store.records.filter(r => keep.has(r.date));
+    }
+    recent = recent.slice(0, RECENT_MAX);
     if (recent.length) {
       this.renderDayGroups(body, recent);
     } else {
-      body.createDiv({ cls: "db-led-empty", text: "还没有记录，点上面「添加一条新记账」开始第一笔吧。数据保存在 日记目录/ledger/ 下。" });
+      body.createDiv({ cls: "db-led-empty", text: "还没有记录。" });
     }
+  }
+
+  /** 首页日历卡：紧凑月历 + 月导航（箭头跨年即切年，点月份名回本月），点格子进日历详情并选中那天 */
+  private renderHomeCalendar(body: HTMLElement): void {
+    const ym = this.homeCalMonth;
+    const card = this.renderCalCard(body, ym, this.store.monthRecords(ym), {
+      compact: true,
+      nav: true,
+      onNav: d => {
+        this.homeCalMonth = moment(ym + "-01").add(d, "month").format("YYYY-MM");
+        this.render();
+      },
+      onNavLabel: () => {
+        if (this.homeCalMonth === moment().format("YYYY-MM")) return;
+        this.homeCalMonth = moment().format("YYYY-MM");
+        this.render();
+      },
+      onPickDay: ds => this.openCalendarDetail(ds),
+    });
+    card.addClass("db-led-cal-home");
+    /* 点卡片空白处（导航 / 周头行）= 看今天；点在格子上由格子自己的回调处理 */
+    card.addEventListener("click", e => {
+      if ((e.target as HTMLElement | null)?.closest(".db-led-cal-cell, .db-led-monthnav")) return;
+      this.openCalendarDetail();
+    });
   }
 
   /* ────────────────────────── 预算 ────────────────────────── */
@@ -1085,49 +1244,55 @@ export class LedgerPage {
     this.addLink(catCard, "添加分类预算", () => this.openBudgetCategoryModal());
   }
 
-  /* ────────────────────────── 视图（流水） ────────────────────────── */
+  /* ────────────────────────── 日历详情页 ────────────────────────── */
 
-  private renderList(body: HTMLElement): void {
-    this.renderViewTabs(body);
-    this.renderMonthNav(body, ym => this.store.monthRecords(ym, this.listLedgerId || undefined).length > 0);
-
-    const filters = body.createDiv({ cls: "db-led-filters" });
-    const ledgerSel = filters.createEl("select", { cls: "db-led-select", attr: { "aria-label": "选择账本" } });
-    ledgerSel.createEl("option", { value: "", text: "全部账本" });
-    this.cfg.ledgers.forEach(l => ledgerSel.createEl("option", { value: l.id, text: l.name }));
-    ledgerSel.value = this.listLedgerId;
-    ledgerSel.addEventListener("change", () => { this.listLedgerId = ledgerSel.value; this.render(); });
-    (["all", "expense", "income", "transfer"] as const).forEach(k => {
-      const chip = filters.createDiv({
-        cls: `db-led-chip${this.listKind === k ? " is-active" : ""}`,
-        text: k === "all" ? "全部" : k === "expense" ? "支出" : k === "income" ? "收入" : "转账",
-      });
-      chip.addEventListener("click", () => { this.listKind = k; this.render(); });
-    });
-
-    const recs = this.store.monthRecords(this.month, this.listLedgerId || undefined)
-      .filter(r => this.listKind === "all" || r.kind === this.listKind);
-
-    if (this.viewMode === "calendar") { this.renderCalendar(body, recs); return; }
-    if (!recs.length) {
-      body.createDiv({ cls: "db-led-empty", text: "本月还没有符合条件的记录。" });
-      return;
+  /** 从首页日历卡进入：整页二级页（月导航 + 月历 + 当天流水），安卓返回键经哨兵退回首页 */
+  private openCalendarDetail(ds?: string): void {
+    if (this.calOpen) return;
+    this.calOpen = true;
+    /* 点了具体日子：落到那天所在的月份（首页卡可能正看着别的月份）；空白处 = 本月今天 */
+    this.month = ds ? ds.slice(0, 7) : moment().format("YYYY-MM");
+    this.selDate = ds || moment().format("YYYY-MM-DD");
+    if (Platform.isMobileApp) {
+      this.calSentinelArmed = true;
+      window.history.pushState({ daybookBack: "ledger-cal" }, "");
     }
-    this.renderDayGroups(body, recs);
+    this.render();
+    scrollPageToTop(this.host);
   }
 
-  /** 视图切换标签（日历 / 流水）：一排等宽分段按钮 */
-  private renderViewTabs(parent: HTMLElement): void {
-    const seg = parent.createDiv({ cls: "db-led-seg is-tabs" });
-    VIEW_MODES.forEach(v => {
-      const b = seg.createDiv({ cls: `db-led-seg-btn${this.viewMode === v.key ? " is-active" : ""}`, text: v.label });
-      b.addEventListener("click", () => {
-        if (this.viewMode === v.key) return;
-        this.viewMode = v.key;
-        this.clampSelDate();
+  /** 返回首页；reclaim=false 用于 popstate 路径（哨兵已被系统消费） */
+  private closeCalendarDetail(reclaim = true): void {
+    const armed = this.calSentinelArmed;
+    this.calSentinelArmed = false;
+    this.calOpen = false;
+    this.render();
+    if (reclaim && armed) this.reclaimHistory(1);
+  }
+
+  /** 日历详情页：月切换 + 月历（选中日高亮）+ 当天流水 */
+  private renderCalendarDetail(host: HTMLElement): void {
+    const head = host.createDiv({ cls: "db-led-subhead" });
+    const back = head.createEl("button", { cls: "db-led-back", attr: { type: "button", "aria-label": "返回首页" } });
+    setIcon(back.createSpan({ cls: "db-led-back-icon" }), "chevron-left");
+    back.createSpan({ text: "返回" });
+    back.addEventListener("click", () => this.closeCalendarDetail());
+    head.createSpan({ cls: "db-led-subhead-title", text: "日历" });
+
+    const body = host.createDiv({ cls: "db-led-body" });
+    this.renderMonthNav(body, ym => this.store.monthRecords(ym).length > 0);
+    const recs = this.store.monthRecords(this.month);
+    this.renderCalCard(body, this.month, recs, {
+      selDate: this.selDate,
+      onPickDay: ds => {
+        if (this.selDate === ds) return;
+        this.selDate = ds;
         this.render();
-      });
+      },
     });
+    const dayRecs = recs.filter(r => r.date === this.selDate);
+    if (dayRecs.length) this.dayCard(body, this.selDate, dayRecs);
+    else body.createDiv({ cls: "db-led-empty", text: `${moment(this.selDate).format("M月D日")} 还没有记录。` });
   }
 
   private stepMonth(delta: number): void {
@@ -1140,12 +1305,21 @@ export class LedgerPage {
   private clampSelDate(): void {
     if (this.selDate.slice(0, 7) === this.month) return;
     if (this.month === moment().format("YYYY-MM")) { this.selDate = moment().format("YYYY-MM-DD"); return; }
-    const latest = this.store.monthRecords(this.month, this.listLedgerId || undefined)[0];
+    const latest = this.store.monthRecords(this.month)[0];
     this.selDate = latest ? latest.date : `${this.month}-01`;
   }
 
-  /** 日历视图：月历格子里有流水的日子显示收/支金额，没有的显示节气 / 农历；下方接选中日的流水 */
-  private renderCalendar(body: HTMLElement, recs: LedgerRecord[]): void {
+  /**
+   * 月历卡：日历详情页与首页紧凑卡共用。
+   * 有流水的日子显示收/支/转金额；详情页每格两行并支持选中日高亮，首页紧凑版每格单行。
+   * nav = 顶部月份导航（复用 db-led-monthnav 样式）：onNav 切月（跨年即切年），onNavLabel 点月份名回本月。
+   */
+  private renderCalCard(
+    parent: HTMLElement,
+    ym: string,
+    recs: LedgerRecord[],
+    opts: { compact?: boolean; selDate?: string; onPickDay?: (ds: string) => void; nav?: boolean; onNav?: (delta: number) => void; onNavLabel?: () => void } = {},
+  ): HTMLElement {
     interface DayCell { exp: number; inc: number; tr: number; recs: LedgerRecord[] }
     const byDate = new Map<string, DayCell>();
     recs.forEach(r => {
@@ -1156,22 +1330,47 @@ export class LedgerPage {
       byDate.set(r.date, g);
     });
 
-    const card = body.createDiv({ cls: "db-led-card db-led-cal" });
-    const sum = summarize(recs, this.cfg);
-    const msum = card.createDiv({ cls: "db-led-cal-sum" });
-    const part = (parent: HTMLElement, label: string, value: string, cls: string) => {
-      const p = parent.createSpan({ cls: "db-led-day-part" });
-      p.createSpan({ cls: "db-led-day-k", text: label });
-      p.createSpan({ cls: `db-led-day-v ${cls}`, text: value });
-    };
-    part(msum, "收", fmtMoney(sum.income), "is-in");
-    part(msum, "支", fmtMoney(sum.expense), "is-out");
-    part(msum, "余", fmtMoney(sum.net), sum.net >= 0 ? "is-in" : "is-out");
+    const card = parent.createDiv({ cls: "db-led-card db-led-cal" });
+    if (opts.nav) {
+      const nav = card.createDiv({ cls: "db-led-monthnav" });
+      const prev = nav.createEl("button", { cls: "db-led-nav-btn", attr: { type: "button", "aria-label": "上一月" } });
+      setIcon(prev, "chevron-left");
+      prev.addEventListener("click", e => {
+        e.stopPropagation();
+        opts.onNav?.(-1);
+      });
+      const label = nav.createSpan({ cls: "db-led-nav-label", text: `${ym.replace("-", "年")}月` });
+      label.toggleClass("is-empty", !recs.length);
+      if (opts.onNavLabel) {
+        label.addEventListener("click", e => {
+          e.stopPropagation();
+          opts.onNavLabel!();
+        });
+      }
+      const next = nav.createEl("button", { cls: "db-led-nav-btn", attr: { type: "button", "aria-label": "下一月" } });
+      setIcon(next, "chevron-right");
+      next.addEventListener("click", e => {
+        e.stopPropagation();
+        opts.onNav?.(1);
+      });
+    }
+    if (!opts.compact) {
+      const sum = summarize(recs, this.cfg);
+      const msum = card.createDiv({ cls: "db-led-cal-sum" });
+      const part = (parent: HTMLElement, label: string, value: string, cls: string) => {
+        const p = parent.createSpan({ cls: "db-led-day-part" });
+        p.createSpan({ cls: "db-led-day-k", text: label });
+        p.createSpan({ cls: `db-led-day-v ${cls}`, text: value });
+      };
+      part(msum, "收", fmtMoney(sum.income), "is-in");
+      part(msum, "支", fmtMoney(sum.expense), "is-out");
+      part(msum, "余", fmtMoney(sum.net), sum.net >= 0 ? "is-in" : "is-out");
+    }
 
     const week = card.createDiv({ cls: "db-led-cal-week" });
     WEEK_SHORT.forEach(w => week.createDiv({ cls: "db-led-cal-wd", text: w }));
 
-    const first = moment(this.month + "-01");
+    const first = moment(ym + "-01");
     const days = first.daysInMonth();
     const lead = first.day();                       // 1 号前面空几格（周日开头）
     const cells = Math.ceil((lead + days) / 7) * 7;
@@ -1183,12 +1382,13 @@ export class LedgerPage {
       if (dayNum < 1 || dayNum > days) { cell.addClass("is-blank"); continue; }
       const dow = i % 7;
       if (dow === 0 || dow === 6) cell.addClass("is-weekend");
-      const ds = `${this.month}-${pad2(dayNum)}`;
+      const ds = `${ym}-${pad2(dayNum)}`;
       cell.createDiv({ cls: "db-led-cal-d", text: String(dayNum) });
       const lines = cell.createDiv({ cls: "db-led-cal-lines" });
       const line = (cls: string, text: string) => lines.createDiv({ cls: `db-led-cal-line ${cls}`, text });
       const g = byDate.get(ds);
       if (g) {
+        /* 收 / 支 / 转 各自成行，三种同时出现也不省略 */
         if (g.exp) line("is-out", `-${calMoney(g.exp)}`);
         if (g.inc) line("is-in", `+${calMoney(g.inc)}`);
         if (g.tr) line("is-tr", `转${calMoney(g.tr)}`);
@@ -1200,17 +1400,699 @@ export class LedgerPage {
         if (lab) line("", lab);
       }
       if (ds === todayStr) cell.addClass("is-today");
-      if (ds === this.selDate) cell.addClass("is-sel");
-      cell.addEventListener("click", () => {
-        if (this.selDate === ds) return;
-        this.selDate = ds;
-        this.render();
+      if (opts.selDate && ds === opts.selDate) cell.addClass("is-sel");
+      cell.addEventListener("click", e => {
+        e.stopPropagation();
+        opts.onPickDay?.(ds);
       });
     }
+    return card;
+  }
 
-    const dayRecs = (byDate.get(this.selDate) || { recs: [] as LedgerRecord[] }).recs;
-    if (dayRecs.length) this.dayCard(body, this.selDate, dayRecs);
-    else body.createDiv({ cls: "db-led-empty", text: `${moment(this.selDate).format("M月D日")} 还没有记录。` });
+  /* ────────────────────────── 所有交易 ────────────────────────── */
+
+  /** 从首页「最近交易」右侧箭头进入：整页二级页（搜索 / 筛选 / 排序 / 分块加载 / 批量编辑） */
+  private openAllRecords(): void {
+    if (this.allRecOpen) return;
+    this.allRecOpen = true;
+    this.batchMode = false;
+    this.selectedIds.clear();
+    this.recShown = REC_CHUNK;
+    if (Platform.isMobileApp) {
+      this.allRecSentinelArmed = true;
+      window.history.pushState({ daybookBack: "ledger-allrec" }, "");
+    }
+    this.render();
+    scrollPageToTop(this.host);
+  }
+
+  /** 返回首页；reclaim=false 用于 popstate 路径（哨兵已被系统消费） */
+  private closeAllRecords(reclaim = true): void {
+    const armed = this.allRecSentinelArmed;
+    this.allRecSentinelArmed = false;
+    this.allRecOpen = false;
+    this.batchMode = false;
+    this.selectedIds.clear();
+    this.detachRecObserver();
+    this.recListEl = null;
+    this.recTopEl = null;
+    this.recBarEl = null;
+    this.recFlatCard = null;
+    this.render();
+    if (reclaim && armed) this.reclaimHistory(1);
+  }
+
+  /** 当前搜索 + 筛选 + 排序后的记录列表（缓存进 recFiltered，供汇总 / 分块 / 全选共用） */
+  private computeFiltered(): void {
+    const f = this.recFilter;
+    const q = this.recQuery.trim();
+    const budgetCat = f.budgetId
+      ? this.store.budget.categories.find(b => b.id === f.budgetId)?.categoryId ?? ""
+      : "";
+    const min = f.minAmt.trim() === "" ? null : parseFloat(f.minAmt);
+    const max = f.maxAmt.trim() === "" ? null : parseFloat(f.maxAmt);
+    const recs = this.store.records.filter(r => {
+      if (q && !keywordMatch(this.recordSearchText(r), q)) return false;
+      if (f.dateFrom && r.date < f.dateFrom) return false;
+      if (f.dateTo && r.date > f.dateTo) return false;
+      const base = min != null || max != null ? baseAmount(r, this.cfg) : 0;
+      if (min != null && base < min) return false;
+      if (max != null && base > max) return false;
+      if (f.kinds.length && !f.kinds.includes(r.kind)) return false;
+      if (f.catId && r.categoryId !== f.catId) return false;
+      if (f.subId && r.subId !== f.subId) return false;
+      if (f.accountId && r.accountId !== f.accountId && r.toAccountId !== f.accountId) return false;
+      if (f.ledgerId && r.ledgerId !== f.ledgerId) return false;
+      if (f.merchant && (r.other || "").trim() !== f.merchant) return false;
+      if (f.dow.length && !f.dow.includes(moment(r.date).day())) return false;
+      if (budgetCat && r.categoryId !== budgetCat) return false;
+      return true;
+    });
+    /* 金额排序按基准币折算口径；日期排序沿用 store 的新→旧口径（含 clock 前后的 createdAt 次序） */
+    if (this.recSort === "amt-desc") {
+      recs.sort((a, b) => baseAmount(b, this.cfg) - baseAmount(a, this.cfg) || b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
+    } else if (this.recSort === "amt-asc") {
+      recs.sort((a, b) => baseAmount(a, this.cfg) - baseAmount(b, this.cfg) || a.date.localeCompare(b.date) || a.createdAt - b.createdAt);
+    } else if (this.recSort === "date-asc") {
+      recs.sort((a, b) => a.date.localeCompare(b.date) || a.createdAt - b.createdAt);
+    } else {
+      recs.sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
+    }
+    this.recFiltered = recs;
+  }
+
+  /** 生效中的筛选条件个数（排序不另计） */
+  private activeFilterCount(): number {
+    const f = this.recFilter;
+    return (f.dateFrom || f.dateTo ? 1 : 0) + (f.minAmt || f.maxAmt ? 1 : 0) + (f.kinds.length ? 1 : 0)
+      + (f.catId || f.subId ? 1 : 0) + (f.accountId ? 1 : 0) + (f.ledgerId ? 1 : 0)
+      + (f.merchant ? 1 : 0) + (f.dow.length ? 1 : 0) + (f.budgetId ? 1 : 0);
+  }
+
+  /** 所有交易页：头部（返回 / 记一笔 / 更多）+ 搜索筛选行 + 汇总 + 分块列表 + 批量操作条 */
+  private renderAllRecords(host: HTMLElement): void {
+    this.computeFiltered();
+    /* 数据变少（编辑 / 删除后重进）时把已渲染条数钳回实际值 */
+    this.recShown = Math.min(this.recShown, Math.max(this.recFiltered.length, REC_CHUNK));
+
+    const head = host.createDiv({ cls: "db-led-subhead" });
+    const back = head.createEl("button", { cls: "db-led-back", attr: { type: "button", "aria-label": "返回首页" } });
+    setIcon(back.createSpan({ cls: "db-led-back-icon" }), "chevron-left");
+    back.createSpan({ text: "返回" });
+    back.addEventListener("click", () => this.closeAllRecords());
+    head.createSpan({ cls: "db-led-subhead-title", text: "所有交易" });
+    head.createDiv({ cls: "db-led-subhead-spacer" });
+    if (this.batchMode) {
+      const all = head.createEl("button", {
+        cls: "db-led-btn-ghost",
+        attr: { type: "button" },
+        text: this.selectedIds.size > 0 && this.selectedIds.size === this.recFiltered.length ? "取消全选" : "全选",
+      });
+      all.addEventListener("click", () => this.toggleSelectAll());
+      const done = head.createEl("button", { cls: "db-led-btn-ghost", attr: { type: "button" }, text: "完成" });
+      done.addEventListener("click", () => { this.batchMode = false; this.selectedIds.clear(); this.render(); });
+    } else {
+      const add = head.createEl("button", { cls: "db-led-add", attr: { type: "button", "aria-label": "记一笔", title: "记一笔" } });
+      setIcon(add.createSpan({ cls: "db-led-add-icon" }), "plus");
+      add.createSpan({ text: "记一笔" });
+      add.addEventListener("click", () => this.openRecordSheet(this.blankDraft("expense")));
+      const more = head.createEl("button", { cls: "db-led-more", attr: { type: "button", "aria-label": "更多", title: "更多" } });
+      setIcon(more, "more-horizontal");
+      more.addEventListener("click", e => this.openAllRecMenu(e));
+    }
+
+    const body = host.createDiv({ cls: "db-led-body" });
+
+    /* 搜索 + 筛选入口行（批量模式保留：先筛后选） */
+    const toolbar = body.createDiv({ cls: "db-led-toolbar" });
+    const searchWrap = toolbar.createDiv({ cls: "db-led-search" });
+    setIcon(searchWrap.createSpan({ cls: "db-led-search-icon" }), "search");
+    const search = searchWrap.createEl("input", {
+      cls: "db-led-search-input",
+      attr: { type: "text", placeholder: "搜索", "aria-label": "搜索交易" },
+    });
+    search.value = this.recQuery;
+    search.addEventListener("input", () => { this.recQuery = search.value; this.refreshRecList(); });
+    const filterBtn = toolbar.createEl("button", {
+      cls: "db-led-tool-btn",
+      attr: { type: "button", "aria-label": "筛选与排序", title: "筛选与排序" },
+    });
+    setIcon(filterBtn, "list-filter");
+    const badge = this.activeFilterCount() + (this.recSort !== "date-desc" ? 1 : 0);
+    if (badge > 0) filterBtn.createSpan({ cls: "db-led-tool-badge", text: badge > 99 ? "99+" : String(badge) });
+    filterBtn.addEventListener("click", () => this.openFilterSheet());
+
+    const top = body.createDiv({ cls: "db-led-rec-top" });
+    this.recTopEl = top;
+    this.renderRecSummary();
+
+    const list = body.createDiv({ cls: "db-led-rec-list" });
+    this.recListEl = list;
+    this.renderRecChunk(true);
+
+    /* 批量模式底部操作条：sticky 压底不占文档流（列表加 padding-bottom 让出末行） */
+    if (this.batchMode) {
+      const barWrap = host.createDiv({ cls: "db-led-batchbar-wrap" });
+      const bar = barWrap.createDiv({ cls: "db-led-batchbar" });
+      const count = bar.createSpan({ cls: "db-led-batchbar-count", text: `已选 ${this.selectedIds.size}` });
+      this.recBarEl = count;
+      const del = bar.createEl("button", { cls: "db-led-del-big", attr: { type: "button" }, text: "删除" });
+      del.addEventListener("click", () => this.batchDelete());
+      const edit = bar.createEl("button", { cls: "db-led-save", attr: { type: "button" }, text: "批量编辑" });
+      edit.addEventListener("click", () => {
+        if (!this.selectedIds.size) { new Notice("先选择要编辑的记录"); return; }
+        this.openBatchSheet();
+      });
+    }
+  }
+
+  /** 更多菜单：进入批量选择模式 */
+  private openAllRecMenu(e: MouseEvent): void {
+    const menu = new Menu();
+    menu.addItem(item => {
+      item.setTitle("批量编辑").setIcon("square-pen");
+      item.onClick(() => { this.batchMode = true; this.render(); });
+    });
+    menu.showAtMouseEvent(e);
+  }
+
+  /** 汇总区：共 N 笔（灰字）+ 支出 / 收入 / 结余卡，只算当前筛选结果 */
+  private renderRecSummary(): void {
+    const top = this.recTopEl;
+    if (!top) return;
+    top.empty();
+    top.createDiv({ cls: "db-led-count", text: `共 ${this.recFiltered.length} 笔交易` });
+    const sum = summarize(this.recFiltered, this.cfg);
+    const card = top.createDiv({ cls: "db-led-card db-led-rec-sum" });
+    const grid = card.createDiv({ cls: "db-led-sum" });
+    const cell = (label: string, cls: string, value: number) => {
+      const el = grid.createDiv({ cls: `db-led-sum-cell ${cls}` });
+      el.createDiv({ cls: "db-led-sum-label", text: label });
+      el.createDiv({ cls: "db-led-sum-value", text: fmtMoney(Math.abs(value)) });
+    };
+    cell("总支出", "is-out", -sum.expense);
+    cell("总收入", "is-in", sum.income);
+    cell("结余", sum.net >= 0 ? "is-in" : "is-out", sum.net);
+  }
+
+  /** 搜索 / 筛选 / 排序变化：重置分块并刷新汇总与列表（不动工具栏，输入框焦点得以保留） */
+  private refreshRecList(): void {
+    this.computeFiltered();
+    this.recShown = REC_CHUNK;
+    this.renderRecSummary();
+    this.renderRecChunk(true);
+  }
+
+  /**
+   * 画列表到 recShown 为止。full=true 先清空（页面重渲染 / 筛选变化）；false 只追加新块。
+   * 日期排序按天分组（白卡一天一块）；金额排序跨天平铺在一张白卡里。
+   */
+  private renderRecChunk(full: boolean): void {
+    const list = this.recListEl;
+    if (!list) return;
+    if (full) {
+      this.detachRecObserver();
+      list.empty();
+      this.recCursor = 0;
+      this.recGroupIdx = 0;
+      this.recFlatCard = null;
+      list.toggleClass("is-batching", this.batchMode);
+    }
+    list.querySelector(".db-led-rec-sentinel")?.remove();
+    const recs = this.recFiltered;
+    const grouped = this.recSort === "date-desc" || this.recSort === "date-asc";
+    if (grouped) {
+      /* recs 已按当前排序排好：首次遇到的天即分组顺序，与排序方向一致 */
+      const byDate = new Map<string, LedgerRecord[]>();
+      for (const r of recs) {
+        const g = byDate.get(r.date);
+        if (g) g.push(r); else byDate.set(r.date, [r]);
+      }
+      const dates = [...byDate.keys()];
+      while (this.recGroupIdx < dates.length && this.recCursor < this.recShown) {
+        const date = dates[this.recGroupIdx++];
+        const dayRecs = byDate.get(date)!;
+        this.recCursor += dayRecs.length;
+        this.dayCard(list, date, dayRecs, (p, r) => this.recRow(p, r));
+      }
+    } else {
+      if (!this.recFlatCard) this.recFlatCard = list.createDiv({ cls: "db-led-card db-led-day-card" });
+      const slice = recs.slice(this.recCursor, this.recShown);
+      slice.forEach(r => this.recRow(this.recFlatCard!, r));
+      this.recCursor += slice.length;
+    }
+    if (full && !recs.length) list.createDiv({ cls: "db-led-empty", text: "没有符合条件的记录。" });
+    this.ensureRecObserver();
+  }
+
+  /** 列表行：普通模式点行进编辑；批量模式行首加勾选框，点行切换选中 */
+  private recRow(parent: HTMLElement, r: LedgerRecord): void {
+    if (!this.batchMode) {
+      this.recordRow(parent, r, () => this.openRecordEditor(this.draftFrom(r)));
+      return;
+    }
+    const wrap = parent.createDiv({ cls: "db-led-recwrap", attr: { "data-rec-id": r.id } });
+    const chk = wrap.createDiv({ cls: `db-led-check${this.selectedIds.has(r.id) ? " is-on" : ""}` });
+    chk.addEventListener("click", () => this.toggleSelect(r.id));
+    this.recordRow(wrap, r, () => this.toggleSelect(r.id));
+  }
+
+  /** 切换一条记录的选中态：只更新该行勾选框与底栏计数，不整页重绘 */
+  private toggleSelect(id: string): void {
+    const on = !this.selectedIds.has(id);
+    if (on) this.selectedIds.add(id); else this.selectedIds.delete(id);
+    this.recListEl?.querySelectorAll(`[data-rec-id="${id}"] .db-led-check`).forEach(el => el.toggleClass("is-on", on));
+    if (this.recBarEl) this.recBarEl.setText(`已选 ${this.selectedIds.size}`);
+  }
+
+  /** 全选 / 取消全选：作用于当前筛选结果（含未渲染的分块），整页重绘同步勾选态 */
+  private toggleSelectAll(): void {
+    if (this.selectedIds.size > 0 && this.selectedIds.size === this.recFiltered.length) this.selectedIds.clear();
+    else this.recFiltered.forEach(r => this.selectedIds.add(r.id));
+    this.render();
+  }
+
+  private batchDelete(): void {
+    const n = this.selectedIds.size;
+    if (!n) { new Notice("先选择要删除的记录"); return; }
+    new ConfirmModal(this.app, "批量删除", `确定删除选中的 ${n} 条记录吗？删除后不可恢复。`, "删除", () => {
+      void (async () => {
+        const done = await this.store.deleteRecordsBulk([...this.selectedIds]);
+        this.selectedIds.clear();
+        this.batchMode = false;
+        this.render();
+        new Notice(`已删除 ${done} 条记录`);
+      })();
+    }).open();
+  }
+
+  /* ── 分块加载：滚动近底部追加下一块 ── */
+
+  private detachRecObserver(): void {
+    this.recObserver?.disconnect();
+    this.recObserver = null;
+  }
+
+  private ensureRecObserver(): void {
+    const list = this.recListEl;
+    if (!list || this.recCursor >= this.recFiltered.length) { this.detachRecObserver(); return; }
+    this.detachRecObserver();
+    /* .db-journal-root 是唯一滚动容器（.db-scroll 跟随它滚），交集观察必须以它为 root */
+    const scroller = this.host.closest(".db-journal-root");
+    if (!scroller || typeof IntersectionObserver === "undefined") return;
+    const sentinel = list.createDiv({ cls: "db-led-rec-sentinel" });
+    const io = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) this.loadMoreRecords();
+    }, { root: scroller instanceof Element ? scroller : null, rootMargin: "600px 0px" });
+    io.observe(sentinel);
+    this.recObserver = io;
+  }
+
+  private loadMoreRecords(): void {
+    if (this.recCursor >= this.recFiltered.length) { this.detachRecObserver(); return; }
+    this.recShown += REC_CHUNK;
+    this.renderRecChunk(false);
+  }
+
+  /* ── 筛选 / 排序 sheet：条件改动即生效，背后的列表实时刷新 ── */
+
+  private openFilterSheet(): void {
+    this.closeOverlay();
+    const overlay = this.openOverlay();
+    const sheet = overlay.createDiv({ cls: "db-led-sheet" });
+    this.buildFilterSheet(sheet);
+  }
+
+  private buildFilterSheet(sheet: HTMLElement): void {
+    const f = this.recFilter;
+    sheet.empty();
+    const head = sheet.createDiv({ cls: "db-led-sheet-head" });
+    const reset = head.createEl("button", { cls: "db-led-btn-ghost", attr: { type: "button" }, text: "重置" });
+    reset.addEventListener("click", () => {
+      this.recFilter = emptyRecFilter();
+      this.recShown = REC_CHUNK;
+      this.render();
+      this.buildFilterSheet(sheet);
+    });
+    head.createDiv({ cls: "db-led-sheet-head-spacer" });
+    const close = head.createDiv({ cls: "db-led-sheet-close", attr: { role: "button", tabindex: "0", "aria-label": "关闭" } });
+    setIcon(close, "x");
+    close.addEventListener("click", () => this.closeOverlay());
+    close.addEventListener("keydown", e => {
+      if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); this.closeOverlay(); }
+    });
+
+    const bodyEl = sheet.createDiv({ cls: "db-led-sheet-body" });
+    /* 条件写入后：刷新页面数据（badge / 列表 / 汇总）并重建 sheet 让 chips 勾选态同步 */
+    const apply = () => {
+      this.recShown = REC_CHUNK;
+      this.render();
+      this.buildFilterSheet(sheet);
+    };
+
+    bodyEl.createDiv({ cls: "db-led-field-label", text: "排序" });
+    const sortList = bodyEl.createDiv({ cls: "db-led-radio-list" });
+    REC_SORTS.forEach(s => {
+      const row = sortList.createDiv({ cls: `db-led-radio${this.recSort === s.key ? " is-active" : ""}` });
+      row.createSpan({ cls: "db-led-radio-label", text: s.label });
+      if (this.recSort === s.key) setIcon(row.createSpan({ cls: "db-led-radio-check" }), "check");
+      row.addEventListener("click", () => {
+        this.recSort = s.key;
+        apply();
+      });
+    });
+
+    bodyEl.createDiv({ cls: "db-led-field-label", text: "日期" });
+    const dates = bodyEl.createDiv({ cls: "db-led-two" });
+    const mkDate = (key: "dateFrom" | "dateTo", label: string) => {
+      const el = dates.createEl("input", { cls: "db-led-date", attr: { type: "date", "aria-label": label } });
+      el.value = f[key];
+      el.addEventListener("change", () => { this.recFilter[key] = el.value; apply(); });
+    };
+    mkDate("dateFrom", "开始日期");
+    mkDate("dateTo", "结束日期");
+
+    bodyEl.createDiv({ cls: "db-led-field-label", text: "金额" });
+    const amts = bodyEl.createDiv({ cls: "db-led-two" });
+    const mkAmt = (key: "minAmt" | "maxAmt", label: string) => {
+      const el = amts.createEl("input", {
+        cls: "db-led-input db-led-input-num",
+        attr: { type: "text", inputMode: "decimal", placeholder: label, "aria-label": `金额${label}` },
+      });
+      el.value = f[key];
+      el.addEventListener("change", () => { this.recFilter[key] = el.value.trim(); apply(); });
+    };
+    mkAmt("minAmt", "最低");
+    mkAmt("maxAmt", "最高");
+
+    bodyEl.createDiv({ cls: "db-led-field-label", text: "类型" });
+    const kindRow = bodyEl.createDiv({ cls: "db-led-chips" });
+    (["expense", "income", "transfer"] as LedgerKind[]).forEach(k => {
+      const chip = kindRow.createDiv({
+        cls: `db-led-chip${f.kinds.includes(k) ? " is-active" : ""}`,
+        text: k === "expense" ? "支出" : k === "income" ? "收入" : "转账",
+      });
+      chip.addEventListener("click", () => {
+        this.recFilter.kinds = f.kinds.includes(k) ? f.kinds.filter(x => x !== k) : [...f.kinds, k];
+        apply();
+      });
+    });
+
+    const catTwo = bodyEl.createDiv({ cls: "db-led-two" });
+    const fc = catTwo.createDiv({ cls: "db-led-field" });
+    fc.createDiv({ cls: "db-led-field-label", text: "分类" });
+    new NotionSelect(fc, {
+      options: () => [{ value: "", label: "全部分类" }, ...this.cfg.categories.map(c => ({ value: c.id, label: c.name }))],
+      value: f.catId,
+      ariaLabel: "分类",
+      onSelect: v => {
+        this.recFilter.catId = v;
+        if (!v) this.recFilter.subId = "";
+        apply();
+      },
+    });
+    const fs = catTwo.createDiv({ cls: "db-led-field" });
+    fs.createDiv({ cls: "db-led-field-label", text: "子分类" });
+    new NotionSelect(fs, {
+      options: () => {
+        const cat = this.cfg.categories.find(c => c.id === this.recFilter.catId);
+        const subs = cat
+          ? cat.subs.map(s => ({ value: s.id, label: s.name }))
+          : this.cfg.categories.flatMap(c => c.subs.map(s => ({ value: s.id, label: `${c.name} · ${s.name}` })));
+        return [{ value: "", label: "全部子分类" }, ...subs];
+      },
+      value: f.subId,
+      ariaLabel: "子分类",
+      onSelect: v => { this.recFilter.subId = v; apply(); },
+    });
+
+    const accTwo = bodyEl.createDiv({ cls: "db-led-two" });
+    const fa = accTwo.createDiv({ cls: "db-led-field" });
+    fa.createDiv({ cls: "db-led-field-label", text: "账户" });
+    new NotionSelect(fa, {
+      options: () => [{ value: "", label: "全部账户" }, ...this.cfg.accounts.filter(a => !a.archived).map(a => ({ value: a.id, label: a.name }))],
+      value: f.accountId,
+      ariaLabel: "账户",
+      onSelect: v => { this.recFilter.accountId = v; apply(); },
+    });
+    const fl = accTwo.createDiv({ cls: "db-led-field" });
+    fl.createDiv({ cls: "db-led-field-label", text: "账本" });
+    new NotionSelect(fl, {
+      options: () => [{ value: "", label: "全部账本" }, ...this.cfg.ledgers.map(l => ({ value: l.id, label: l.name }))],
+      value: f.ledgerId,
+      ariaLabel: "账本",
+      onSelect: v => { this.recFilter.ledgerId = v; apply(); },
+    });
+
+    const fm = bodyEl.createDiv({ cls: "db-led-field" });
+    fm.createDiv({ cls: "db-led-field-label", text: "商家 / 其他" });
+    new NotionSelect(fm, {
+      options: () => {
+        const set = new Set<string>();
+        this.store.records.forEach(r => {
+          const v = (r.other || "").trim();
+          if (v) set.add(v);
+        });
+        return [{ value: "", label: "全部商家" }, ...[...set].sort().map(v => ({ value: v, label: v }))];
+      },
+      value: f.merchant,
+      ariaLabel: "商家",
+      searchPlaceholder: "搜索商家…",
+      onSelect: v => { this.recFilter.merchant = v; apply(); },
+    });
+
+    bodyEl.createDiv({ cls: "db-led-field-label", text: "周几" });
+    const dowRow = bodyEl.createDiv({ cls: "db-led-chips" });
+    [0, 1, 2, 3, 4, 5, 6].forEach(d => {
+      const chip = dowRow.createDiv({ cls: `db-led-chip${f.dow.includes(d) ? " is-active" : ""}`, text: WEEK_SHORT[d] });
+      chip.addEventListener("click", () => {
+        this.recFilter.dow = f.dow.includes(d) ? f.dow.filter(x => x !== d) : [...f.dow, d];
+        apply();
+      });
+    });
+
+    const budgets = this.store.budgetForMonth(moment().format("YYYY-MM")).categories;
+    if (budgets.length) {
+      const fb = bodyEl.createDiv({ cls: "db-led-field" });
+      fb.createDiv({ cls: "db-led-field-label", text: "预算" });
+      new NotionSelect(fb, {
+        options: () => [
+          { value: "", label: "全部" },
+          ...budgets.map(b => ({ value: b.id, label: this.catOf(b.categoryId)?.name ?? "分类预算" })),
+        ],
+        value: f.budgetId,
+        ariaLabel: "预算",
+        onSelect: v => { this.recFilter.budgetId = v; apply(); },
+      });
+    }
+  }
+
+  /* ── 批量编辑 sheet：每个字段默认「不变」，勾上才写入该字段 ── */
+
+  private openBatchSheet(): void {
+    if (!this.selectedIds.size) return;
+    this.batchOn.clear();
+    this.batchVals = {};
+    this.batchAdvOpen = false;
+    this.closeOverlay();
+    const overlay = this.openOverlay();
+    const sheet = overlay.createDiv({ cls: "db-led-sheet" });
+    this.buildBatchSheet(sheet);
+  }
+
+  private buildBatchSheet(sheet: HTMLElement): void {
+    sheet.empty();
+    const head = sheet.createDiv({ cls: "db-led-sheet-head" });
+    head.createSpan({ cls: "db-led-sheet-title", text: `批量编辑 ${this.selectedIds.size} 条` });
+    const close = head.createDiv({ cls: "db-led-sheet-close", attr: { role: "button", tabindex: "0", "aria-label": "关闭" } });
+    setIcon(close, "x");
+    close.addEventListener("click", () => this.closeOverlay());
+    close.addEventListener("keydown", e => {
+      if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); this.closeOverlay(); }
+    });
+
+    const bodyEl = sheet.createDiv({ cls: "db-led-sheet-body" });
+    const val = (key: string) => this.batchVals[key] ?? "";
+    const setVal = (key: string, v: string) => { this.batchVals[key] = v; };
+
+    /** 一个可勾选的字段：勾上 = 该字段要改（出现控件），不勾 = 保持不变 */
+    const field = (key: string, label: string, control: (host: HTMLElement) => void, parent: HTMLElement = bodyEl): void => {
+      const on = this.batchOn.has(key);
+      const wrap = parent.createDiv({ cls: `db-led-bf${on ? " is-on" : ""}` });
+      const headEl = wrap.createDiv({ cls: "db-led-bf-head" });
+      headEl.createDiv({ cls: `db-led-check${on ? " is-on" : ""}` });
+      headEl.createSpan({ cls: "db-led-bf-label", text: label });
+      const cur = val(key);
+      if (!on && cur) headEl.createSpan({ cls: "db-led-bf-prev", text: cur.length > 14 ? `${cur.slice(0, 14)}…` : cur });
+      headEl.addEventListener("click", () => {
+        if (this.batchOn.has(key)) this.batchOn.delete(key); else this.batchOn.add(key);
+        this.buildBatchSheet(sheet);
+      });
+      if (on) control(wrap.createDiv({ cls: "db-led-bf-ctl" }));
+    };
+    const text = (key: string, ph: string, numeric = false) => (host: HTMLElement) => {
+      const el = host.createEl("input", {
+        cls: "db-led-input",
+        attr: { type: "text", placeholder: ph, "aria-label": ph, ...(numeric ? { inputMode: "decimal" } : {}) },
+      });
+      el.value = val(key);
+      el.addEventListener("input", () => setVal(key, el.value));
+    };
+    const select = (key: string, options: () => { value: string; label: string }[], onPick?: () => void) => (host: HTMLElement) => {
+      new NotionSelect(host, {
+        options,
+        value: val(key),
+        ariaLabel: key,
+        onSelect: v => { setVal(key, v); onPick?.(); },
+      });
+    };
+
+    field("date", "日期", host => {
+      const el = host.createEl("input", { cls: "db-led-input", attr: { type: "date", "aria-label": "日期" } });
+      el.value = val("date");
+      el.addEventListener("change", () => setVal("date", el.value));
+    });
+    field("kind", "类型", host => {
+      const row = host.createDiv({ cls: "db-led-chips" });
+      (["expense", "income", "transfer"] as LedgerKind[]).forEach(k => {
+        const chip = row.createDiv({
+          cls: `db-led-chip${val("kind") === k ? " is-active" : ""}`,
+          text: k === "expense" ? "支出" : k === "income" ? "收入" : "转账",
+        });
+        chip.addEventListener("click", () => { setVal("kind", k); this.buildBatchSheet(sheet); });
+      });
+    });
+    field("amount", "金额", text("amount", "金额", true));
+    field("categoryId", "分类", select("categoryId",
+      () => [{ value: "", label: "请选择" }, ...this.cfg.categories.map(c => ({ value: c.id, label: c.name }))],
+      () => { setVal("subId", ""); this.buildBatchSheet(sheet); }));
+    field("subId", "子分类", select("subId", () => {
+      const cat = this.cfg.categories.find(c => c.id === val("categoryId"));
+      const subs = cat
+        ? cat.subs.map(s => ({ value: s.id, label: s.name }))
+        : this.cfg.categories.flatMap(c => c.subs.map(s => ({ value: s.id, label: `${c.name} · ${s.name}` })));
+      return [{ value: "", label: "不选" }, ...subs];
+    }));
+    field("accountId", "账户", select("accountId", () => this.cfg.accounts.filter(a => !a.archived).map(a => ({ value: a.id, label: a.name }))));
+    field("toAccountId", "转入账户（转账）", select("toAccountId", () => this.cfg.accounts.filter(a => !a.archived).map(a => ({ value: a.id, label: a.name }))));
+    field("ledgerId", "账本", select("ledgerId", () => this.cfg.ledgers.map(l => ({ value: l.id, label: l.name }))));
+    field("note", "备注", text("note", "备注"));
+    field("other", "商家 / 其他", text("other", "商家名称"));
+    field("tags", "标签", host => {
+      new NotionMultiSelect(host, {
+        options: () => this.store.allTags(),
+        values: val("tags").split(/[,，]/).map(t => t.trim()).filter(Boolean),
+        placeholder: "添加标签",
+        searchPlaceholder: "搜索标签…",
+        allowCreate: true,
+        ariaLabel: "标签",
+        onChange: vs => setVal("tags", vs.join(",")),
+        onCreate: q => q.replace(/[,，#]/g, "").trim(),
+      });
+    });
+
+    const adv = bodyEl.createDiv({ cls: "db-led-adv" + (this.batchAdvOpen ? " is-open" : "") });
+    const advHead = adv.createDiv({ cls: "db-led-adv-head" });
+    advHead.createSpan({ text: "更多字段" });
+    setIcon(advHead.createSpan({ cls: "db-led-adv-chev" }), "chevron-down");
+    const advBody = adv.createDiv({ cls: "db-led-adv-body" });
+    advHead.addEventListener("click", () => {
+      this.batchAdvOpen = !this.batchAdvOpen;
+      adv.toggleClass("is-open", this.batchAdvOpen);
+    });
+    field("currency", "币种", select("currency", () => this.cfg.currencies.map(c => ({ value: c.code, label: `${symbolOf(c.code)} ${c.code}` }))), advBody);
+    field("rate", "汇率", text("rate", `1 币种 = ? ${this.cfg.baseCurrency}`, true), advBody);
+    field("refund", "退款", text("refund", "已退回金额", true), advBody);
+    field("discount", "优惠", text("discount", "优惠/折扣金额", true), advBody);
+    field("reimbAccountId", "报销账户", select("reimbAccountId",
+      () => [{ value: "", label: "不报销" }, ...this.cfg.accounts.filter(a => !a.archived).map(a => ({ value: a.id, label: a.name }))]), advBody);
+    field("reimbAmount", "报销金额", text("reimbAmount", "可报销的金额", true), advBody);
+    field("reimbDetail", "报销明细", text("reimbDetail", "发票号 / 明细说明"), advBody);
+    field("address", "地址", text("address", "商家地址 / 地点"), advBody);
+    field("creator", "经手人", text("creator", "默认取设置中的用户名"), advBody);
+    field("files", "附件", text("files", "![[链接]] 或路径，逗号分隔"), advBody);
+
+    const foot = sheet.createDiv({ cls: "db-led-sheet-foot" });
+    const apply = foot.createEl("button", { cls: "db-led-save", attr: { type: "button" }, text: `应用 ${this.selectedIds.size} 条` });
+    apply.addEventListener("click", () => this.applyBatchEdit());
+  }
+
+  /** 把勾选的字段写入所有选中记录；跨年批量落盘走 store.updateRecordsBulk */
+  private applyBatchEdit(): void {
+    const ids = [...this.selectedIds];
+    const recs = ids.map(id => this.store.records.find(r => r.id === id)).filter((r): r is LedgerRecord => !!r);
+    if (!recs.length) { this.closeOverlay(); return; }
+    const val = (key: string) => this.batchVals[key] ?? "";
+    if (this.batchOn.has("amount")) {
+      const amt = parseFloat(val("amount"));
+      if (!isFinite(amt) || amt <= 0) { new Notice("金额无效"); return; }
+    }
+    if (this.batchOn.has("kind")) {
+      const k = val("kind") as LedgerKind;
+      if (!k) { new Notice("请选择类型"); return; }
+      if (k === "transfer" && (!this.batchOn.has("toAccountId") || !val("toAccountId"))) { new Notice("改为转账需同时设置转入账户"); return; }
+      if (k !== "transfer" && (!this.batchOn.has("categoryId") || !val("categoryId"))) { new Notice("改类型需同时选择分类"); return; }
+    }
+    const updated = recs.map(r => {
+      const nr: LedgerRecord = { ...r };
+      if (this.batchOn.has("date") && val("date")) nr.date = val("date");
+      if (this.batchOn.has("kind")) {
+        const k = val("kind") as LedgerKind;
+        if (k !== nr.kind) {
+          nr.kind = k;
+          if (k === "transfer") {
+            nr.categoryId = "";
+            nr.subId = undefined;
+            nr.toAccountId = this.batchOn.has("toAccountId") ? val("toAccountId") : (nr.toAccountId ?? "");
+          } else {
+            nr.toAccountId = undefined;
+            nr.categoryId = this.batchOn.has("categoryId") ? val("categoryId") : nr.categoryId;
+            nr.subId = this.batchOn.has("subId") ? (val("subId") || undefined) : undefined;
+          }
+        }
+      }
+      if (this.batchOn.has("amount")) nr.amount = round2(parseFloat(val("amount")));
+      if (this.batchOn.has("categoryId")) { nr.categoryId = val("categoryId"); nr.subId = undefined; }
+      if (this.batchOn.has("subId")) {
+        const cat = this.cfg.categories.find(c => c.id === nr.categoryId);
+        nr.subId = cat && cat.subs.some(s => s.id === val("subId")) ? val("subId") : undefined;
+      }
+      if (this.batchOn.has("accountId") && val("accountId")) nr.accountId = val("accountId");
+      if (this.batchOn.has("toAccountId")) nr.toAccountId = val("toAccountId") || undefined;
+      if (this.batchOn.has("ledgerId") && val("ledgerId")) nr.ledgerId = val("ledgerId");
+      if (this.batchOn.has("note")) nr.note = val("note").trim();
+      if (this.batchOn.has("other")) nr.other = val("other").trim();
+      if (this.batchOn.has("tags")) nr.tags = val("tags").split(/[,，]/).map(t => t.trim()).filter(Boolean);
+      if (this.batchOn.has("currency") && val("currency")) nr.currency = val("currency");
+      if (this.batchOn.has("rate")) {
+        const v = parseFloat(val("rate"));
+        nr.rate = isFinite(v) && v > 0 ? v : undefined;
+      }
+      if (this.batchOn.has("refund")) nr.refund = round2(Math.max(0, parseFloat(val("refund")) || 0));
+      if (this.batchOn.has("discount")) nr.discount = round2(Math.max(0, parseFloat(val("discount")) || 0));
+      if (this.batchOn.has("reimbAccountId")) nr.reimbAccountId = val("reimbAccountId") || undefined;
+      if (this.batchOn.has("reimbAmount")) {
+        const v = parseFloat(val("reimbAmount"));
+        nr.reimbAmount = isFinite(v) && v > 0 ? round2(v) : undefined;
+      }
+      if (this.batchOn.has("reimbDetail")) nr.reimbDetail = val("reimbDetail").trim() || undefined;
+      if (this.batchOn.has("address")) nr.address = val("address").trim();
+      if (this.batchOn.has("creator")) nr.creator = val("creator").trim() || this.cfg.username;
+      if (this.batchOn.has("files")) nr.files = val("files").split(/[,，]/).map(t => t.trim()).filter(Boolean);
+      return nr;
+    });
+    void (async () => {
+      try {
+        await this.store.updateRecordsBulk(updated);
+        this.closeOverlay();
+        this.batchMode = false;
+        this.selectedIds.clear();
+        this.render();
+        new Notice(`已更新 ${updated.length} 条记录`);
+      } catch (e) {
+        new Notice(`批量保存失败：${e instanceof Error ? e.message : String(e)}`);
+      }
+    })();
   }
 
   /* ────────────────────────── 资产 ────────────────────────── */
@@ -2205,7 +3087,14 @@ export class LedgerPage {
         this.dataPage = new LedgerDataPage(host, {
           app: this.app, plugin: this.plugin, store: this.store,
           onExit: () => this.closeSettingsSub(),
-          gotoPage: (p) => { this.settingsSub = null; this.setPage(p); },
+          /* 「视图」页已并入首页与所有交易页：导入完成后直接进所有交易页 */
+          gotoPage: () => {
+            const armed = this.subSentinelArmed;
+            this.subSentinelArmed = false;
+            this.settingsSub = null;
+            this.reclaimHistory(armed ? 1 : 0);
+            this.openAllRecords();
+          },
         });
       }
       this.dataPage.render();
@@ -2289,7 +3178,8 @@ export class LedgerPage {
   /** 账本管理内容（折叠区内，直接排行） */
   private renderLedgerSection(parent: HTMLElement, refresh: () => void): void {
     const cfg = this.cfg;
-    cfg.ledgers.forEach((l, i) => parent.appendChild(this.textRow(l.name, "账本名", async v => {
+    const list = parent.createDiv({ cls: "db-led-set-list" });
+    cfg.ledgers.forEach((l, i) => list.appendChild(this.textRow(l.name, "账本名", async v => {
       if (v) { cfg.ledgers[i].name = v; await this.saveCfg(); }
     }, async () => {
       const used = this.store.records.filter(r => r.ledgerId === l.id).length;
@@ -2303,8 +3193,9 @@ export class LedgerPage {
   /** 账户管理内容（余额规则见资产页说明） */
   private renderAccountSection(parent: HTMLElement, refresh: () => void): void {
     const cfg = this.cfg;
+    const list = parent.createDiv({ cls: "db-led-set-list" });
     cfg.accounts.forEach((a, i) => {
-      const row = parent.createDiv({ cls: "db-led-set-row" });
+      const row = list.createDiv({ cls: "db-led-set-row" });
       const wrap = row.createDiv({ cls: "db-led-set-name" });
       const iconBtn = wrap.createEl("button", {
         cls: "db-led-acct-icon is-btn", attr: { type: "button", "aria-label": `选择「${a.name}」的图标`, title: "选择图标" },
@@ -2344,8 +3235,9 @@ export class LedgerPage {
   private renderCurrencySection(parent: HTMLElement, refresh: () => void): void {
     const cfg = this.cfg;
     parent.createDiv({ cls: "db-led-group-hint", text: "1 该币种 ≈ rate 基准币" });
+    const list = parent.createDiv({ cls: "db-led-set-list" });
     cfg.currencies.forEach((c, i) => {
-      const row = parent.createDiv({ cls: "db-led-set-row" });
+      const row = list.createDiv({ cls: "db-led-set-row" });
       const code = row.createEl("input", { cls: "db-led-input db-led-input-code", attr: { type: "text", "aria-label": "币种代码" } });
       code.value = c.code;
       code.addEventListener("change", async () => {
@@ -2848,7 +3740,7 @@ export class LedgerPage {
     mkField("汇率", `1 ${draft.currency} = ? ${cfg.baseCurrency}（空按币种表）`, "rate", true);
     mkField("地址", "商家地址 / 地点", "address");
     mkField("创建用户", "默认取设置中的用户名", "creator");
-    mkField("其他", "自定义字段", "other");
+    mkField("商家 / 其他", "商家名称或自定义", "other");
     mkField("附件", "![[链接]] 或路径，逗号分隔", "files");
 
     /* 保存 */

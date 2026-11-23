@@ -641,6 +641,40 @@ export class LedgerStore {
   }
 
   /**
+   * 批量更新（批量编辑用）：一次落盘涉及的每个年份文件，避免逐条 updateRecord 重复重写同一年。
+   * 记录的日期可能被改到别的年份：新旧两个年份都要重写。
+   */
+  async updateRecordsBulk(recs: LedgerRecord[]): Promise<void> {
+    if (!recs.length) return;
+    const years = new Set<string>();
+    for (const rec of recs) {
+      const idx = this.records.findIndex(r => r.id === rec.id);
+      if (idx < 0) { this.records.push(rec); years.add(yearOf(rec.date)); continue; }
+      years.add(yearOf(rec.date));
+      years.add(yearOf(this.records[idx].date));
+      this.records[idx] = rec;
+    }
+    this.sortRecords();
+    for (const y of years) await this.persistYear(y);
+  }
+
+  /** 批量删除：返回删除条数；涉及的年份各重写一次 */
+  async deleteRecordsBulk(ids: string[]): Promise<number> {
+    const gone = new Set(ids);
+    if (!gone.size) return 0;
+    const years = new Set<string>();
+    let n = 0;
+    this.records = this.records.filter(r => {
+      if (!gone.has(r.id)) return true;
+      years.add(yearOf(r.date));
+      n++;
+      return false;
+    });
+    for (const y of years) await this.persistYear(y);
+    return n;
+  }
+
+  /**
    * 批量写入（导入用）：一次性按年份分组落盘，避免 3000 条记录重复重写同一个文件 3000 次。
    * 传入的批次台账会一并写入，任何一步失败都会把已改坏的年份重算，保证文件与内存一致。
    */

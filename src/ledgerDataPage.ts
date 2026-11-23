@@ -37,7 +37,7 @@ export interface DataPageHost {
   plugin: DaybookPlugin;
   store: LedgerStore;
   onExit: () => void;      // 回到设置菜单（外层负责回收 popstate 哨兵）
-  gotoPage: (page: "home" | "list") => void;
+  gotoPage: () => void;      // 导入完成后跳转（外层决定去哪，现为所有交易页）
 }
 
 export class LedgerDataPage {
@@ -699,8 +699,8 @@ export class LedgerDataPage {
     if (plan.createdCategories.length) this.note(card, `新建类别：${plan.createdCategories.join("、")}`);
     if (plan.createdAccounts.length) this.note(card, `新建账户：${plan.createdAccounts.join("、")}`);
     const row = body.createDiv({ cls: "db-led-io-tools" });
-    const b1 = row.createEl("button", { cls: "db-led-chip", attr: { type: "button" }, text: "去流水看看" });
-    b1.addEventListener("click", () => { this.opts.onExit(); this.opts.gotoPage("list"); });
+    const b1 = row.createEl("button", { cls: "db-led-chip", attr: { type: "button" }, text: "查看交易" });
+    b1.addEventListener("click", () => { this.opts.onExit(); this.opts.gotoPage(); });
     const b2 = row.createEl("button", { cls: "db-led-chip", attr: { type: "button" }, text: "导入记录" });
     b2.addEventListener("click", () => this.go("batches"));
     const b3 = row.createEl("button", { cls: "db-led-chip", attr: { type: "button" }, text: "再导一份" });

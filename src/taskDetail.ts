@@ -2,7 +2,7 @@
  * taskDetail.ts — 任务详情页（TickTick 风格全屏页）
  *
  * 由计划列表 / 卡片点击任务文字、或操作菜单「编辑」打开。
- * 顶栏：左上收缩（关闭）、右上「更多」→ 弹层（置顶 / 放弃 / 删除 + 添加子任务 / 复制链接）。
+ * 顶栏：左上「⌄ 关闭」· 中「所属清单」· 右上「更多」→ 弹层（置顶 / 放弃 / 删除 + 添加子任务 / 复制链接）。
  * 正文：① 勾选框 + 截止日期（三态：正常 / 未设日期显示日历 / 逾期红色） ② 标题 ③ 子任务（拖拽排序）
  *      ④ 描述（实时编辑器，位于子任务下方）。底栏左下：标签 / 图片 / 录音。
  *
@@ -112,11 +112,24 @@ export class TaskDetailModal extends Modal {
 
   onOpen(): void {
     this.modalEl.addClass("db-task-detail-modal");
+    /* 关闭改用自绘的左上「⌄」，清掉原生帧元素（标题栏 / 右上 ×）。
+       新版 Obsidian 的 × 是 .modal-header-button（旧版 .modal-close-button），
+       类名不可靠，再按结构兜底：.modal 下除正文外的子元素一律摘掉 */
+    const killNativeChrome = () => {
+      Array.from(this.modalEl.children).forEach(el => {
+        if (!el.classList.contains("modal-content")) el.remove();
+      });
+      this.containerEl
+        .querySelectorAll(".modal-close-button, .modal-header-button")
+        .forEach(el => el.remove());
+    };
+    killNativeChrome();
+    activeWindow.setTimeout(killNativeChrome, 60);
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("db-task-detail");
 
-    // ── 顶栏 ──
+    // ── 顶栏：左上「⌄ 关闭」· 中「所属清单」· 右上「更多」 ──
     const head = contentEl.createDiv({ cls: "db-td-head" });
     const closeBtn = head.createDiv({
       cls: "db-td-head-btn db-td-close",
@@ -124,7 +137,6 @@ export class TaskDetailModal extends Modal {
     });
     setIcon(closeBtn, "chevron-down");
     closeBtn.addEventListener("click", () => this.close());
-
     head.createDiv({ cls: "db-td-head-title", text: this.entry.sectionLabel || "任务" });
 
     const moreBtn = head.createDiv({
